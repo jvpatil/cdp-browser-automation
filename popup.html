@@ -1,0 +1,322 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+
+    :root {
+      color-scheme: dark;
+
+      --panel-top: #17365C;
+      --panel-bottom: #0B2038;
+
+      --button-top: #17375F;
+      --button-bottom: #0E2745;
+      --button-hover-top: #1C436E;
+      --button-hover-bottom: #123050;
+      --button-active-top: #102A49;
+      --button-active-bottom: #0A1D33;
+
+      --button-border: #526987;
+      --button-inner: rgba(255, 255, 255, 0.06);
+
+      --gold: #B69A6B;
+      --gold-strong: #C4A66F;
+
+      --text: #F1F2F0;
+      --text-muted: #C8CDD3;
+      --icon: #E6E4DC;
+    }
+
+    body {
+      width: 264px;
+      margin: 0;
+      padding: 7px 8px 8px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
+      color: var(--text);
+    }
+
+    .group {
+      margin-top: 7px;
+    }
+
+    .group:first-of-type {
+      margin-top: 0;
+    }
+
+    .group-label {
+      margin: 0 1px 5px;
+      font-size: 10.5px;
+      line-height: 1;
+      font-weight: 800;
+      color: var(--gold);
+      text-transform: uppercase;
+      letter-spacing: 0.095em;
+    }
+
+    .actions {
+      display: grid;
+      gap: 4px;
+    }
+
+    #status {
+      min-height: 15px;
+      margin: 7px 1px 0;
+      color: var(--text-muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    button {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) 10px;
+      align-items: center;
+      gap: 7px;
+      width: 100%;
+      min-height: 36px;
+      margin: 0;
+      padding: 6px 8px;
+      border: 1px solid var(--button-border);
+      border-radius: 11px;
+      background: linear-gradient(180deg, var(--button-top), var(--button-bottom));
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+      box-shadow:
+        inset 0 1px 0 var(--button-inner),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.22);
+      transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        transform 100ms ease;
+    }
+
+    button:hover {
+      background: linear-gradient(180deg, var(--button-hover-top), var(--button-hover-bottom));
+      border-color: #6D84A2;
+    }
+
+    button:active {
+      transform: translateY(1px);
+      background: linear-gradient(180deg, var(--button-active-top), var(--button-active-bottom));
+      box-shadow:
+        inset 0 2px 3px rgba(0, 0, 0, 0.24);
+    }
+
+    .import-action {
+      position: relative;
+    }
+
+    .import-action select {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 28px;
+      height: 28px;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .import-action .import-job-button {
+      grid-template-columns: 18px minmax(0, 1fr) auto 10px;
+    }
+
+    .schedule-indicator {
+      color: var(--gold-strong);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+
+    .icon {
+      width: 18px;
+      height: 18px;
+      color: var(--icon);
+      stroke-width: 1.7;
+    }
+
+    .label {
+      min-width: 0;
+      font-size: 11.5px;
+      line-height: 1.2;
+      font-weight: 600;
+      text-align: left;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .chevron {
+      width: 10px;
+      height: 10px;
+      color: var(--gold-strong);
+      stroke-width: 2.2;
+    }
+
+
+    svg {
+      display: block;
+      fill: none;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+</style>
+</head>
+<body>
+  <section class="group">
+    <div class="group-label">End-to-end</div>
+    <div class="actions">
+      <button id="runE2EBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="5" cy="5" r="2"></circle>
+          <circle cx="19" cy="12" r="2"></circle>
+          <circle cx="5" cy="19" r="2"></circle>
+          <path d="M7 5h5a3 3 0 0 1 3 3v2"></path>
+          <path d="M17 14v2a3 3 0 0 1-3 3H7"></path>
+        </svg>
+        <span class="label">Run E2E Flow</span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m9 18 6-6-6-6"></path>
+        </svg>
+      </button>
+      <button id="publishAllBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 4h14v5H5z"></path>
+          <path d="M7 9v11h10V9"></path>
+          <path d="M9 13h6M12 10v6"></path>
+        </svg>
+        <span class="label">Publish All Data Feeds</span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m9 18 6-6-6-6"></path>
+        </svg>
+      </button>
+      <button id="stopE2EBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="6" y="6" width="12" height="12" rx="1"></rect>
+        </svg>
+        <span class="label">Stop Current Flow</span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m9 18 6-6-6-6"></path>
+        </svg>
+      </button>
+    </div>
+  </section>
+
+<section class="group">
+    <div class="group-label">Connections</div>
+    <div class="actions">
+      <button id="sourceBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <ellipse cx="10" cy="5" rx="6" ry="3"></ellipse>
+          <path d="M4 5v7c0 1.7 2.7 3 6 3"></path>
+          <path d="M16 5v5"></path>
+          <path d="M4 9c0 1.7 2.7 3 6 3"></path>
+          <circle cx="17.5" cy="16.5" r="3.5"></circle>
+          <path d="M17.5 14.8v3.4M15.8 16.5h3.4"></path>
+        </svg>
+        <span class="label">Create Source</span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m9 18 6-6-6-6"></path>
+        </svg>
+      </button>
+
+      <button id="destinationBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="10" cy="12" r="7"></circle>
+          <path d="M3 12h14M10 5a11 11 0 0 1 0 14M10 5a11 11 0 0 0 0 14"></path>
+          <path d="M15 17h6M18 14l3 3-3 3"></path>
+        </svg>
+        <span class="label">Create Destination</span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m9 18 6-6-6-6"></path>
+        </svg>
+      </button>
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group-label">Imports</div>
+    <div class="actions">
+      <div class="import-action">
+      <button class="import-job-button" id="importBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="9" cy="7" r="3"></circle>
+          <path d="M3.5 18c.7-3.2 2.5-5 5.5-5s4.8 1.8 5.5 5"></path>
+          <path d="M18 9v8M15 14l3 3 3-3"></path>
+        </svg>
+        <span class="label">Import Responsys Profile</span>
+        <span class="schedule-indicator" id="importProfileScheduleIndicator">Next</span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+      </button>
+      <select class="import-schedule-select" id="importProfileSchedule" aria-label="Import Responsys Profile schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
+      </div>
+
+      <div class="import-action">
+      <button class="import-job-button" id="importCustomerBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="8" r="4"></circle>
+          <path d="M4.5 20c.8-4.3 3.3-6.5 7.5-6.5s6.7 2.2 7.5 6.5"></path>
+        </svg>
+        <span class="label">Import Customer</span>
+        <span class="schedule-indicator" id="importCustomerScheduleIndicator">Next</span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+      </button>
+      <select class="import-schedule-select" id="importCustomerSchedule" aria-label="Import Customer schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
+      </div>
+
+      <div class="import-action">
+      <button class="import-job-button" id="importContactsBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="5" cy="6" r="1.5"></circle>
+          <circle cx="5" cy="12" r="1.5"></circle>
+          <circle cx="5" cy="18" r="1.5"></circle>
+          <path d="M9 6h10M9 12h10M9 18h10"></path>
+        </svg>
+        <span class="label">Import Contacts</span>
+        <span class="schedule-indicator" id="importContactsScheduleIndicator">Next</span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+      </button>
+      <select class="import-schedule-select" id="importContactsSchedule" aria-label="Import Contacts schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
+      </div>
+      <div class="import-action">
+      <button class="import-job-button" id="importContactAndAddressBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="4" width="12" height="11" rx="2"></rect>
+          <circle cx="8" cy="8" r="1.5"></circle>
+          <path d="M5.5 12c.5-1.5 1.4-2.2 2.5-2.2s2 .7 2.5 2.2"></path>
+          <path d="M15 10h6v9H9v-4"></path>
+          <path d="m15 13 3 2 3-2"></path>
+        </svg>
+        <span class="label">Import Contacts and Address</span>
+        <span class="schedule-indicator" id="importContactAddressScheduleIndicator">Next</span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+      </button>
+      <select class="import-schedule-select" id="importContactAddressSchedule" aria-label="Import Contacts and Address schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
+      </div>
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group-label">Export</div>
+    <div class="actions">
+      <button id="exportBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <ellipse cx="9" cy="5" rx="5" ry="2.5"></ellipse>
+          <path d="M4 5v9c0 1.4 2.2 2.5 5 2.5"></path>
+          <path d="M14 5v5"></path>
+          <path d="M4 9c0 1.4 2.2 2.5 5 2.5"></path>
+          <path d="M15 12h6M18 9l3 3-3 3"></path>
+        </svg>
+        <span class="label">ExportJob</span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m9 18 6-6-6-6"></path>
+        </svg>
+      </button>
+    </div>
+  </section>
+  <div id="status" role="status" aria-live="polite"></div>
+<script src="popup.js"></script>
+</body>
+</html>
