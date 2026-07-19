@@ -39,8 +39,9 @@ selected. It currently supports:
 - Contacts → CDP `ContactPoint`
 - Address → CDP `Address`
 
-The table configuration is centralized in `IMPORT_TABLES` in
-`background.js`; the popup list is in `IMPORT_JOB_TYPES` in `popup.js`.
+The table and payload configuration is centralized in `config/tables.json`.
+Both the popup and the background automation load this catalog, so it is the
+single editable source of truth.
 
 ### Editable CSV fragments
 
@@ -55,8 +56,10 @@ extension combines the selected fragments into one CSV, uploads it, and maps
 each field only to its configured CDP table. A header used by multiple selected
 tables appears once in the combined CSV and maps to every matching table.
 
-To add a table, create its CSV fragment, add its registry record to
-`IMPORT_TABLES`, and add the matching picker entry to `IMPORT_JOB_TYPES`.
+To add an Import table, create its CSV fragment and add one record under
+`importTables` in `config/tables.json` with `id`, `label`, `cdpTable`, and
+`csvFile`. Add Export choices under `exportPayloads`. Reload the extension
+after editing the catalog or a CSV file.
 
 ## Scheduling and E2E
 

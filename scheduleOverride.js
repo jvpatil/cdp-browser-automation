@@ -45,6 +45,21 @@
     (document.querySelector(`label[for="${CSS.escape(input.id)}"]`) || input).click();
   }
 
+  async function applyManualSchedule() {
+    const manual = document.querySelector("oj-radioset#recurring-or-manual input[value='Manual'], oj-radioset#recurring-or-manual input[value='OnDemand']");
+    if (!manual) throw new Error("The On-demand schedule option is not available.");
+    const label = document.querySelector(`label[for="${CSS.escape(manual.id)}"]`) || manual.closest("label") || manual;
+    click(label);
+    await sleep(300);
+    if (!manual.checked) {
+      click(manual);
+      manual.dispatchEvent(new Event("input", { bubbles: true }));
+      manual.dispatchEvent(new Event("change", { bubbles: true }));
+      await sleep(300);
+    }
+    if (!manual.checked) throw new Error("Could not select the On-demand schedule option.");
+  }
+
   async function applyConfiguredFrequency() {
     const schedule = config();
     if (schedule.mode !== "scheduled" || schedule.frequency === "Daily" || window.__cdpFrequencyOverrideApplying) return;
@@ -82,13 +97,16 @@
     if (!target) return;
 
     if (schedule.mode === "onDemand" && !window.__cdpManualScheduleApplied && target.closest("oj-button#saveNclose-create-job, #saveNclose-create-job")) {
-      const manual = document.querySelector("oj-radioset#recurring-or-manual input[value='Manual'], oj-radioset#recurring-or-manual input[value='OnDemand']");
-      if (!manual) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       window.__cdpManualScheduleApplied = true;
-      (document.querySelector(`label[for="${CSS.escape(manual.id)}"]`) || manual).click();
-      setTimeout(() => (document.querySelector("oj-button#saveNclose-create-job button, #saveNclose-create-job button") || manual).click(), 350);
+      applyManualSchedule()
+        .then(() => setTimeout(() => (document.querySelector("oj-button#saveNclose-create-job button, #saveNclose-create-job button") || target).click(), 350))
+        .catch((error) => {
+          window.__cdpManualScheduleApplied = false;
+          console.error("CDP On-demand override failed", error);
+          alert(error.message || "Could not apply the On-demand schedule.");
+        });
       return;
     }
 

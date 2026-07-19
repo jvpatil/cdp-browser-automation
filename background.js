@@ -41,28 +41,32 @@ const TASKS = {
   "integrationStatus.js": { path: "/data/", root: "integrations" }
 };
 
-// Add future tables here. The UI sends only an id; CSV samples and CDP mapping
-// tables stay centralized in the background worker.
-const IMPORT_TABLES = {
-  customer: {
-    id: "customer",
-    label: "Customer",
-    cdpTable: "Customer",
-    csvFile: "sample-csv/customer.csv"
-  },
-  contactPoint: {
-    id: "contactPoint",
-    label: "Contacts",
-    cdpTable: "ContactPoint",
-    csvFile: "sample-csv/contactpoint.csv"
-  },
-  address: {
-    id: "address",
-    label: "Address",
-    cdpTable: "Address",
-    csvFile: "sample-csv/address.csv"
+let tableCatalogPromise;
+
+async function loadTableCatalog() {
+  if (!tableCatalogPromise) {
+    tableCatalogPromise = fetch(chrome.runtime.getURL("config/tables.json"))
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Could not read config/tables.json.");
+        return response.json();
+      })
+      .then((catalog) => {
+        const imports = Array.isArray(catalog?.importTables) ? catalog.importTables : [];
+        const exports = Array.isArray(catalog?.exportPayloads) ? catalog.exportPayloads : [];
+        const validImports = imports.length && imports.every((table) =>
+          typeof table?.id === "string" && table.id &&
+          typeof table.label === "string" && table.label &&
+          typeof table.cdpTable === "string" && table.cdpTable &&
+          typeof table.csvFile === "string" && table.csvFile
+        );
+        const uniqueIds = new Set(imports.map((table) => table.id)).size === imports.length;
+        const validExports = exports.length && exports.every((payload) => typeof payload === "string" && payload);
+        if (!validImports || !uniqueIds || !validExports) throw new Error("config/tables.json has an invalid table or payload entry.");
+        return { importsById: Object.fromEntries(imports.map((table) => [table.id, table])), exportPayloads: exports };
+      });
   }
-};
+  return tableCatalogPromise;
+}
 
 const E2E_IMPORT_FALLBACK = {
   targetTables: ["Customer", "ContactPoint"],
@@ -105,7 +109,8 @@ async function loadCsvFields(table) {
 }
 
 async function buildImportConfig(tableIds) {
-  const selected = [...new Set(tableIds || [])].map((id) => IMPORT_TABLES[id]);
+  const catalog = await loadTableCatalog();
+  const selected = [...new Set(tableIds || [])].map((id) => catalog.importsById[id]);
   if (!selected.length || selected.some((table) => !table)) throw new Error("Select at least one supported import table.");
   const fields = (await Promise.all(selected.map(loadCsvFields))).flat();
   const uniqueFields = [];
@@ -135,6 +140,10 @@ async function setE2EStatus(status = "", tabId) {
   const activeRun = activeSequences.get(tabId);
   if (activeRun) activeRun.status = status;
   await chrome.storage.local.set({ e2eStatus: status });
+}
+
+async function clearFlowDraft() {
+  await chrome.storage.local.remove("flowDraft");
 }
 
 async function installStopGuard(tabId) {
@@ -432,6 +441,11 @@ async function waitForStep(tabId, label, _saveSelector, runId, stepId, timeout =
 async function runTask(tabId, filename, monitor, schedule, importConfig, exportPayloadName, importTableIds) {
   const task = TASKS[filename];
   if (!task) throw new Error(`Unsupported automation script: ${filename}`);
+  if (filename === "exportJob.js") {
+    const catalog = await loadTableCatalog();
+    const payload = exportPayloadName || "Customer";
+    if (!catalog.exportPayloads.includes(payload)) throw new Error(`Unsupported export payload: ${payload}.`);
+  }
 
   const tab = await chrome.tabs.get(tabId);
   if (!tab.url?.startsWith("http")) {
@@ -746,6 +760,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
       await setE2EStatus("", tabId);
       await chrome.storage.local.remove("e2eRun");
     }
+    await clearFlowDraft();
   }
 }
 
@@ -781,6 +796,7 @@ async function runImportJob(tabId, tableIds, schedule) {
   } finally {
     if (activeSequences.get(tabId)?.runId === runId) activeSequences.delete(tabId);
     if (!failed) await setE2EStatus("", tabId);
+    await clearFlowDraft();
   }
 }
 
@@ -795,6 +811,7 @@ async function runPublishAll(tabId) {
     const cancelled = activeSequences.get(tabId)?.runId === runId && activeSequences.get(tabId)?.cancelled;
     if (activeSequences.get(tabId)?.runId === runId) activeSequences.delete(tabId);
     await setE2EStatus("", tabId);
+    await clearFlowDraft();
   }
 }
 
@@ -823,6 +840,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     activeSequences.delete(tabId);
   }
   Promise.all([setE2EStatus("", tabId), cancelPublish])
+    .then(clearFlowDraft)
     .finally(() => sendResponse({ ok: true, stopped: Boolean(activeSequence) }));
   return true;
 });
@@ -838,6 +856,7 @@ chrome.runtime.onMessage.addListener((message) => {
     if (activeRun.runId !== message.runId || !activeRun.individual) continue;
     activeSequences.delete(tabId);
     setE2EStatus("", tabId);
+    clearFlowDraft();
     break;
   }
 });
@@ -886,6 +905,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     .catch((error) => {
       if (activeSequences.get(message.tabId)?.runId === runId) activeSequences.delete(message.tabId);
       setE2EStatus(`Failed: ${label}`, message.tabId);
+      clearFlowDraft();
       console.error("CDP automation failed", error);
       sendResponse({ ok: false, error: error.message || String(error) });
     });
