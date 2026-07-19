@@ -467,12 +467,15 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
       await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
-        args: [schedule || { offsetHours: 0 }],
+        args: [schedule || { mode: "scheduled", frequency: "Daily", startTime: "immediate" }],
         func: (scheduleConfig) => {
           window.__cdpSchedule = scheduleConfig;
           window.__cdpScheduledRunAt = null;
           window.__cdpScheduleApplied = false;
           window.__cdpManualScheduleApplied = false;
+          window.__cdpFrequencySaveDeferred = false;
+          window.__cdpFrequencyOverrideSaved = false;
+          window.__cdpFrequencyOverrideApplying = false;
         }
       });
       await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["scheduleOverride.js"] });
@@ -697,9 +700,9 @@ async function runConfiguredFlow(tabId, flow = {}) {
         runMetadata.exportScheduledAt = exportHour.getTime();
       }
       const schedule = step.id === "export"
-        ? (flow.staggerJobs ? { scheduledAt: runMetadata.exportScheduledAt } : flow.exportSchedule)
+        ? (flow.staggerJobs ? { ...flow.exportSchedule, scheduledAt: runMetadata.exportScheduledAt } : flow.exportSchedule)
         : step.id === "import"
-          ? (flow.staggerJobs ? { scheduledAt: runMetadata.exportScheduledAt + 3600000 } : flow.importSchedule)
+          ? (flow.staggerJobs ? { ...flow.importSchedule, scheduledAt: runMetadata.exportScheduledAt + 3600000 } : flow.importSchedule)
           : undefined;
       let importConfig;
       if (step.id === "import") {

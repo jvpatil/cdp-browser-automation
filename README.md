@@ -60,8 +60,10 @@ To add a table, create its CSV fragment, add its registry record to
 
 ## Scheduling and E2E
 
-Individual Import and Export jobs support **On-demand**, **Next hour**, and
-**+1 hour** schedules. Next hour and +1 hour use exact clock-hour slots.
+Individual Import and Export jobs use **On-demand** or **Scheduled** mode.
+Scheduled jobs support **Hourly**, **Daily**, and **Weekly** frequency plus an
+**Immediate** (next exact hour) or **+1 Hour** start time. Weekly uses the
+current local weekday.
 
 For the default E2E flow, Export is scheduled for the next exact hour and
 Import is scheduled for the exact hour after Export. A custom flow with both
