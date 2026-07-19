@@ -128,13 +128,6 @@ async function buildImportConfig(tableIds) {
   };
 }
 
-const FULL_SEQUENCE = [
-  { filename: "source.js", label: "Create Source", saveSelector: "#create-source-saveClose" },
-  { filename: "destination.js", label: "Create Destination", saveSelector: "#dst-saveClose-btn" },
-  { filename: "exportJob.js", label: "Create Export Job", saveSelector: "#saveNclose-create-job" },
-  { filename: "importContacts.js", label: "Import Contacts", importTableIds: ["customer", "contactPoint"], saveSelector: "#saveNclose-create-job" }
-];
-
 const sequenceStepState = new Map();
 const activeSequences = new Map();
 
@@ -192,15 +185,12 @@ async function captureCreatedEntity(tabId, runMetadata, filename) {
   const { name: jobName, scheduledAt: capturedScheduledAt } = capturedEntity || {};
   const scheduledAt = capturedScheduledAt || (filename === "exportJob.js" ? runMetadata.exportScheduledAt : null);
   if (!jobName) throw new Error(`The saved ${creation.label} name could not be captured.`);
-  if (creation.section === "jobs" && !scheduledAt) {
-    throw new Error(`The scheduled hour for ${creation.label} could not be captured.`);
-  }
   const savedEntity = {
     label: creation.label,
     name: jobName,
     savedAt: Date.now()
   };
-  if (creation.section === "jobs") savedEntity.scheduledAt = scheduledAt;
+  if (creation.section === "jobs" && scheduledAt) savedEntity.scheduledAt = scheduledAt;
   if (creation.section === "jobs") {
     runMetadata.creations.jobs[creation.role] = savedEntity;
   } else {
@@ -662,8 +652,23 @@ async function verifyPublishedJobs(tabId, options) {
   });
 }
 
-async function runFullSequence(tabId) {
+async function runConfiguredFlow(tabId, flow = {}) {
   if (activeSequences.has(tabId)) throw new Error("An E2E flow is already running in this tab.");
+
+  const selectedSteps = new Set(flow.steps || ["source", "destination", "export", "import", "publish", "verify"]);
+  const stepDefinitions = [
+    { id: "source", filename: "source.js", label: "Create Source", saveSelector: "#create-source-saveClose" },
+    { id: "destination", filename: "destination.js", label: "Create Destination", saveSelector: "#dst-saveClose-btn" },
+    { id: "export", filename: "exportJob.js", label: "Create Export Job", saveSelector: "#saveNclose-create-job" },
+    { id: "import", filename: "importContacts.js", label: "Create Import Job", saveSelector: "#saveNclose-create-job" }
+  ].filter((step) => selectedSteps.has(step.id));
+  const selectedJobSteps = stepDefinitions.filter((step) => step.id === "export" || step.id === "import");
+  if (!stepDefinitions.length && !selectedSteps.has("publish") && !selectedSteps.has("verify")) {
+    throw new Error("Select at least one flow step.");
+  }
+  if (selectedSteps.has("import") && !(flow.importTableIds || ["customer", "contactPoint"]).length) {
+    throw new Error("Select at least one import table.");
+  }
 
   const runId = crypto.randomUUID();
   const runMetadata = {
@@ -684,37 +689,50 @@ async function runFullSequence(tabId) {
   await chrome.storage.local.set({ e2eRun: runMetadata });
   let completed = false;
   try {
-    for (const step of FULL_SEQUENCE) {
+    for (const step of stepDefinitions) {
       await setE2EStatus(`Running: ${step.label}`, tabId);
-      if (step.filename === "exportJob.js" && !runMetadata.exportScheduledAt) {
+      if (step.id === "export" && flow.staggerJobs && !runMetadata.exportScheduledAt) {
         const exportHour = new Date();
         exportHour.setHours(exportHour.getHours() + 1, 0, 0, 0);
         runMetadata.exportScheduledAt = exportHour.getTime();
       }
-      const schedule = step.filename === "exportJob.js"
-        ? { scheduledAt: runMetadata.exportScheduledAt }
-        : step.filename === "importContacts.js"
-          ? { scheduledAt: (runMetadata.creations.jobs.export?.scheduledAt || runMetadata.exportScheduledAt) + 3600000 }
+      const schedule = step.id === "export"
+        ? (flow.staggerJobs ? { scheduledAt: runMetadata.exportScheduledAt } : flow.exportSchedule)
+        : step.id === "import"
+          ? (flow.staggerJobs ? { scheduledAt: runMetadata.exportScheduledAt + 3600000 } : flow.importSchedule)
           : undefined;
+      let importConfig;
+      if (step.id === "import") {
+        try {
+          importConfig = await buildImportConfig(flow.importTableIds || ["customer", "contactPoint"]);
+        } catch (error) {
+          if (!flow.allowImportFallback) throw error;
+          console.warn("Could not load editable E2E import CSV files; using the bundled fallback.", error);
+          importConfig = E2E_IMPORT_FALLBACK;
+        }
+      }
       await runTask(tabId, step.filename, {
         runId,
         stepId: step.filename,
         saveSelector: step.saveSelector
-      }, schedule, undefined, undefined, step.importTableIds);
+      }, schedule, importConfig, flow.exportPayloadName, flow.importTableIds);
       await waitForStep(tabId, step.label, step.saveSelector, runId, step.filename);
       await captureCreatedEntity(tabId, runMetadata, step.filename);
     }
-    if (runMetadata.jobNames.length !== 2) {
-      throw new Error("Both saved job names are required before publishing.");
+    if (selectedSteps.has("publish")) {
+      if (!selectedJobSteps.length || !runMetadata.jobNames.length) throw new Error("Publish requires an Export or Import job in the flow.");
+      if (activeSequences.get(tabId)?.cancelled) throw new Error("Publishing was stopped by the user.");
+      await setE2EStatus("Running: Publish Created Jobs", tabId);
+      await runPublish(tabId, { mode: "e2e", ...runMetadata, runId, label: "Publish Created Jobs" });
     }
-    if (activeSequences.get(tabId)?.cancelled) throw new Error("Publish E2E Jobs was stopped by the user.");
-    await setE2EStatus("Running: Publish E2E Jobs", tabId);
-    await runPublish(tabId, { mode: "e2e", ...runMetadata, runId, label: "Publish E2E Jobs" });
-    await setE2EStatus("Running: Verify Published Jobs", tabId);
-    await verifyPublishedJobs(tabId, { jobNames: runMetadata.jobNames, runId });
+    if (selectedSteps.has("verify")) {
+      if (!selectedSteps.has("publish")) throw new Error("Verify Published requires Publish to be selected.");
+      await setE2EStatus("Running: Verify Published Jobs", tabId);
+      await verifyPublishedJobs(tabId, { jobNames: runMetadata.jobNames, runId });
+    }
     completed = true;
   } catch (error) {
-    console.error("CDP E2E flow failed", error);
+    console.error("CDP flow failed", error);
     await setE2EStatus(`Failed: ${error.message || error}`, tabId);
     throw error;
   } finally {
@@ -726,6 +744,16 @@ async function runFullSequence(tabId) {
       await chrome.storage.local.remove("e2eRun");
     }
   }
+}
+
+async function runFullSequence(tabId) {
+  return runConfiguredFlow(tabId, {
+    steps: ["source", "destination", "export", "import", "publish", "verify"],
+    importTableIds: ["customer", "contactPoint"],
+    exportPayloadName: "Customer",
+    staggerJobs: true,
+    allowImportFallback: true
+  });
 }
 
 async function runImportJob(tabId, tableIds, schedule) {
@@ -862,6 +890,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "run-custom-flow") {
+    runConfiguredFlow(message.tabId, message.flow)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => {
+        console.error("CDP custom flow failed", error);
+        sendResponse({ ok: false, error: error.message || String(error) });
+      });
+    return true;
+  }
   if (message?.type !== "run-full-sequence") return;
 
   runFullSequence(message.tabId)

@@ -21,7 +21,8 @@ active Oracle CDP tab and navigates to the required page before it begins work.
 | Export Job | Opens the export-job page. Select one payload and a schedule: On-demand, Next hour, or +1 hour. |
 | Import Responsys Profile | Runs the dedicated Responsys-profile ingest automation. |
 | Import Jobs | Creates one generic ingest job for the selected tables, using one shared schedule. |
-| Run E2E Flow | Creates Source → Destination → Export Job → Import Job → publishes the two created jobs → verifies their Published status. |
+| Run default E2E flow | Creates Source → Destination → Export Job → Import Job → publishes the created jobs → verifies their Published status. |
+| Customize flow | Selects a safe ordered subset of Source, Destination, Export, Import, Publish, and Verify; Import/Export settings are configured inline. |
 | Publish All Data Feeds | Opens Publish Changes and selectively publishes every available Data feed. |
 | Stop Current Flow | Stops the E2E or individual automation currently running in the active tab. |
 
@@ -62,10 +63,11 @@ To add a table, create its CSV fragment, add its registry record to
 Individual Import and Export jobs support **On-demand**, **Next hour**, and
 **+1 hour** schedules. Next hour and +1 hour use exact clock-hour slots.
 
-For E2E, Export is scheduled for the next exact hour and Import is scheduled
-for the exact hour after Export. The E2E flow persists the Source, Destination,
-and job creation records; only its created Export and Import jobs are selected
-for E2E publishing.
+For the default E2E flow, Export is scheduled for the next exact hour and
+Import is scheduled for the exact hour after Export. A custom flow with both
+jobs uses the same stagger. A custom flow with one job uses its selected
+On-demand, Next hour, or +1 hour schedule. Flow steps always run in the safe
+fixed order, and publishing selects only jobs created by that flow.
 
 If E2E cannot load its editable Customer/ContactPoint CSV fragments, it uses
 its bundled fallback sample and mapping so that the flow can continue. A

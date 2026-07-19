@@ -3,335 +3,50 @@
 <head>
   <meta charset="utf-8">
   <style>
-    * { box-sizing: border-box; }
-
-    :root {
-      color-scheme: dark;
-
-      --panel-top: #17365C;
-      --panel-bottom: #0B2038;
-
-      --button-top: #17375F;
-      --button-bottom: #0E2745;
-      --button-hover-top: #1C436E;
-      --button-hover-bottom: #123050;
-      --button-active-top: #102A49;
-      --button-active-bottom: #0A1D33;
-
-      --button-border: #526987;
-      --button-inner: rgba(255, 255, 255, 0.06);
-
-      --gold: #B69A6B;
-      --gold-strong: #C4A66F;
-
-      --text: #F1F2F0;
-      --text-muted: #C8CDD3;
-      --icon: #E6E4DC;
-    }
-
-    body {
-      width: 264px;
-      margin: 0;
-      padding: 7px 8px 8px;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
-      color: var(--text);
-    }
-
-    .group {
-      margin-top: 7px;
-    }
-
-    .group:first-of-type {
-      margin-top: 0;
-    }
-
-    .group-label {
-      margin: 0 1px 5px;
-      font-size: 10.5px;
-      line-height: 1;
-      font-weight: 800;
-      color: var(--gold);
-      text-transform: uppercase;
-      letter-spacing: 0.095em;
-    }
-
-    .actions {
-      display: grid;
-      gap: 4px;
-    }
-
-    #status {
-      min-height: 15px;
-      margin: 7px 1px 0;
-      color: var(--text-muted);
-      font-size: 10px;
-      line-height: 1.35;
-    }
-
-    button {
-      display: grid;
-      grid-template-columns: 18px minmax(0, 1fr) 10px;
-      align-items: center;
-      gap: 7px;
-      width: 100%;
-      min-height: 36px;
-      margin: 0;
-      padding: 6px 8px;
-      border: 1px solid var(--button-border);
-      border-radius: 11px;
-      background: linear-gradient(180deg, var(--button-top), var(--button-bottom));
-      color: var(--text);
-      font: inherit;
-      cursor: pointer;
-      box-shadow:
-        inset 0 1px 0 var(--button-inner),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.22);
-      transition:
-        background 120ms ease,
-        border-color 120ms ease,
-        transform 100ms ease;
-    }
-
-    button:hover {
-      background: linear-gradient(180deg, var(--button-hover-top), var(--button-hover-bottom));
-      border-color: #6D84A2;
-    }
-
-    button:active {
-      transform: translateY(1px);
-      background: linear-gradient(180deg, var(--button-active-top), var(--button-active-bottom));
-      box-shadow:
-        inset 0 2px 3px rgba(0, 0, 0, 0.24);
-    }
-
-    .import-action {
-      position: relative;
-    }
-
-    .import-action select {
-      position: absolute;
-      top: 4px;
-      right: 4px;
-      width: 28px;
-      height: 28px;
-      opacity: 0;
-      cursor: pointer;
-    }
-
-    .import-action .import-job-button {
-      grid-template-columns: 18px minmax(0, 1fr) auto 10px;
-    }
-
-    .schedule-indicator {
-      color: var(--gold-strong);
-      font-size: 9px;
-      font-weight: 800;
-      letter-spacing: 0.02em;
-    }
-
-    #importJobsView { display: none; }
-    body.import-picker-open > .group,
-    body.import-picker-open > #status { display: none; }
-    body.import-picker-open #importJobsView { display: block; }
-    #exportJobsView { display: none; }
-    body.export-picker-open > .group,
-    body.export-picker-open > #status { display: none; }
-    body.export-picker-open #exportJobsView { display: block; }
-    .picker-header { display: flex; align-items: center; justify-content: space-between; margin: 2px 0 8px; }
-    .picker-title { margin: 0; font-size: 13px; color: var(--text); }
-    .picker-back { width: auto; min-height: 28px; grid-template-columns: 1fr; padding: 5px 8px; font-size: 10px; }
-    .picker-search { width: 100%; margin-bottom: 6px; padding: 7px 8px; border: 1px solid var(--button-border); border-radius: 8px; background: #102a49; color: var(--text); font: inherit; font-size: 11px; }
-    .picker-tools { display: flex; justify-content: space-between; margin: 0 1px 6px; font-size: 10px; }
-    .picker-tools button { width: auto; min-height: auto; grid-template-columns: 1fr; padding: 0; border: 0; background: none; box-shadow: none; color: var(--gold-strong); font-size: 10px; }
-    #importJobList { display: grid; gap: 4px; max-height: 250px; overflow-y: auto; }
-    .import-job-row { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 6px; padding: 7px; border: 1px solid var(--button-border); border-radius: 9px; }
-    .import-job-check { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 11px; font-weight: 600; }
-    .import-job-check input { margin: 0; accent-color: var(--gold-strong); }
-    .import-job-schedule { width: 100%; padding: 5px; border: 1px solid var(--button-border); border-radius: 7px; background: #102a49; color: var(--text); font-size: 10px; }
-    .run-selected { margin-top: 8px; }
-
-    .icon {
-      width: 18px;
-      height: 18px;
-      color: var(--icon);
-      stroke-width: 1.7;
-    }
-
-    .label {
-      min-width: 0;
-      font-size: 11.5px;
-      line-height: 1.2;
-      font-weight: 600;
-      text-align: left;
-      color: var(--text);
-      white-space: nowrap;
-    }
-
-    .chevron {
-      width: 10px;
-      height: 10px;
-      color: var(--gold-strong);
-      stroke-width: 2.2;
-    }
-
-
-    svg {
-      display: block;
-      fill: none;
-      stroke: currentColor;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-</style>
+    :root { color-scheme:dark; --navy:#0d1b2a; --field:#14213d; --card:#102843; --header:#1a3f68; --line:#1b263b; --line-light:#496887; --bronze-1:#e5ba73; --bronze-2:#c5a880; --bronze:#e5ba73; --text:#fff; --muted:#8d99ae; --green:#9acfa5; --red:#ef938d; }
+    * { box-sizing:border-box; } body { width:380px; max-height:590px; overflow:auto; margin:0; padding:14px; color:var(--text); background:radial-gradient(circle at 80% 0%,#173c66 0%,transparent 36%),var(--navy); font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; letter-spacing:-.01em; -webkit-font-smoothing:antialiased; }
+    button,input { font:inherit; } button { cursor:pointer; } .header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:1px 2px 12px; } .brand { font-size:15px; font-weight:700; } .subtle { color:var(--muted); font-size:11px; } .section { margin-top:13px; } .section-title { margin:0 0 7px 2px; color:var(--bronze); font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+    .card { overflow:hidden; border:1px solid var(--line-light); border-radius:17px; background:linear-gradient(180deg,#102c4b,#0d2137); box-shadow:inset 0 1px rgba(255,255,255,.08),0 8px 20px rgba(0,0,0,.16); } .card + .card { margin-top:8px; } details > summary { list-style:none; } details > summary::-webkit-details-marker { display:none; }
+    .primary,.action,.run { display:flex; align-items:center; justify-content:space-between; width:100%; border:0; color:var(--text); text-align:left; } .primary { min-height:40px; padding:8px 11px; border:1px solid var(--bronze-2); border-radius:9px; color:var(--navy); background:linear-gradient(100deg,var(--bronze-1),var(--bronze-2)); font-weight:750; } .action { min-height:42px; padding:9px 12px; background:linear-gradient(135deg,#214d7c,#183a61); } details[open] > summary { border-bottom:1px solid var(--line-light); } .action-main { display:flex; align-items:center; gap:9px; min-width:0; font-size:13px; font-weight:600; } .icon { display:grid; place-items:center; width:20px; height:20px; color:var(--bronze); font-size:16px; } .arrow { color:var(--bronze); font-size:18px; line-height:1; } details[open] .arrow { font-size:0; } details[open] .arrow::after { content:"⌃"; font-size:18px; }
+    .card-content,.flow-builder { padding:12px; } .inline-row { display:flex; align-items:center; gap:8px; } .inline-row + .inline-row { margin-top:9px; } input[type="search"] { width:100%; height:36px; min-width:0; padding:0 11px; border:1px solid #4a6683; border-radius:7px; outline:0; color:var(--text); background:var(--field); font-size:12px; font-weight:500; } input[type="search"]::placeholder { color:var(--muted); } input[type="search"]:focus { border-color:var(--bronze); } .link { flex:0 0 auto; border:0; padding:0; color:var(--bronze); background:none; font-size:12px; font-weight:600; }
+    .choices { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; margin:10px 0; } #quickExportPayloads,#flowExportPayloads { grid-template-columns:repeat(2,minmax(0,1fr)); } .choice { display:flex; align-items:center; gap:5px; min-width:0; height:32px; padding:0 8px; border:1px solid #3c5b78; border-radius:7px; color:var(--text); background:var(--field); cursor:pointer; } .choice:has(input:checked) { border-color:var(--bronze); background:rgba(229,186,115,.16); box-shadow:inset 0 0 0 1px rgba(229,186,115,.14); } .choice input { flex:0 0 auto; width:14px; height:14px; margin:0; accent-color:var(--bronze); } .choice:not(:has(input:checked)) { color:#d6dee8; } .choice { font-size:11px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .segment { display:flex; gap:2px; overflow:hidden; width:100%; max-width:310px; padding:2px; border:1px solid #647284; border-radius:999px; background:#c5cbd4; } .segment button { flex:1; min-height:38px; padding:4px 7px; border:0; border-radius:999px; color:#122033; background:transparent; font-size:12px; line-height:1.05; } .segment button[aria-pressed="true"] { color:#172130; background:#f0f1f2; box-shadow:inset 0 0 0 1px var(--bronze-2),0 0 12px rgba(229,186,115,.32); font-weight:700; } .segment button:disabled { opacity:.55; cursor:not-allowed; }
+    .run { justify-content:center; min-height:42px; margin-top:14px; border:1px solid #e5ba73; border-radius:9px; color:var(--navy); background:linear-gradient(100deg,#d4a866,#b58c5e); box-shadow:inset 0 1px rgba(255,255,255,.45),0 3px 10px rgba(0,0,0,.23); font-size:14px; font-weight:700; } .run:disabled { opacity:.48; cursor:not-allowed; } .hint { margin:9px 1px 0; color:var(--muted); font-size:11px; } .count { color:var(--bronze); font-size:11px; font-weight:600; white-space:nowrap; }
+    .flow-step { display:flex; align-items:center; gap:9px; padding:9px 0; border-bottom:1px solid rgba(73,104,135,.43); } .flow-step:last-of-type { border-bottom:0; } .flow-step input { width:15px; height:15px; margin:0; accent-color:var(--bronze); } .flow-step label { flex:1; font-size:12px; font-weight:600; } .flow-step small { color:var(--muted); } .flow-config { margin:7px 0 2px 24px; padding:9px; border-left:2px solid var(--bronze-2); border-radius:0 8px 8px 0; background:rgba(20,33,61,.72); } .flow-config[hidden] { display:none; } .flow-preview { margin-top:11px; padding:9px; border:1px solid var(--line); border-radius:8px; color:#d9e3ed; background:#0a1725; font-size:11px; line-height:1.55; }
+    .status-card { display:flex; align-items:center; gap:8px; min-height:40px; padding:8px 10px; border:1px solid #496887; border-radius:10px; background:#102843; box-shadow:inset 0 1px rgba(255,255,255,.04); } .status-dot { width:8px; height:8px; border-radius:50%; background:var(--green); } .status-dot.idle { background:#8d99ae; } #status { flex:1; min-width:0; color:#c7d3df; overflow:hidden; font-size:11px; text-overflow:ellipsis; white-space:nowrap; } .stop { width:auto; min-height:27px; padding:4px 9px; border:1px solid #9c5555; border-radius:6px; color:var(--red); background:rgba(140,49,49,.22); font-size:10px; font-weight:700; } .stop[hidden] { display:none; }
+  </style>
 </head>
 <body>
-  <section class="group">
-    <div class="group-label">End-to-end</div>
-    <div class="actions">
-      <button id="runE2EBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="5" cy="5" r="2"></circle>
-          <circle cx="19" cy="12" r="2"></circle>
-          <circle cx="5" cy="19" r="2"></circle>
-          <path d="M7 5h5a3 3 0 0 1 3 3v2"></path>
-          <path d="M17 14v2a3 3 0 0 1-3 3H7"></path>
-        </svg>
-        <span class="label">Run E2E Flow</span>
-        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="m9 18 6-6-6-6"></path>
-        </svg>
-      </button>
-      <button id="publishAllBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5 4h14v5H5z"></path>
-          <path d="M7 9v11h10V9"></path>
-          <path d="M9 13h6M12 10v6"></path>
-        </svg>
-        <span class="label">Publish All Data Feeds</span>
-        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="m9 18 6-6-6-6"></path>
-        </svg>
-      </button>
-      <button id="stopE2EBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="6" y="6" width="12" height="12" rx="1"></rect>
-        </svg>
-        <span class="label">Stop Current Flow</span>
-        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="m9 18 6-6-6-6"></path>
-        </svg>
-      </button>
-    </div>
-  </section>
+  <header class="header"><div><div class="brand">CDP Automation</div><div class="subtle">Create, schedule, publish</div></div><div class="subtle">Oracle CDP</div></header>
 
-<section class="group">
-    <div class="group-label">Connections</div>
-    <div class="actions">
-      <button id="sourceBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <ellipse cx="10" cy="5" rx="6" ry="3"></ellipse>
-          <path d="M4 5v7c0 1.7 2.7 3 6 3"></path>
-          <path d="M16 5v5"></path>
-          <path d="M4 9c0 1.7 2.7 3 6 3"></path>
-          <circle cx="17.5" cy="16.5" r="3.5"></circle>
-          <path d="M17.5 14.8v3.4M15.8 16.5h3.4"></path>
-        </svg>
-        <span class="label">Create Source</span>
-        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="m9 18 6-6-6-6"></path>
-        </svg>
-      </button>
-
-      <button id="destinationBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="10" cy="12" r="7"></circle>
-          <path d="M3 12h14M10 5a11 11 0 0 1 0 14M10 5a11 11 0 0 0 0 14"></path>
-          <path d="M15 17h6M18 14l3 3-3 3"></path>
-        </svg>
-        <span class="label">Create Destination</span>
-        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="m9 18 6-6-6-6"></path>
-        </svg>
-      </button>
-    </div>
-  </section>
-
-  <section class="group">
-    <div class="group-label">Imports</div>
-    <div class="actions">
-      <div class="import-action">
-      <button class="import-job-button" id="importBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="9" cy="7" r="3"></circle>
-          <path d="M3.5 18c.7-3.2 2.5-5 5.5-5s4.8 1.8 5.5 5"></path>
-          <path d="M18 9v8M15 14l3 3 3-3"></path>
-        </svg>
-        <span class="label">Import Responsys Profile</span>
-        <span class="schedule-indicator" id="importProfileScheduleIndicator">Next</span>
-        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
-      </button>
-      <select class="import-schedule-select" id="importProfileSchedule" aria-label="Import Responsys Profile schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
+  <section class="section"><div class="section-title">Run flow</div>
+    <button class="primary" id="runE2EBtn"><span class="action-main"><span class="icon">↝</span><span>Run Sanity Flow</span></span><span class="arrow">›</span></button>
+    <details class="card" id="flowBuilder"><summary class="action"><span class="action-main"><span class="icon">☷</span><span>Customize flow</span></span><span class="arrow">›</span></summary>
+      <div class="flow-builder">
+        <div class="flow-step"><input id="flow-source" type="checkbox" checked><label for="flow-source">Create Source</label><small>1</small></div>
+        <div class="flow-step"><input id="flow-destination" type="checkbox" checked><label for="flow-destination">Create Destination</label><small>2</small></div>
+        <div class="flow-step"><input id="flow-export" type="checkbox" checked><label for="flow-export">Create Export Job</label><small>3</small></div>
+        <div class="flow-config" id="flowExportConfig"><div id="flowExportPayloads" class="choices"></div><div class="inline-row"><span class="subtle">Schedule</span><div class="segment" data-schedule="flowExportSchedule"></div></div></div>
+        <div class="flow-step"><input id="flow-import" type="checkbox" checked><label for="flow-import">Create Import Job</label><small>4</small></div>
+        <div class="flow-config" id="flowImportConfig"><div id="flowImportTables" class="choices"></div><div class="inline-row"><span class="subtle">Schedule</span><div class="segment" data-schedule="flowImportSchedule"></div></div></div>
+        <div class="flow-step"><input id="flow-publish" type="checkbox" checked><label for="flow-publish">Publish created jobs</label><small>5</small></div>
+        <div class="flow-step"><input id="flow-verify" type="checkbox" checked><label for="flow-verify">Verify Published</label><small>6</small></div>
+        <div id="flowHint" class="hint"></div><div id="flowPreview" class="flow-preview"></div>
+        <button class="run" id="runCustomFlowBtn">▶ Run 6-step flow</button>
       </div>
-
-      <button id="importJobsBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 9h8M8 13h8M8 17h5"></path></svg>
-        <span class="label">Import Jobs</span>
-        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
-      </button>
-
-    </div>
+    </details>
   </section>
 
-  <section id="importJobsView">
-    <div class="picker-header">
-      <h1 class="picker-title">Import Jobs</h1>
-      <button class="picker-back" id="importJobsBackBtn">Back</button>
-    </div>
-    <input class="picker-search" id="importJobSearch" type="search" placeholder="Search tables">
-    <div class="picker-tools"><button id="selectAllImportsBtn">Select all</button><button id="clearImportsBtn">Clear</button></div>
-    <div id="importJobList"></div>
-    <select class="import-job-schedule" id="importJobSchedule" aria-label="Import Job schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
-    <button class="run-selected" id="runSelectedImportsBtn">
-      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 10 7-10 7z"></path></svg>
-      <span class="label">Run Import Job</span>
-      <span></span>
-    </button>
+  <section class="section"><div class="section-title">Quick runs</div>
+    <div class="card"><button class="action" id="sourceBtn"><span class="action-main"><span class="icon">◌</span><span>Create Source</span></span><span class="arrow">›</span></button></div>
+    <div class="card"><button class="action" id="destinationBtn"><span class="action-main"><span class="icon">◎</span><span>Create Destination</span></span><span class="arrow">›</span></button></div>
+    <details class="card"><summary class="action"><span class="action-main"><span class="icon">⇣</span><span>Import Responsys Profile</span></span><span class="count" id="responsysScheduleLabel">Next hour</span></summary><div class="card-content"><div class="segment" data-schedule="responsysSchedule"></div><button class="run" id="runResponsysBtn">▶ Run Responsys Import</button></div></details>
+    <details class="card" id="quickImport" open><summary class="action"><span class="action-main"><span class="icon">⇣</span><span>Import Job</span></span><span class="count" id="quickImportCount">Select tables</span></summary><div class="card-content"><div class="inline-row"><input id="quickImportSearch" type="search" placeholder="Search tables"><button class="link" id="clearImportBtn">Clear</button></div><div id="quickImportTables" class="choices"></div><div class="inline-row"><span class="subtle">Schedule</span><div class="segment" data-schedule="quickImportSchedule"></div></div><button class="run" id="runQuickImportBtn">▶ Run Import Job</button></div></details>
+    <details class="card" id="quickExport" open><summary class="action"><span class="action-main"><span class="icon">⇡</span><span>Export Job</span></span><span class="count" id="quickExportValue">Customer</span></summary><div class="card-content"><input id="quickExportSearch" type="search" placeholder="Search data objects"><div id="quickExportPayloads" class="choices"></div><div class="inline-row"><span class="subtle">Schedule</span><div class="segment" data-schedule="quickExportSchedule"></div></div><button class="run" id="runQuickExportBtn">▶ Run Export Job</button></div></details>
+    <div class="card"><button class="action" id="publishAllBtn"><span class="action-main"><span class="icon">↑</span><span>Publish all Data feeds</span></span><span class="arrow">›</span></button></div>
   </section>
 
-  <section id="exportJobsView">
-    <div class="picker-header">
-      <h1 class="picker-title">Export Job</h1>
-      <button class="picker-back" id="exportJobsBackBtn">Back</button>
-    </div>
-    <div id="exportPayloadList"></div>
-    <select class="import-job-schedule" id="exportJobSchedule" aria-label="Export Job schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
-    <button class="run-selected" id="runExportJobBtn">
-      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 10 7-10 7z"></path></svg>
-      <span class="label">Run Export Job</span>
-      <span></span>
-    </button>
-  </section>
-
-  <section class="group">
-    <div class="group-label">Export</div>
-    <div class="actions">
-      <button id="exportBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <ellipse cx="9" cy="5" rx="5" ry="2.5"></ellipse>
-          <path d="M4 5v9c0 1.4 2.2 2.5 5 2.5"></path>
-          <path d="M14 5v5"></path>
-          <path d="M4 9c0 1.4 2.2 2.5 5 2.5"></path>
-          <path d="M15 12h6M18 9l3 3-3 3"></path>
-        </svg>
-        <span class="label">ExportJob</span>
-        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="m9 18 6-6-6-6"></path>
-        </svg>
-      </button>
-    </div>
-  </section>
-  <div id="status" role="status" aria-live="polite"></div>
-<script src="popup.js"></script>
+  <section class="section"><div class="section-title">Active run</div><div class="status-card"><span class="status-dot idle" id="statusDot"></span><span id="status" role="status" aria-live="polite">No automation running</span><button class="stop" id="stopE2EBtn" hidden>■ Stop</button></div></section>
+  <script src="popup.js"></script>
 </body>
 </html>

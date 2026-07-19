@@ -124,7 +124,7 @@
       .map((element) => element.querySelector?.("button") || element)
       .find((element) => visible(element) && enabled(element) && /^start publish job$/i.test(text(element))),
     "Start publish job button");
-    // await click(startButton);
+    await click(startButton);
     return { selected };
   }
 
