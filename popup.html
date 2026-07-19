@@ -130,6 +130,27 @@
       letter-spacing: 0.02em;
     }
 
+    #importJobsView { display: none; }
+    body.import-picker-open > .group,
+    body.import-picker-open > #status { display: none; }
+    body.import-picker-open #importJobsView { display: block; }
+    #exportJobsView { display: none; }
+    body.export-picker-open > .group,
+    body.export-picker-open > #status { display: none; }
+    body.export-picker-open #exportJobsView { display: block; }
+    .picker-header { display: flex; align-items: center; justify-content: space-between; margin: 2px 0 8px; }
+    .picker-title { margin: 0; font-size: 13px; color: var(--text); }
+    .picker-back { width: auto; min-height: 28px; grid-template-columns: 1fr; padding: 5px 8px; font-size: 10px; }
+    .picker-search { width: 100%; margin-bottom: 6px; padding: 7px 8px; border: 1px solid var(--button-border); border-radius: 8px; background: #102a49; color: var(--text); font: inherit; font-size: 11px; }
+    .picker-tools { display: flex; justify-content: space-between; margin: 0 1px 6px; font-size: 10px; }
+    .picker-tools button { width: auto; min-height: auto; grid-template-columns: 1fr; padding: 0; border: 0; background: none; box-shadow: none; color: var(--gold-strong); font-size: 10px; }
+    #importJobList { display: grid; gap: 4px; max-height: 250px; overflow-y: auto; }
+    .import-job-row { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 6px; padding: 7px; border: 1px solid var(--button-border); border-radius: 9px; }
+    .import-job-check { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 11px; font-weight: 600; }
+    .import-job-check input { margin: 0; accent-color: var(--gold-strong); }
+    .import-job-schedule { width: 100%; padding: 5px; border: 1px solid var(--button-border); border-radius: 7px; background: #102a49; color: var(--text); font-size: 10px; }
+    .run-selected { margin-top: 8px; }
+
     .icon {
       width: 18px;
       height: 18px;
@@ -253,49 +274,43 @@
       <select class="import-schedule-select" id="importProfileSchedule" aria-label="Import Responsys Profile schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
       </div>
 
-      <div class="import-action">
-      <button class="import-job-button" id="importCustomerBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="8" r="4"></circle>
-          <path d="M4.5 20c.8-4.3 3.3-6.5 7.5-6.5s6.7 2.2 7.5 6.5"></path>
-        </svg>
-        <span class="label">Import Customer</span>
-        <span class="schedule-indicator" id="importCustomerScheduleIndicator">Next</span>
+      <button id="importJobsBtn">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 9h8M8 13h8M8 17h5"></path></svg>
+        <span class="label">Import Jobs</span>
         <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
       </button>
-      <select class="import-schedule-select" id="importCustomerSchedule" aria-label="Import Customer schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
-      </div>
 
-      <div class="import-action">
-      <button class="import-job-button" id="importContactsBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="5" cy="6" r="1.5"></circle>
-          <circle cx="5" cy="12" r="1.5"></circle>
-          <circle cx="5" cy="18" r="1.5"></circle>
-          <path d="M9 6h10M9 12h10M9 18h10"></path>
-        </svg>
-        <span class="label">Import Contacts</span>
-        <span class="schedule-indicator" id="importContactsScheduleIndicator">Next</span>
-        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
-      </button>
-      <select class="import-schedule-select" id="importContactsSchedule" aria-label="Import Contacts schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
-      </div>
-      <div class="import-action">
-      <button class="import-job-button" id="importContactAndAddressBtn">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="3" y="4" width="12" height="11" rx="2"></rect>
-          <circle cx="8" cy="8" r="1.5"></circle>
-          <path d="M5.5 12c.5-1.5 1.4-2.2 2.5-2.2s2 .7 2.5 2.2"></path>
-          <path d="M15 10h6v9H9v-4"></path>
-          <path d="m15 13 3 2 3-2"></path>
-        </svg>
-        <span class="label">Import Contacts and Address</span>
-        <span class="schedule-indicator" id="importContactAddressScheduleIndicator">Next</span>
-        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
-      </button>
-      <select class="import-schedule-select" id="importContactAddressSchedule" aria-label="Import Contacts and Address schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
-      </div>
     </div>
+  </section>
+
+  <section id="importJobsView">
+    <div class="picker-header">
+      <h1 class="picker-title">Import Jobs</h1>
+      <button class="picker-back" id="importJobsBackBtn">Back</button>
+    </div>
+    <input class="picker-search" id="importJobSearch" type="search" placeholder="Search tables">
+    <div class="picker-tools"><button id="selectAllImportsBtn">Select all</button><button id="clearImportsBtn">Clear</button></div>
+    <div id="importJobList"></div>
+    <select class="import-job-schedule" id="importJobSchedule" aria-label="Import Job schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
+    <button class="run-selected" id="runSelectedImportsBtn">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 10 7-10 7z"></path></svg>
+      <span class="label">Run Import Job</span>
+      <span></span>
+    </button>
+  </section>
+
+  <section id="exportJobsView">
+    <div class="picker-header">
+      <h1 class="picker-title">Export Job</h1>
+      <button class="picker-back" id="exportJobsBackBtn">Back</button>
+    </div>
+    <div id="exportPayloadList"></div>
+    <select class="import-job-schedule" id="exportJobSchedule" aria-label="Export Job schedule"><option value="-1">On-demand</option><option value="0" selected>Next hour</option><option value="1">+1 hour</option></select>
+    <button class="run-selected" id="runExportJobBtn">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 10 7-10 7z"></path></svg>
+      <span class="label">Run Export Job</span>
+      <span></span>
+    </button>
   </section>
 
   <section class="group">

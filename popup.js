@@ -1,10 +1,11 @@
 const statusEl = document.getElementById("status");
-const importScheduleIds = [
-  "importProfileSchedule",
-  "importCustomerSchedule",
-  "importContactsSchedule",
-  "importContactAddressSchedule"
+const importScheduleIds = ["importProfileSchedule"];
+const IMPORT_JOB_TYPES = [
+  { id: "customer", label: "Customer" },
+  { id: "contactPoint", label: "Contacts" },
+  { id: "address", label: "Address" }
 ];
+const EXPORT_PAYLOAD_OPTIONS = ["Customer", "Master Customer", "Account", "Master Account", "ContactPoint", "Address", "Order", "Product"];
 
 function scheduleLabel(value) {
   return value === "-1" ? "On-demand" : value === "1" ? "+1h" : "Next";
@@ -29,6 +30,78 @@ chrome.storage.local.get({ importSchedules: {} }).then(({ importSchedules }) => 
   });
 });
 
+let importJobSettings = {};
+const importJobList = document.getElementById("importJobList");
+
+function renderImportJobs(filter = "") {
+  const query = filter.trim().toLowerCase();
+  importJobList.replaceChildren(...IMPORT_JOB_TYPES
+    .filter((job) => job.label.toLowerCase().includes(query))
+    .map((job) => {
+      const setting = importJobSettings[job.id] || { selected: false };
+      const row = document.createElement("label");
+      row.className = "import-job-row";
+      const check = document.createElement("span");
+      check.className = "import-job-check";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = Boolean(setting.selected);
+      input.addEventListener("change", () => saveImportJobSetting(job.id, { selected: input.checked }));
+      check.append(input, document.createTextNode(job.label));
+      row.append(check);
+      return row;
+    }));
+}
+
+async function saveImportJobSetting(id, update) {
+  importJobSettings[id] = { selected: false, ...importJobSettings[id], ...update };
+  await chrome.storage.local.set({ importJobSettings });
+}
+
+chrome.storage.local.get({ importJobSettings: {} }).then(({ importJobSettings: saved }) => {
+  importJobSettings = saved;
+  renderImportJobs();
+});
+
+const importJobScheduleEl = document.getElementById("importJobSchedule");
+chrome.storage.local.get({ importJobSchedule: "0" }).then(({ importJobSchedule }) => {
+  importJobScheduleEl.value = String(importJobSchedule);
+});
+importJobScheduleEl.addEventListener("change", () => {
+  chrome.storage.local.set({ importJobSchedule: importJobScheduleEl.value });
+});
+
+const exportPayloadList = document.getElementById("exportPayloadList");
+const exportScheduleEl = document.getElementById("exportJobSchedule");
+let exportPayloadName = "Customer";
+function renderExportPayloads() {
+  exportPayloadList.replaceChildren(...EXPORT_PAYLOAD_OPTIONS.map((name) => {
+    const row = document.createElement("label");
+    row.className = "import-job-row";
+    const choice = document.createElement("span");
+    choice.className = "import-job-check";
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "exportPayload";
+    input.value = name;
+    input.checked = name === exportPayloadName;
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      exportPayloadName = name;
+      chrome.storage.local.set({ exportPayloadName: name });
+    });
+    choice.append(input, document.createTextNode(name));
+    row.append(choice);
+    return row;
+  }));
+}
+chrome.storage.local.get({ exportPayloadName: "Customer", exportJobSchedule: "0" }).then((saved) => {
+  exportPayloadName = EXPORT_PAYLOAD_OPTIONS.includes(saved.exportPayloadName) ? saved.exportPayloadName : "Customer";
+  exportScheduleEl.value = String(saved.exportJobSchedule);
+  renderExportPayloads();
+});
+exportScheduleEl.addEventListener("change", () => chrome.storage.local.set({ exportJobSchedule: exportScheduleEl.value }));
+
 chrome.storage.local.get({ e2eStatus: "" }).then(({ e2eStatus }) => {
   statusEl.textContent = e2eStatus;
 });
@@ -39,7 +112,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 });
 
-async function runScript(filename, label, schedule) {
+async function runScript(filename, label, schedule, options = {}) {
   try {
     statusEl.textContent = `Starting ${label}...`;
 
@@ -52,7 +125,8 @@ async function runScript(filename, label, schedule) {
       type: "run-task",
       tabId: tab.id,
       filename,
-      schedule
+      schedule,
+      ...options
     }).catch((error) => {
       console.error(`[CDP Job Assistant] ${label} failed`, error);
     });
@@ -149,23 +223,56 @@ document.getElementById("importBtn").addEventListener("click", () => {
   runScript("importJob.js", "Import Responsys Profile", importSchedule("importProfileSchedule"));
 });
 
-document.getElementById("importCustomerBtn").addEventListener("click", () => {
-  runScript("importCustomer.js", "Import Customer", importSchedule("importCustomerSchedule"));
+document.getElementById("importJobsBtn").addEventListener("click", () => {
+  document.body.classList.add("import-picker-open");
+  document.getElementById("importJobSearch").focus();
 });
-
-document.getElementById("importContactsBtn").addEventListener("click", () => {
-  runScript("importContacts.js", "Import Contacts", importSchedule("importContactsSchedule"));
+document.getElementById("importJobsBackBtn").addEventListener("click", () => {
+  document.body.classList.remove("import-picker-open");
 });
-
-document.getElementById("importContactAndAddressBtn").addEventListener("click", () => {
-  runScript("importContactAndAddress.js", "Import Contacts and Address", importSchedule("importContactAddressSchedule"));
+document.getElementById("exportBtn").addEventListener("click", () => {
+  document.body.classList.add("export-picker-open");
+  renderExportPayloads();
+});
+document.getElementById("exportJobsBackBtn").addEventListener("click", () => {
+  document.body.classList.remove("export-picker-open");
+});
+document.getElementById("runExportJobBtn").addEventListener("click", () => {
+  const schedule = exportScheduleEl.value;
+  runScript("exportJob.js", "Export Job", schedule === "-1" ? { mode: "onDemand" } : { offsetHours: Number(schedule) }, { exportPayloadName });
+});
+document.getElementById("importJobSearch").addEventListener("input", (event) => renderImportJobs(event.target.value));
+document.getElementById("selectAllImportsBtn").addEventListener("click", async () => {
+  IMPORT_JOB_TYPES.forEach((job) => { importJobSettings[job.id] = { selected: true, ...importJobSettings[job.id] }; });
+  await chrome.storage.local.set({ importJobSettings });
+  renderImportJobs(document.getElementById("importJobSearch").value);
+});
+document.getElementById("clearImportsBtn").addEventListener("click", async () => {
+  IMPORT_JOB_TYPES.forEach((job) => { importJobSettings[job.id] = { selected: false, ...importJobSettings[job.id] }; });
+  await chrome.storage.local.set({ importJobSettings });
+  renderImportJobs(document.getElementById("importJobSearch").value);
+});
+document.getElementById("runSelectedImportsBtn").addEventListener("click", async () => {
+  const tableIds = IMPORT_JOB_TYPES.filter((job) => importJobSettings[job.id]?.selected).map((job) => job.id);
+  if (!tableIds.length) {
+    statusEl.textContent = "Select at least one table.";
+    return;
+  }
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) throw new Error("No active tab found.");
+  const schedule = importJobScheduleEl.value;
+  statusEl.textContent = "Starting Import Job...";
+  chrome.runtime.sendMessage({
+    type: "run-import-job",
+    tabId: tab.id,
+    tableIds,
+    schedule: schedule === "-1" ? { mode: "onDemand" } : { offsetHours: Number(schedule) }
+  });
+  document.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+  setTimeout(() => window.close(), 2000);
 });
 
 function importSchedule(selectId) {
   const value = document.getElementById(selectId).value;
   return value === "-1" ? { mode: "onDemand" } : { offsetHours: Number(value) };
 }
-
-document.getElementById("exportBtn").addEventListener("click", () => {
-  runScript("exportJob.js", "ExportJob");
-});

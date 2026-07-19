@@ -28,60 +28,120 @@ const TASKS = {
     ]
   },
   "importJob.js": { path: "/data/", root: "createConnectJob", readySelector: "div[class*='create-connect-job-body']", saveSelector: "#saveNclose-create-job" },
-  "importCustomer.js": { path: "/data/", root: "createConnectJob", readySelector: "div[class*='create-connect-job-body']", saveSelector: "#saveNclose-create-job", dependencies: ["cdpCustomerFieldMapping.js"] },
-  "importContacts.js": { path: "/data/", root: "createConnectJob", readySelector: "div[class*='create-connect-job-body']", saveSelector: "#saveNclose-create-job", dependencies: ["cdpContactsFieldMapping.js"] },
-  "importContactAndAddress.js": {
+  // One configurable Import Job is used for every table-based import.
+  "importContacts.js": {
     path: "/data/",
     root: "createConnectJob",
-    saveSelector: "#saveNclose-create-job",
     readySelector: "div[class*='create-connect-job-body']",
-    dependencies: ["cdpContactAndAddressFieldMapping.js"]
+    saveSelector: "#saveNclose-create-job",
+    dependencies: ["cdpCustomerFieldMapping.js"]
   },
   "exportJob.js": { path: "/data/", root: "createExportJob", readySelector: "div[class*='create-export-job-body']", saveSelector: "#saveNclose-create-job" },
   "publish.js": { path: "/data/", root: "publishChanges" },
   "integrationStatus.js": { path: "/data/", root: "integrations" }
 };
 
+// Add future tables here. The UI sends only an id; CSV samples and CDP mapping
+// tables stay centralized in the background worker.
+const IMPORT_TABLES = {
+  customer: {
+    id: "customer",
+    label: "Customer",
+    cdpTable: "Customer",
+    csvFile: "sample-csv/customer.csv"
+  },
+  contactPoint: {
+    id: "contactPoint",
+    label: "Contacts",
+    cdpTable: "ContactPoint",
+    csvFile: "sample-csv/contactpoint.csv"
+  },
+  address: {
+    id: "address",
+    label: "Address",
+    cdpTable: "Address",
+    csvFile: "sample-csv/address.csv"
+  }
+};
+
+const E2E_IMPORT_FALLBACK = {
+  targetTables: ["Customer", "ContactPoint"],
+  fieldToTable: {
+    sourcecustomerid: ["Customer", "ContactPoint"],
+    firstname: ["Customer"], lastname: ["Customer"], gender: ["Customer"],
+    birthdate: ["Customer"], jobtitle: ["Customer"],
+    sourcecontactpointid: ["ContactPoint"], email: ["ContactPoint"],
+    mobilephone: ["ContactPoint"], optinstatus: ["ContactPoint"], isdeliverable: ["ContactPoint"]
+  },
+  csvContent: "sourcecustomerid,firstname,lastname,gender,birthdate,jobtitle,sourcecontactpointid,email,mobilephone,optinstatus,isdeliverable\n1,Sachin,Tendulkar,M,07/10/26,Sales Executive,cp-1,jagan.test01@yahoo.com,16504522260,In,TRUE\n"
+};
+
+function parseCsvRow(row) {
+  const values = [];
+  let value = "";
+  let quoted = false;
+  for (let index = 0; index < row.length; index += 1) {
+    const char = row[index];
+    if (char === '"' && row[index + 1] === '"') { value += '"'; index += 1; }
+    else if (char === '"') quoted = !quoted;
+    else if (char === "," && !quoted) { values.push(value.trim()); value = ""; }
+    else value += char;
+  }
+  values.push(value.trim());
+  return values;
+}
+
+async function loadCsvFields(table) {
+  const response = await fetch(chrome.runtime.getURL(table.csvFile));
+  if (!response.ok) throw new Error(`Could not read ${table.csvFile}.`);
+  const lines = (await response.text()).split(/\r?\n/).filter((line) => line.trim());
+  if (lines.length < 2) throw new Error(`${table.csvFile} must contain a header row and one sample row.`);
+  const headers = parseCsvRow(lines[0]);
+  const values = parseCsvRow(lines[1]);
+  if (!headers.length || headers.length !== values.length || headers.some((header) => !header)) {
+    throw new Error(`${table.csvFile} has invalid headers or sample values.`);
+  }
+  return headers.map((header, index) => ({ header, value: values[index], table: table.cdpTable }));
+}
+
+async function buildImportConfig(tableIds) {
+  const selected = [...new Set(tableIds || [])].map((id) => IMPORT_TABLES[id]);
+  if (!selected.length || selected.some((table) => !table)) throw new Error("Select at least one supported import table.");
+  const fields = (await Promise.all(selected.map(loadCsvFields))).flat();
+  const uniqueFields = [];
+  const fieldsByHeader = new Map();
+  for (const field of fields) {
+    const existing = fieldsByHeader.get(field.header);
+    if (!existing) {
+      fieldsByHeader.set(field.header, { ...field, tables: [field.table] });
+      uniqueFields.push(fieldsByHeader.get(field.header));
+      continue;
+    }
+    // A combined mapping CSV has one column for a repeated header. Retain the
+    // first selected example value and map that column to every selected table.
+    existing.tables.push(field.table);
+  }
+  return {
+    targetTables: selected.map((table) => table.cdpTable),
+    fieldToTable: Object.fromEntries(uniqueFields.map((field) => [field.header, field.tables])),
+    csvContent: `${uniqueFields.map((field) => field.header).join(",")}\n${uniqueFields.map((field) => field.value).join(",")}\n`
+  };
+}
+
 const FULL_SEQUENCE = [
   { filename: "source.js", label: "Create Source", saveSelector: "#create-source-saveClose" },
   { filename: "destination.js", label: "Create Destination", saveSelector: "#dst-saveClose-btn" },
   { filename: "exportJob.js", label: "Create Export Job", saveSelector: "#saveNclose-create-job" },
-  { filename: "importContacts.js", label: "Import Contacts", saveSelector: "#saveNclose-create-job" }
+  { filename: "importContacts.js", label: "Import Contacts", importTableIds: ["customer", "contactPoint"], saveSelector: "#saveNclose-create-job" }
 ];
 
 const sequenceStepState = new Map();
 const activeSequences = new Map();
 
-async function showRunStatus(tabId, status = "") {
-  return;
-  if (!tabId) return;
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    world: "MAIN",
-    args: [status],
-    func: (message) => {
-      const id = "cdp-automation-status";
-      let panel = document.getElementById(id);
-      if (!message) {
-        panel?.remove();
-        return;
-      }
-      if (!panel) {
-        panel = document.createElement("div");
-        panel.id = id;
-        panel.style.cssText = "position:fixed;right:18px;top:12px;z-index:2147483647;max-width:310px;padding:10px 14px;border:1px solid #526987;border-radius:9px;background:#0b2038;color:#f1f2f0;font:600 12px/1.35 Inter,system-ui,sans-serif;box-shadow:0 8px 28px rgba(0,0,0,.35);pointer-events:none;";
-        document.documentElement.append(panel);
-      }
-      panel.textContent = message;
-    }
-  }).catch(() => undefined);
-}
-
 async function setE2EStatus(status = "", tabId) {
   const activeRun = activeSequences.get(tabId);
   if (activeRun) activeRun.status = status;
   await chrome.storage.local.set({ e2eStatus: status });
-  await showRunStatus(tabId, status);
 }
 
 async function installStopGuard(tabId) {
@@ -111,11 +171,6 @@ function navigationUrl(tabUrl, path, root) {
   return url.href;
 }
 
-function currentDateTag() {
-  const date = new Date();
-  return `${String(date.getDate()).padStart(2, "0")}${date.toLocaleString("en-US", { month: "short" }).toUpperCase()}${String(date.getFullYear()).slice(-2)}`;
-}
-
 async function captureCreatedEntity(tabId, runMetadata, filename) {
   const creation = {
     "source.js": { section: "sources", label: "Source", inputId: "source-name-input|input" },
@@ -134,7 +189,8 @@ async function captureCreatedEntity(tabId, runMetadata, filename) {
       scheduledAt: Number(window.__cdpScheduledRunAt) || null
     })
   });
-  const { name: jobName, scheduledAt } = capturedEntity || {};
+  const { name: jobName, scheduledAt: capturedScheduledAt } = capturedEntity || {};
+  const scheduledAt = capturedScheduledAt || (filename === "exportJob.js" ? runMetadata.exportScheduledAt : null);
   if (!jobName) throw new Error(`The saved ${creation.label} name could not be captured.`);
   if (creation.section === "jobs" && !scheduledAt) {
     throw new Error(`The scheduled hour for ${creation.label} could not be captured.`);
@@ -337,7 +393,7 @@ async function installTaskCompletionMonitor(tabId, runId, saveSelector) {
   });
 }
 
-async function waitForStep(tabId, label, _saveSelector, runId, _stepId, timeout = 180000) {
+async function waitForStep(tabId, label, _saveSelector, runId, stepId, timeout = 180000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     try {
@@ -365,7 +421,13 @@ async function waitForStep(tabId, label, _saveSelector, runId, _stepId, timeout 
           };
         }
       });
-      if (result?.success) return;
+      const saveWasTriggered = sequenceStepState.get(runId)?.has(stepId);
+      if (result?.success || saveWasTriggered) {
+        // Oracle has received the explicit Save action. Give the page a moment
+        // to persist before navigating to the next E2E stage.
+        if (saveWasTriggered && !result?.success) await new Promise((resolve) => setTimeout(resolve, 1000));
+        return;
+      }
       if (!result?.monitor) {
         throw new Error(`${label} was interrupted before Oracle confirmed it was saved successfully.`);
       }
@@ -377,7 +439,7 @@ async function waitForStep(tabId, label, _saveSelector, runId, _stepId, timeout 
   throw new Error(`${label} timed out before Save and Close.`);
 }
 
-async function runTask(tabId, filename, monitor, schedule) {
+async function runTask(tabId, filename, monitor, schedule, importConfig, exportPayloadName, importTableIds) {
   const task = TASKS[filename];
   if (!task) throw new Error(`Unsupported automation script: ${filename}`);
 
@@ -390,31 +452,135 @@ async function runTask(tabId, filename, monitor, schedule) {
   if (task.createLabel) await prepareConnectionForm(tabId, task);
   if (task.readySelector) await waitForPageElement(tabId, task.readySelector);
 
-  await installStopGuard(tabId);
-  if (monitor) await installStepMonitor(tabId, monitor);
-  if (!monitor && task.saveSelector && schedule?.runId) {
-    await installTaskCompletionMonitor(tabId, schedule.runId, task.saveSelector);
+  // In E2E, navigate first. This ensures the Export→Import handoff is visible
+  // even if a user-edited CSV fragment has a configuration error.
+  if (filename === "importContacts.js" && !importConfig && importTableIds) {
+    try {
+      importConfig = await buildImportConfig(importTableIds);
+    } catch (error) {
+      console.warn("Could not load editable E2E import CSV files; using the bundled Customer + ContactPoint fallback.", error);
+      importConfig = E2E_IMPORT_FALLBACK;
+    }
   }
 
-  const activeRun = activeSequences.get(tabId);
-  if (activeRun?.status) await showRunStatus(tabId, activeRun.status);
+  // Oracle sometimes reports the page complete just before its JET form accepts
+  // MAIN-world injections. Retry that short transition rather than leaving an
+  // empty form open and silently abandoning the E2E flow.
+  const installAutomation = async () => {
+    await installStopGuard(tabId);
+    if (monitor) await installStepMonitor(tabId, monitor);
+    if (!monitor && task.saveSelector && schedule?.runId) {
+      await installTaskCompletionMonitor(tabId, schedule.runId, task.saveSelector);
+    }
 
-  if (["exportJob.js", "importJob.js", "importCustomer.js", "importContacts.js", "importContactAndAddress.js"].includes(filename)) {
+    if (["exportJob.js", "importJob.js", "importContacts.js"].includes(filename)) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        args: [schedule || { offsetHours: 0 }],
+        func: (scheduleConfig) => {
+          window.__cdpSchedule = scheduleConfig;
+          window.__cdpScheduledRunAt = null;
+          window.__cdpScheduleApplied = false;
+          window.__cdpManualScheduleApplied = false;
+        }
+      });
+      await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["scheduleOverride.js"] });
+    }
+
+    if (filename === "importContacts.js") {
+      if (!importConfig?.csvContent || !Array.isArray(importConfig.targetTables) || !importConfig.fieldToTable) importConfig = E2E_IMPORT_FALLBACK;
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        args: [importConfig],
+        func: (config) => { window.__cdpImportConfig = config; }
+      });
+    }
+  };
+
+  let installError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await installAutomation();
+      installError = undefined;
+      break;
+    } catch (error) {
+      installError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+  if (installError) throw new Error(`Could not attach ${filename} after the page loaded: ${installError.message || installError}`);
+
+  if (filename === "exportJob.js") {
     await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
-      args: [schedule || { offsetHours: 0 }],
-      func: (scheduleConfig) => {
-        window.__cdpSchedule = scheduleConfig;
-        window.__cdpScheduledRunAt = null;
-        window.__cdpScheduleApplied = false;
-        window.__cdpManualScheduleApplied = false;
-      }
+      args: [exportPayloadName || "Customer"],
+      func: (payloadName) => { window.__cdpExportPayloadName = payloadName; }
     });
+  }
+
+  if (false && filename === "exportJob.js") {
+    if (!exportPayloadName && exportPayloadName !== undefined) throw new Error("Export payload selection is missing.");
     await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
-      files: ["scheduleOverride.js"]
+      args: [exportPayloadName || "Customer"],
+      func: (payloadName) => {
+        window.__cdpExportPayloadName = payloadName;
+        if (window.__cdpExportPayloadOverrideInstalled) return;
+        window.__cdpExportPayloadOverrideInstalled = true;
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const visible = (element) => Boolean(element?.getClientRects().length);
+        const text = (element) => (element?.textContent || "").replace(/\s+/g, " ").trim();
+        const setValue = (element, value) => {
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+          setter ? setter.call(element, value) : element.value = value;
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+        };
+        const click = (element) => {
+          const options = { bubbles: true, cancelable: true, view: window, button: 0, buttons: 1 };
+          element.dispatchEvent(new MouseEvent("mousedown", options));
+          element.dispatchEvent(new MouseEvent("mouseup", { ...options, buttons: 0 }));
+          element.click();
+        };
+        const chooseConfiguredPayload = async () => {
+          const payloadName = window.__cdpExportPayloadName;
+          if (!payloadName || payloadName === "Customer" || window.__cdpApplyingExportPayload) return;
+          window.__cdpApplyingExportPayload = true;
+          const input = document.getElementById("data-object-selection-dropdown|input");
+          try {
+            if (!input || !visible(input)) return;
+            const host = input.closest("oj-select-single,oj-combobox-one,oj-combobox-many");
+            const trigger = host?.querySelector(".oj-searchselect-arrow,.oj-searchselect-main-field,.oj-text-field-container,[role=combobox]") || input;
+            click(trigger);
+            await sleep(80);
+            const filter = document.getElementById("oj-searchselect-filter-data-object-selection-dropdown|input") || input;
+            setValue(filter, payloadName);
+            const deadline = Date.now() + 1200;
+            let option = null;
+            while (Date.now() < deadline && !option) {
+              option = [...document.querySelectorAll("[role='option'],oj-option,li.oj-listbox-result-selectable")].find((element) => {
+                const label = text(element);
+                return visible(element) && (label === payloadName || label.includes(payloadName) || element.getAttribute("value") === payloadName);
+              });
+              if (!option) await sleep(60);
+            }
+            if (!option) throw new Error(`Export payload option ${payloadName} was not found.`);
+            click(option.closest("[role='option'],oj-option,li") || option);
+          } finally {
+            await sleep(100);
+            window.__cdpApplyingExportPayload = false;
+          }
+        };
+        document.addEventListener("click", (event) => {
+          const option = event.target instanceof Element && event.target.closest("[role='option'],oj-option,li");
+          if (!option || window.__cdpExportPayloadName === "Customer" || window.__cdpApplyingExportPayload) return;
+          if (!document.getElementById("data-object-selection-dropdown|input")) return;
+          setTimeout(() => chooseConfiguredPayload().catch(() => undefined), 0);
+        }, true);
+      }
     });
   }
 
@@ -428,7 +594,7 @@ async function runTask(tabId, filename, monitor, schedule) {
   await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
-    files: [filename]
+    files: [task.script || filename]
   });
 }
 
@@ -445,7 +611,6 @@ async function runPublish(tabId, options) {
   const tab = await chrome.tabs.get(tabId);
   await navigateAndWait(tabId, navigationUrl(tab.url, task.path, task.root));
   assertSequenceActive(tabId, options.runId, options.label || "Publishing");
-  await showRunStatus(tabId, activeSequences.get(tabId)?.status || "Running: Publish");
   const cancelled = activeSequences.get(tabId)?.cancelled === true;
   await chrome.scripting.executeScript({
     target: { tabId },
@@ -479,7 +644,6 @@ async function verifyPublishedJobs(tabId, options) {
   const tab = await chrome.tabs.get(tabId);
   await navigateAndWait(tabId, navigationUrl(tab.url, task.path, task.root));
   assertSequenceActive(tabId, options.runId, "Verify Published Jobs");
-  await showRunStatus(tabId, activeSequences.get(tabId)?.status || "Running: Verify Published Jobs");
   await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
@@ -504,6 +668,7 @@ async function runFullSequence(tabId) {
   const runId = crypto.randomUUID();
   const runMetadata = {
     startedAt: Date.now(),
+    exportScheduledAt: null,
     jobNames: [],
     creations: {
       sources: [],
@@ -517,19 +682,25 @@ async function runFullSequence(tabId) {
   sequenceStepState.set(runId, new Set());
   activeSequences.set(tabId, { runId, cancelled: false });
   await chrome.storage.local.set({ e2eRun: runMetadata });
+  let completed = false;
   try {
     for (const step of FULL_SEQUENCE) {
       await setE2EStatus(`Running: ${step.label}`, tabId);
+      if (step.filename === "exportJob.js" && !runMetadata.exportScheduledAt) {
+        const exportHour = new Date();
+        exportHour.setHours(exportHour.getHours() + 1, 0, 0, 0);
+        runMetadata.exportScheduledAt = exportHour.getTime();
+      }
       const schedule = step.filename === "exportJob.js"
-        ? { offsetHours: 0 }
+        ? { scheduledAt: runMetadata.exportScheduledAt }
         : step.filename === "importContacts.js"
-          ? { scheduledAt: runMetadata.creations.jobs.export?.scheduledAt + 3600000 }
+          ? { scheduledAt: (runMetadata.creations.jobs.export?.scheduledAt || runMetadata.exportScheduledAt) + 3600000 }
           : undefined;
       await runTask(tabId, step.filename, {
         runId,
         stepId: step.filename,
         saveSelector: step.saveSelector
-      }, schedule);
+      }, schedule, undefined, undefined, step.importTableIds);
       await waitForStep(tabId, step.label, step.saveSelector, runId, step.filename);
       await captureCreatedEntity(tabId, runMetadata, step.filename);
     }
@@ -541,12 +712,44 @@ async function runFullSequence(tabId) {
     await runPublish(tabId, { mode: "e2e", ...runMetadata, runId, label: "Publish E2E Jobs" });
     await setE2EStatus("Running: Verify Published Jobs", tabId);
     await verifyPublishedJobs(tabId, { jobNames: runMetadata.jobNames, runId });
+    completed = true;
+  } catch (error) {
+    console.error("CDP E2E flow failed", error);
+    await setE2EStatus(`Failed: ${error.message || error}`, tabId);
+    throw error;
   } finally {
     sequenceStepState.delete(runId);
     const cancelled = activeSequences.get(tabId)?.runId === runId && activeSequences.get(tabId)?.cancelled;
     if (activeSequences.get(tabId)?.runId === runId) activeSequences.delete(tabId);
-    await setE2EStatus("", tabId);
-    await chrome.storage.local.remove("e2eRun");
+    if (completed || cancelled) {
+      await setE2EStatus("", tabId);
+      await chrome.storage.local.remove("e2eRun");
+    }
+  }
+}
+
+async function runImportJob(tabId, tableIds, schedule) {
+  if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
+  const runId = crypto.randomUUID();
+  activeSequences.set(tabId, { runId, cancelled: false });
+  let failed = false;
+  try {
+    // Keep standalone Import Job dependent on the selected editable CSVs.
+    // Unlike E2E, it must never silently substitute a different table set.
+    const importConfig = await buildImportConfig(tableIds);
+    const task = TASKS["importContacts.js"];
+    await setE2EStatus("Running: Import Job", tabId);
+    await runTask(tabId, "importContacts.js", { runId, stepId: "import-job", saveSelector: task.saveSelector }, schedule, importConfig);
+    await waitForStep(tabId, "Import Job", task.saveSelector, runId, "import-job");
+  } catch (error) {
+    if (!/stopped by the user/i.test(error.message || "")) {
+      failed = true;
+      await setE2EStatus(`Failed: Import Job — ${error.message || error}`, tabId);
+    }
+    throw error;
+  } finally {
+    if (activeSequences.get(tabId)?.runId === runId) activeSequences.delete(tabId);
+    if (!failed) await setE2EStatus("", tabId);
   }
 }
 
@@ -621,6 +824,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "run-import-job") {
+    runImportJob(message.tabId, message.tableIds, message.schedule)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => {
+        console.error("CDP import batch failed", error);
+        sendResponse({ ok: false, error: error.message || String(error) });
+      });
+    return true;
+  }
   if (message?.type !== "run-task") return;
 
   if (activeSequences.has(message.tabId)) {
@@ -633,14 +845,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     "destination.js": "Create Destination",
     "exportJob.js": "Create Export Job",
     "importJob.js": "Import Responsys Profile",
-    "importCustomer.js": "Import Customer",
-    "importContacts.js": "Import Contacts",
-    "importContactAndAddress.js": "Import Contacts and Address"
+    "importContacts.js": "Import Job"
   }[message.filename] || message.filename;
   activeSequences.set(message.tabId, { runId, cancelled: false, individual: true, status: `Running: ${label}` });
   setE2EStatus(`Running: ${label}`, message.tabId);
 
-  runTask(message.tabId, message.filename, undefined, { ...message.schedule, runId })
+  runTask(message.tabId, message.filename, undefined, { ...message.schedule, runId }, undefined, message.exportPayloadName)
     .then(() => sendResponse({ ok: true }))
     .catch((error) => {
       if (activeSequences.get(message.tabId)?.runId === runId) activeSequences.delete(message.tabId);

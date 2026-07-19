@@ -1,95 +1,79 @@
-# CDP Automation
+# CDP Browser Automation
 
-This version uses normal JavaScript files instead of bookmarklet URLs.
+A Chrome extension that automates common Oracle CDP setup and data-feed tasks
+in the currently open CDP tenant. It derives the tenant host key from the
+active Oracle CDP tab and navigates to the required page before it begins work.
 
-- `importJob.js` is the supplied ImportJob logic with only the `javascript:` prefix and URL encoding removed.
-- `exportJob.js` is the supplied ExportJob logic with only the `javascript:` prefix and URL encoding removed.
-- The popup injects the selected file directly into the active page's MAIN world.
+## Install and update
 
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Use **Load unpacked** and select this repository directory.
+4. After changing any extension file, click the extension's reload icon, then
+   start a fresh run. Existing forms are not reused after a reload.
 
-## ImportJob With Mapping
+## Popup actions
 
-This keeps the existing `importJob.js` unchanged and adds `importJobWithMapping.js`.
+| Action | Behavior |
+| --- | --- |
+| Create Source | Opens Sources, creates a source, selects Oracle Object Storage, and continues with the source automation. |
+| Create Destination | Opens Destinations, creates a destination, selects Oracle Object Storage, and continues with the destination automation. |
+| Export Job | Opens the export-job page. Select one payload and a schedule: On-demand, Next hour, or +1 hour. |
+| Import Responsys Profile | Runs the dedicated Responsys-profile ingest automation. |
+| Import Jobs | Creates one generic ingest job for the selected tables, using one shared schedule. |
+| Run E2E Flow | Creates Source → Destination → Export Job → Import Job → publishes the two created jobs → verifies their Published status. |
+| Publish All Data Feeds | Opens Publish Changes and selectively publishes every available Data feed. |
+| Stop Current Flow | Stops the E2E or individual automation currently running in the active tab. |
 
-The new flow:
-1. Selects or prompts for Source.
-2. Clicks **Create source object**.
-3. Enters `PROFILE_<HOSTKEY>`.
-4. Opens the sample CSV file chooser.
-5. Prompts you to select:
-   `/Users/jaganpat/Documents/OracleContent/CDP/INJEST_JOB/cdp_field_mapping.csv`
-6. Waits until **Start Mapping** is enabled, then clicks it.
+The green **Running** pill in the browser has the same Stop action. It is
+rendered on each Oracle CDP page and is removed when the run completes or is
+stopped.
 
-Chrome does not allow an extension to populate a local file picker from an arbitrary `/Users/...` path. The file must be selected manually unless the CSV is packaged inside the extension.
+## Generic Import Jobs
 
+The **Import Jobs** picker creates one job, even when multiple tables are
+selected. It currently supports:
 
-## ImportJob Auto Mapping
+- Customer → CDP `Customer`
+- Contacts → CDP `ContactPoint`
+- Address → CDP `Address`
 
-This adds `importJobWithAutoMapping.js` and keeps the working manual flow unchanged.
+The table configuration is centralized in `IMPORT_TABLES` in
+`background.js`; the popup list is in `IMPORT_JOB_TYPES` in `popup.js`.
 
-The automatic flow:
-1. Creates `PROFILE_<HOSTKEY>`.
-2. Builds `cdp_field_mapping.csv` in memory from the embedded sample data.
-3. Tries a synthetic drag-and-drop first.
-4. Falls back to an `ojSelect` event on the Oracle file picker.
-5. Confirms that Oracle displays `cdp_field_mapping.csv`.
-6. Waits for **Start Mapping** to become enabled and clicks it.
+### Editable CSV fragments
 
-If Oracle rejects synthetic file selection in a specific build, the existing manual mapping button remains available.
+Each table has an editable sample CSV in `sample-csv/`:
 
+- `customer.csv`
+- `contactpoint.csv`
+- `address.csv`
 
-### Processing dialog handling
+Each file must contain a header row and at least one sample data row. The
+extension combines the selected fragments into one CSV, uploads it, and maps
+each field only to its configured CDP table. A header used by multiple selected
+tables appears once in the combined CSV and maps to every matching table.
 
-The automatic mapping flow now waits up to 120 seconds for the
-**Processing. Please wait. / Cancel** dialog to close before continuing.
+To add a table, create its CSV fragment, add its registry record to
+`IMPORT_TABLES`, and add the matching picker entry to `IMPORT_JOB_TYPES`.
 
+## Scheduling and E2E
 
-## Automatic field mapping
+Individual Import and Export jobs support **On-demand**, **Next hour**, and
+**+1 hour** schedules. Next hour and +1 hour use exact clock-hour slots.
 
-The uploaded mapping script is saved as `cdpFieldmapping.js`.
+For E2E, Export is scheduled for the next exact hour and Import is scheduled
+for the exact hour after Export. The E2E flow persists the Source, Destination,
+and job creation records; only its created Export and Import jobs are selected
+for E2E publishing.
 
-After **Start Mapping**:
-1. The extension waits for the processing dialog to close.
-2. It waits an additional 2 seconds for mapping rows to render.
-3. It loads and executes `cdpFieldmapping.js`.
+If E2E cannot load its editable Customer/ContactPoint CSV fragments, it uses
+its bundled fallback sample and mapping so that the flow can continue. A
+standalone generic Import Job always uses the selected editable CSV fragments.
 
+## Automation completion
 
-### Field-mapping loader fix
-
-`cdpFieldmapping.js` is now injected before the auto-import script and exposes
-`window.runCdpFieldMapping()`. The auto-import flow calls that function after
-the processing dialog closes and the 2-second rendering delay. It no longer
-uses `chrome.runtime.getURL()` from page context.
-
-
-## Three automatic import variants
-
-- `importCustomer.js`
-  - Uses `cdpCustomerFieldMapping.js`
-  - TARGET_TABLES: `["Customer"]`
-
-- `importContacts.js`
-  - Uses `cdpContactsFieldMapping.js`
-  - TARGET_TABLES: `["Customer", "ContactPoint"]`
-
-- `importContactAndAddress.js`
-  - Uses `cdpContactAndAddressFieldMapping.js`
-  - TARGET_TABLES: `["Customer", "ContactPoint", "Address"]`
-
-`exportJob.js` is unchanged.
-
-
-## Embedded CSV size
-
-All three automatic import variants now embed only:
-- the CSV header row
-- the first sample data row
-
-The remaining 14 sample rows were removed.
-
-
-## Syntax and popup cleanup
-
-- Fixed the embedded CSV string syntax in all three import files.
-- Removed the obsolete generic auto-mapping files and popup button.
-- Rebuilt the popup with aligned buttons and clearer labels.
+Creation stages use Oracle's Save action and the corresponding success signal.
+Publishing completes after **Start publish job** is clicked. The final E2E
+stage navigates to Integrations and waits for the created jobs to be marked
+Published.

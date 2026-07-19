@@ -1,12 +1,13 @@
 (function () {
   const id = "cdp-automation-status";
+  let activeStatus = "";
 
   function installStyles() {
     if (document.getElementById(`${id}-styles`)) return;
     const style = document.createElement("style");
     style.id = `${id}-styles`;
     style.textContent = `
-      #cdp-automation-status.status-pill { position:fixed !important; right:12px !important; top:8px !important; z-index:2147483647 !important; display:inline-flex !important; align-items:center !important; gap:5px !important; width:auto !important; height:auto !important; min-width:0 !important; max-width:280px !important; padding:3px 4px 3px 8px !important; border-radius:9999px !important; font-family:system-ui,-apple-system,sans-serif !important; font-size:11px !important; font-weight:600 !important; line-height:1 !important; white-space:nowrap !important; border:1px solid #ceead6 !important; background:#e6f4ea !important; color:#137333 !important; box-shadow:0 3px 10px rgba(19,115,51,.14) !important; }
+      #cdp-automation-status.status-pill { position:fixed !important; right:24px !important; top:12px !important; z-index:2147483647 !important; display:inline-flex !important; align-items:center !important; gap:5px !important; width:auto !important; height:auto !important; min-width:0 !important; max-width:280px !important; padding:3px 4px 3px 8px !important; border-radius:9999px !important; font-family:system-ui,-apple-system,sans-serif !important; font-size:11px !important; font-weight:600 !important; line-height:1 !important; white-space:nowrap !important; border:1px solid #ceead6 !important; background:#e6f4ea !important; color:#137333 !important; box-shadow:0 3px 10px rgba(19,115,51,.14) !important; }
       #cdp-automation-status .status-pill__spinner { display:block !important; flex:0 0 11px !important; width:11px !important; height:11px !important; max-width:11px !important; max-height:11px !important; animation:cdp-status-spin 1s linear infinite !important; opacity:.85 !important; }
       @keyframes cdp-status-spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
       #cdp-automation-status .status-pill__label { line-height:1 !important; overflow:hidden !important; text-overflow:ellipsis !important; }
@@ -19,10 +20,17 @@
   }
 
   function render(status) {
+    activeStatus = status || "";
     let panel = document.getElementById(id);
     if (!status || !/^Running:/.test(status)) {
       panel?.remove();
       return;
+    }
+    // Remove the old background-rendered pill (text only) before building the
+    // interactive one. This also repairs a stale pill from an earlier reload.
+    if (panel && (!panel.classList.contains("status-pill") || !panel.querySelector(`#${id}-message`) || !panel.querySelector(".status-pill__stop-btn"))) {
+      panel.remove();
+      panel = null;
     }
     if (!panel) {
       installStyles();
@@ -102,5 +110,11 @@
   chrome.storage.onChanged.addListener((_changes, areaName) => {
     if (areaName === "local") refresh();
   });
+  // Oracle replaces portions of the document during route changes. If that
+  // replaces our element with an older text-only version, rebuild the complete
+  // interactive pill without waiting for another storage update.
+  setInterval(() => {
+    if (activeStatus) render(activeStatus);
+  }, 500);
   refresh();
 })();

@@ -1,0 +1,2 @@
+sourcecustomerid,sourcecontactpointid,email,optinstatus,isdeliverable,channeltype
+1,cp-1,jagan.test01@cdp.oracle.com,In,TRUE,Email

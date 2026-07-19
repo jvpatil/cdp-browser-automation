@@ -114,9 +114,8 @@ const createSourceObjectAndUploadSample=async()=>{
     return candidates[0]||null
   },"sample CSV file picker");
 
-  const csvContent=`sourcecustomerid,sourcecontactpointid,email,mobilephone,firstname,lastname,gender,birthdate,jobtitle,optinstatus,isdeliverable
-1,cp-1,jagan.test01@yahoo.com,16504522260,Sachin,Tendulkar,M,07/10/26,Sales Executive,In,TRUE
-`;
+  const csvContent=window.__cdpImportConfig?.csvContent;
+  if(!csvContent)throw new Error("Import Job sample CSV was not provided.");
   const file=new File([csvContent],"cdp_field_mapping.csv",{type:"text/csv"});
   const filePicker=picker.closest("oj-file-picker")||document.querySelector("oj-file-picker");
 
@@ -203,10 +202,10 @@ const createSourceObjectAndUploadSample=async()=>{
 
   await sleep(2000);
 
-  if(typeof window.runCdpContactsFieldMapping!=="function"){
-    throw new Error("cdpContactsFieldMapping.js was not loaded.");
+  if(typeof window.runCdpFieldMapping!=="function"){
+    throw new Error("The shared Import Job field mapper was not loaded.");
   }
 
-  await window.runCdpContactsFieldMapping();
+  await window.runCdpFieldMapping(window.__cdpImportConfig?.targetTables,window.__cdpImportConfig?.fieldToTable);
 };
 try{if(!location.href.includes("root=createConnectJob"))throw new Error("Open /data/?root=createConnectJob before running this bookmark.");if(!hostKey)throw new Error("Could not extract the host key from the current URL.");await wait("div[class*='create-connect-job-body']","Create Ingest Job");const jobInput=await wait(()=>document.getElementById("job-name-input|input"),"job name");await setJetValueAndValidate(jobInput,jobName);const descriptionInput=await wait(()=>document.getElementById("job-desc-text-area|input"),"description");await setJetValueAndValidate(descriptionInput,C.description);await chooseSearchWithFallback("job-details-sources|input","Source",C.source);await click(await waitForContinueEnabled("job-details-continue-editjob"));await createSourceObjectAndUploadSample();await sleep(3000);await waitLong("oj-list-view#fieldMappingList ul[role='grid'][aria-label='FieldMappingData']","field mapping table",120000);await waitLong("oj-list-view#fieldMappingList li[role='row']","field mapping rows",120000);await clickEnabled("#field-mapping-container oj-button button","Field Mapping Continue");await wait(".schedule-job-container","schedule page");const recurring=await wait(()=>[...document.querySelectorAll("oj-radioset#recurring-or-manual input[value='Recurring']")].find(x=>{const host=x.closest("oj-radioset");return host&&visible(host)})||null,"Recurring schedule");await click(labelFor(recurring));await chooseFrequency(C.frequency);await chooseButton(nextHourButtonset,nextHourValue);if(C.frequency==="Weekly")await chooseButton("recurring-weekly","2");const notifyInput=await wait(()=>document.getElementById("notify-input|input"),"notification email");setValue(notifyInput,C.notify);await commitField(notifyInput);await clickEnabled("oj-button#saveNclose-create-job button","Save and Close")}catch(error){console.error("Import bookmark failed",error);alert("Import bookmark failed:\n"+error.message)}})();

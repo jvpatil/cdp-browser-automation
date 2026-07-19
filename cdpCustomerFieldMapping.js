@@ -1,4 +1,6 @@
-window.runCdpCustomerFieldMapping = async function () {
+// Shared field mapper for every table-based Import Job. The caller supplies the
+// CDP data objects that correspond to the selected sample CSV.
+window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
     try {
         const sleep = ms => new Promise(r => setTimeout(r, ms));
         const DELAY = {
@@ -67,7 +69,12 @@ window.runCdpCustomerFieldMapping = async function () {
             );
         };
 
-        const TARGET_TABLES = ["Customer"];
+        const TARGET_TABLES = Array.isArray(targetTables) && targetTables.length
+            ? targetTables
+            : (() => { throw new Error("No target tables were supplied for Import Job mapping."); })();
+        const FIELD_TO_TABLE = fieldToTable && typeof fieldToTable === "object"
+            ? fieldToTable
+            : (() => { throw new Error("No CSV field-to-table mapping was supplied for Import Job mapping."); })();
 
         const getVisibleRows = () => {
             return Array.from(
@@ -243,6 +250,14 @@ window.runCdpCustomerFieldMapping = async function () {
             if (!cleanedValue) return false;
 
             const sourceKey = normalizeName(cleanedValue);
+            const mappedTables = FIELD_TO_TABLE[sourceKey];
+            if (!Array.isArray(mappedTables) || !mappedTables.length) {
+                throw new Error(`No target tables are configured for CSV field "${cleanedValue}".`);
+            }
+            if (mappedTables.some((tableName) => !TARGET_TABLES.includes(tableName))) {
+                throw new Error(`CSV field "${cleanedValue}" maps to an unavailable selected table.`);
+            }
+            const tablesForField = mappedTables;
 
             console.log(`\nProcessing ${cleanedValue}`);
             console.log(`   exact sourceKey = ${sourceKey}`);
@@ -262,7 +277,7 @@ window.runCdpCustomerFieldMapping = async function () {
                 return false;
             }
 
-            for (const tableName of TARGET_TABLES) {
+            for (const tableName of tablesForField) {
 
                 console.log(`   → Processing table: ${tableName}`);
 
@@ -414,7 +429,9 @@ window.runCdpCustomerFieldMapping = async function () {
         console.log(`\nDone. Total rows attempted: ${processed.size}`);
 
     } catch (err) {
-        console.debug("Suppressed internal async error.", err);
+        // A missing or mismatched field definition must stop the job. Continuing
+        // would save an import with incomplete or incorrectly routed mappings.
+        throw err;
     }
 
 };
