@@ -84,3 +84,12 @@ Creation stages use Oracle's Save action and the corresponding success signal.
 Publishing completes after **Start publish job** is clicked. The final E2E
 stage navigates to Integrations and waits for the created jobs to be marked
 Published.
+# CDP Browser Automation
+
+## Transfer templates
+
+Open the extension’s **Manage** link to create a paired transfer template before running a Source, Destination, Import, Export, Sanity, or Custom flow. Templates contain the provider settings for both sides and the shared file contract.
+
+The popup shows template names and summaries. It creates fresh CDP connections from the selected template for each run. Provider key files are stored as local file content, not as machine paths.
+
+Supported connection types are Oracle Object Storage, Secure FTP, Salesforce CRM, AWS, Google Cloud Storage, and CX Sales. File settings apply to the file-based providers; CX Sales omits them. Selecting gzip adds a compatible gzip filename contract for the paired import.

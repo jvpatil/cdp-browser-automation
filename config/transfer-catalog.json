@@ -1,0 +1,42 @@
+{
+  "profiles": [
+    {
+      "key": "oos",
+      "name": "OOS — Dummy profile",
+      "type": "Oracle Object Storage",
+      "fields": {}
+    },
+    {
+      "key": "sftp",
+      "name": "SFTP — Dummy profile",
+      "type": "Secure FTP",
+      "fields": {}
+    },
+    {
+      "key": "aws",
+      "name": "AWS — Dummy profile",
+      "type": "AWS",
+      "fields": {}
+    },
+    {
+      "key": "gcs",
+      "name": "GCS — Dummy profile",
+      "type": "Google Cloud Storage",
+      "fields": {}
+    }
+  ],
+  "templates": [
+    { "id": "catalog-oos-csv", "name": "OOS-CSV", "sourceProfileKey": "oos", "destinationProfileKey": "oos", "compression": "none" },
+    { "id": "catalog-oos-gz", "name": "OOS-GZ", "sourceProfileKey": "oos", "destinationProfileKey": "oos", "compression": "gzip" },
+    { "id": "catalog-oos-pgp", "name": "OOS-PGP", "sourceProfileKey": "oos", "destinationProfileKey": "oos", "compression": "PGP" },
+    { "id": "catalog-sftp-csv", "name": "SFTP-CSV", "sourceProfileKey": "sftp", "destinationProfileKey": "sftp", "compression": "none" },
+    { "id": "catalog-sftp-gz", "name": "SFTP-GZ", "sourceProfileKey": "sftp", "destinationProfileKey": "sftp", "compression": "gzip" },
+    { "id": "catalog-sftp-pgp", "name": "SFTP-PGP", "sourceProfileKey": "sftp", "destinationProfileKey": "sftp", "compression": "PGP" },
+    { "id": "catalog-aws-csv", "name": "AWS-CSV", "sourceProfileKey": "aws", "destinationProfileKey": "aws", "compression": "none" },
+    { "id": "catalog-aws-gz", "name": "AWS-GZ", "sourceProfileKey": "aws", "destinationProfileKey": "aws", "compression": "gzip" },
+    { "id": "catalog-aws-pgp", "name": "AWS-PGP", "sourceProfileKey": "aws", "destinationProfileKey": "aws", "compression": "PGP" },
+    { "id": "catalog-gcs-csv", "name": "GCS-CSV", "sourceProfileKey": "gcs", "destinationProfileKey": "gcs", "compression": "none" },
+    { "id": "catalog-gcs-gz", "name": "GCS-GZ", "sourceProfileKey": "gcs", "destinationProfileKey": "gcs", "compression": "gzip" },
+    { "id": "catalog-gcs-pgp", "name": "GCS-PGP", "sourceProfileKey": "gcs", "destinationProfileKey": "gcs", "compression": "PGP" }
+  ]
+}

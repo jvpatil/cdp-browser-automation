@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CDP Browser Automation",
-  "version": "2.9.6",
+  "version": "3.0.0",
   "description": "Oracle CDP UI automation with a compact Oxford Navy interface.",
   "permissions": [
     "scripting",
@@ -12,6 +12,7 @@
   "background": {
     "service_worker": "background.js"
   },
+  "options_page": "templates.html",
   "content_scripts": [
     {
       "matches": ["<all_urls>"],

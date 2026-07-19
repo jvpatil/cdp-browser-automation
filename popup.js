@@ -5,7 +5,7 @@ const QUICK_VISIBLE_LIMIT = 6;
 const DEFAULT_FLOW = ["source", "destination", "export", "import", "publish", "verify"];
 const DEFAULT_SCHEDULER = { mode: "scheduled", frequency: "Daily", startTime: "immediate" };
 const state = {
-  importSettings: {}, exportPayloadName: "Customer", schedulers: {
+  importSettings: {}, exportPayloadName: "Customer", templateId: "", connectionPurpose: "", templates: [], schedulers: {
     responsys: { ...DEFAULT_SCHEDULER }, quickImport: { ...DEFAULT_SCHEDULER }, quickExport: { ...DEFAULT_SCHEDULER }, flowImport: { ...DEFAULT_SCHEDULER }, flowExport: { ...DEFAULT_SCHEDULER }
   }
 };
@@ -13,6 +13,13 @@ const statusEl = document.getElementById("status");
 const statusDot = document.getElementById("statusDot");
 const stopButton = document.getElementById("stopE2EBtn");
 const lastRunEl = document.getElementById("lastRun");
+const templateSelect = document.getElementById("transferTemplate");
+const connectionPurposeInput = document.getElementById("connectionPurpose");
+const templateSummaryEl = document.getElementById("templateSummary");
+
+function selectedTemplate() { return state.templates.find((template) => template.id === state.templateId); }
+function renderTemplates() { const selected = selectedTemplate(); templateSelect.replaceChildren(new Option(state.templates.length ? "Select transfer template" : "Create a template", ""), ...state.templates.map((template) => new Option(template.name, template.id))); templateSelect.value = state.templateId; templateSummaryEl.textContent = selected ? `${selected.sourceType} → ${selected.destinationType} · ${selected.format} · ${selected.compression}` : "A Source and Destination template is required for connection and job runs."; }
+async function loadTemplates() { const result = await chrome.runtime.sendMessage({ type: "template-list" }); state.templates = result.templates || []; const { lastTemplateId } = await chrome.storage.local.get({ lastTemplateId: "" }); state.templateId = state.templates.some((template) => template.id === lastTemplateId) ? lastTemplateId : state.templates[0]?.id || ""; renderTemplates(); }
 
 async function loadCatalog() {
   const response = await fetch(chrome.runtime.getURL("config/tables.json"));
@@ -122,11 +129,11 @@ function renderFlow() {
   const run = document.getElementById("runCustomFlowBtn"); run.textContent = `▶ Run ${steps.length}-step flow`; run.disabled = !steps.length || (steps.includes("import") && !selectedTableIds().length);
 }
 function renderAll() { renderTableChoices(); renderPayloadChoices(); renderFlow(); renderSchedulers(); }
-async function persistDraft() { await chrome.storage.local.set({ flowDraft: { importSettings: state.importSettings, exportPayloadName: state.exportPayloadName, schedulers: state.schedulers, flowSteps: selectedFlowSteps() } }); }
+async function persistDraft() { await chrome.storage.local.set({ flowDraft: { importSettings: state.importSettings, exportPayloadName: state.exportPayloadName, connectionPurpose: state.connectionPurpose, schedulers: state.schedulers, flowSteps: selectedFlowSteps() } }); }
 function setStatus(status) { const running = /^Running:/.test(status || ""); statusEl.textContent = status || "No automation running"; statusDot.classList.toggle("idle", !running); stopButton.hidden = !running; }
 async function activeTab() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); if (!tab?.id) throw new Error("No active tab found."); return tab.id; }
 function closeAfterLaunch() { document.querySelectorAll("button").forEach((button) => { button.disabled = true; }); setTimeout(() => window.close(), 1200); }
-async function send(message, label, lastRun) { try { const tabId = await activeTab(); const status = `Running: ${label}`; await chrome.storage.local.set({ ...(lastRun ? { lastRun } : {}), e2eStatus: status }); if (lastRun) setLastRun(lastRun); setStatus(status); chrome.runtime.sendMessage({ ...message, tabId }); closeAfterLaunch(); } catch (error) { setStatus(`Failed: ${error.message || error}`); } }
+async function send(message, label, lastRun) { try { const needsTemplate = !["run-publish-all"].includes(message.type); if (needsTemplate && !state.templateId) throw new Error("Select or create a transfer template first."); if (needsTemplate && !state.connectionPurpose.trim()) throw new Error("Enter a connection purpose, for example CWB."); const tabId = await activeTab(); const status = `Running: ${label}`; await chrome.storage.local.set({ ...(lastRun ? { lastRun } : {}), e2eStatus: status, ...(needsTemplate ? { lastTemplateId: state.templateId } : {}) }); if (lastRun) setLastRun(lastRun); setStatus(status); chrome.runtime.sendMessage({ ...message, tabId, ...(needsTemplate ? { templateId: state.templateId, connectionPurpose: state.connectionPurpose.trim() } : {}) }); closeAfterLaunch(); } catch (error) { setStatus(`Failed: ${error.message || error}`); } }
 
 document.getElementById("runE2EBtn").addEventListener("click", () => send({ type: "run-full-sequence" }, "Sanity Flow", { summary: "Sanity Flow — Source → Destination → Export → Import", details: "Sanity Flow — Source → Destination → Export → Import → Publish → Verify" }));
 document.getElementById("sourceBtn").addEventListener("click", () => send({ type: "run-task", filename: "source.js" }, "Create Source", { summary: "Create Source", details: "Create Source" }));
@@ -136,15 +143,25 @@ document.getElementById("runResponsysBtn").addEventListener("click", () => { con
 document.getElementById("runQuickImportBtn").addEventListener("click", () => { if (!catalogReady) return setStatus("Table catalog is still loading."); const tableIds = selectedTableIds(); if (!tableIds.length) return setStatus("Select at least one import table."); const schedule = schedulerConfig("quickImport"); const tables = selectedTableSummary(); send({ type: "run-import-job", tableIds, schedule }, "Import Job", { summary: `Import — ${tables} — ${scheduleSummary(schedule)}`, details: `Import — ${selectedTables().map((table) => table.label).join(", ")} — ${scheduleSummary(schedule)}` }); });
 document.getElementById("runQuickExportBtn").addEventListener("click", () => { if (!catalogReady) return setStatus("Table catalog is still loading."); const schedule = schedulerConfig("quickExport"); send({ type: "run-task", filename: "exportJob.js", schedule, exportPayloadName: state.exportPayloadName }, "Export Job", { summary: `Export — ${state.exportPayloadName} — ${scheduleSummary(schedule)}`, details: `Export — ${state.exportPayloadName} — ${scheduleSummary(schedule)}` }); });
 document.getElementById("runCustomFlowBtn").addEventListener("click", () => { const steps = selectedFlowSteps(); if (!catalogReady && (steps.includes("import") || steps.includes("export"))) return setStatus("Table catalog is still loading."); const staggerJobs = flowHasBothJobs(); send({ type: "run-custom-flow", flow: { steps, importTableIds: selectedTableIds(), exportPayloadName: state.exportPayloadName, exportSchedule: schedulerConfig("flowExport"), importSchedule: schedulerConfig("flowImport"), staggerJobs } }, "Custom Flow", { summary: `Custom Flow — ${steps.length} steps`, details: `Custom Flow — ${steps.join(" → ")}` }); });
+templateSelect.addEventListener("change", async () => { state.templateId = templateSelect.value; await chrome.storage.local.set({ lastTemplateId: state.templateId }); renderTemplates(); });
+connectionPurposeInput.addEventListener("input", () => { state.connectionPurpose = connectionPurposeInput.value; persistDraft(); });
+document.getElementById("manageTemplatesBtn").addEventListener("click", async () => {
+  try {
+    await chrome.tabs.create({ url: chrome.runtime.getURL("templates.html") });
+    window.close();
+  } catch (_) {
+    chrome.runtime.openOptionsPage();
+  }
+});
 document.getElementById("stopE2EBtn").addEventListener("click", async () => { try { await chrome.runtime.sendMessage({ type: "stop-current-flow", tabId: await activeTab() }); setStatus(""); } catch (error) { setStatus(`Stop failed: ${error.message || error}`); } });
 document.getElementById("quickImportSearch").addEventListener("input", renderTableChoices); document.getElementById("quickExportSearch").addEventListener("input", renderPayloadChoices);
 document.getElementById("clearImportBtn").addEventListener("click", () => { state.importSettings = {}; persistDraft(); renderAll(); });
 DEFAULT_FLOW.forEach((step) => document.getElementById(`flow-${step}`).addEventListener("change", () => { persistDraft(); renderAll(); }));
 async function initialize() {
   try {
-    await loadCatalog();
+    await Promise.all([loadCatalog(), loadTemplates()]);
     const { flowDraft, e2eStatus, lastRun } = await chrome.storage.local.get({ flowDraft: null, e2eStatus: "", lastRun: null });
-    if (flowDraft) { state.importSettings = flowDraft.importSettings || {}; state.exportPayloadName = EXPORT_PAYLOAD_OPTIONS.includes(flowDraft.exportPayloadName) ? flowDraft.exportPayloadName : "Customer"; state.schedulers = { ...state.schedulers, ...(flowDraft.schedulers || {}) }; if (Array.isArray(flowDraft.flowSteps)) DEFAULT_FLOW.forEach((step) => { document.getElementById(`flow-${step}`).checked = flowDraft.flowSteps.includes(step); }); }
+    if (flowDraft) { state.importSettings = flowDraft.importSettings || {}; state.exportPayloadName = EXPORT_PAYLOAD_OPTIONS.includes(flowDraft.exportPayloadName) ? flowDraft.exportPayloadName : "Customer"; state.connectionPurpose = flowDraft.connectionPurpose || ""; connectionPurposeInput.value = state.connectionPurpose; state.schedulers = { ...state.schedulers, ...(flowDraft.schedulers || {}) }; if (Array.isArray(flowDraft.flowSteps)) DEFAULT_FLOW.forEach((step) => { document.getElementById(`flow-${step}`).checked = flowDraft.flowSteps.includes(step); }); }
     await chrome.storage.local.remove("popupAccordionState");
     setStatus(e2eStatus); setLastRun(lastRun); renderAll();
   } catch (error) {
