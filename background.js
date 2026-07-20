@@ -136,13 +136,6 @@ function csvCell(value, delimiter) {
     : text;
 }
 
-// cdpCustomerFieldMapping.js matches source CSV fields after removing spaces,
-// punctuation, and casing. Keep this config in that same form while retaining
-// the original header text in the uploaded sample CSV.
-function normalizeImportFieldName(value) {
-  return String(value || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
-}
-
 async function loadCsvFields(table) {
   if (!table.csvFile) throw new Error(`${table.label} has no sample CSV configured. Add its csvFile in config/tables.json before creating an Import job.`);
   const response = await fetch(chrome.runtime.getURL(table.csvFile));
@@ -178,7 +171,9 @@ async function buildImportConfig(tableIds, delimiter = ",") {
   const separator = csvDelimiter(delimiter);
   return {
     targetTables: selected.map((table) => table.cdpTable),
-    fieldToTable: Object.fromEntries(uniqueFields.map((field) => [normalizeImportFieldName(field.header), field.tables])),
+    // Preserve the author-provided CSV header verbatim. The field-mapping
+    // script receives the same literal value from Oracle's source-field row.
+    fieldToTable: Object.fromEntries(uniqueFields.map((field) => [field.header, field.tables])),
     csvContent: `${uniqueFields.map((field) => csvCell(field.header, separator)).join(separator)}\n${uniqueFields.map((field) => csvCell(field.value, separator)).join(separator)}\n`
   };
 }
@@ -402,7 +397,10 @@ function navigateAndWait(tabId, url) {
       if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
       clearTimeout(timeout);
       chrome.tabs.onUpdated.removeListener(onUpdated);
-      resolve();
+      // CDP's SPA reports the route load before its JET controls are reliably
+      // interactive. Apply one consistent post-navigation stability window to
+      // every automation route before its next action begins.
+      setTimeout(resolve, 3000);
     }
 
     chrome.tabs.onUpdated.addListener(onUpdated);
@@ -1058,10 +1056,10 @@ async function runFullSequence(tabId, templateId, connectionPurpose) {
     templateId,
     connectionPurpose,
     steps: ["dataViewer", "source", "destination", "export", "import", "publish", "verify"],
-    dataViewerTableIds: ["Customer"],
+    dataViewerTableIds: ["Customer", "ContactPoint"],
     recordsPerTable: 1,
     sourceId: "UI",
-    saveRecords: false,
+    saveRecords: true,
     importTableIds: ["customer", "contactPoint"],
     exportPayloadName: "Customer",
     staggerJobs: true,

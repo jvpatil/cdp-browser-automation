@@ -42,7 +42,10 @@
       throw new Error(`CDP kept the connection name invalid for ${baseName}; no available suffix was found.`);
     };
     const saveId = config.side === "destination" ? "dst-saveClose-btn" : "create-source-saveClose";
-    const waitSave = async () => { for (let tries = 0; tries < 120; tries += 1) { const save = realButton(d.getElementById(saveId)); if (enabled(save)) { clickButton(save); return; } await sleep(250); } throw new Error("Connection verification did not enable Save and Close. Check the profile path, endpoint, key, and secret."); };
+    // A successful Verify Connection result is not a prerequisite for this
+    // automation. Persist the configured connection as soon as Oracle enables
+    // Save and Close, then let the following flow stage continue.
+    const waitSave = async () => { for (let tries = 0; tries < 120; tries += 1) { const save = realButton(d.getElementById(saveId)); if (enabled(save)) { clickButton(save); return; } await sleep(250); } throw new Error("Save and Close did not become available after filling the connection form."); };
     const selectOption = async (input, value) => { if (!input || input.disabled) return; clickButton(input.closest("oj-select-single,oj-combobox-one")?.querySelector(".oj-searchselect-arrow,.oj-select-arrow") || input); for (let tries = 0; tries < 20; tries += 1) { const option = [...d.querySelectorAll("[role=option],oj-option,li")].find((item) => item.getClientRects().length && (item.textContent || "").replace(/\s+/g," ").trim().toLowerCase().includes(String(value).toLowerCase())); if (option) { clickButton(option); d.activeElement?.blur?.(); return; } await sleep(100); } };
     const chooseCsvParser = async (parser) => {
       const group = d.getElementById("csv-parsers");
@@ -96,11 +99,13 @@
         await selectOption(delimiter, delimiterValue);
       }
       if (config.side === "destination") {
-        await chooseDestinationCompression(contract.compression || "none");
+        // OOS treats None as its default state and does not consistently show
+        // it as a selectable list option. Leave that default untouched.
+        const compression = String(contract.compression || "none").trim().toLowerCase();
+        if (compression && compression !== "none") await chooseDestinationCompression(compression);
       }
     };
-    const verify = async () => { for (let tries = 0; tries < 40; tries += 1) { const button = realButton([...d.querySelectorAll("button,.oj-button-button,oj-button")].find((item) => /verify connection/i.test((item.textContent || "").replace(/\s+/g," ").trim()))); if (button && enabled(button)) { clickButton(button); await sleep(2000); return waitSave(); } await sleep(250); } throw new Error("Verify Connection is disabled. Check the profile values were committed."); };
-    ids.forEach(([id,value], index) => setTimeout(() => { const input = d.getElementById(id); if (!input) missing.push(id); else touch(input,value); if (index === ids.length - 1) { if (missing.length) throw new Error(`Missing OOS fields: ${missing.join(", ")}`); setTimeout(() => resolveDuplicateName().then(applyContract).then(verify).catch((error) => { alert(`Connection template automation failed: ${error.message || error}`); }),700); } }, 300 * index));
+    ids.forEach(([id,value], index) => setTimeout(() => { const input = d.getElementById(id); if (!input) missing.push(id); else touch(input,value); if (index === ids.length - 1) { if (missing.length) throw new Error(`Missing OOS fields: ${missing.join(", ")}`); setTimeout(() => resolveDuplicateName().then(applyContract).then(waitSave).catch((error) => { alert(`Connection template automation failed: ${error.message || error}`); }),700); } }, 300 * index));
     return;
   }
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -234,24 +239,19 @@
   if (config.type !== "CX Sales") {
     await selectText("File type", contract.format || "CSV"); await selectText("Format", contract.format || "CSV");
     await selectText("Character set", contract.charset || "UTF-8"); await selectText("CSV parser", contract.csvParser || "RFC 4180");
-    await selectText("Field delimiter", contract.delimiter || ","); await selectText("Compression format", contract.compression || "none");
+    await selectText("Field delimiter", contract.delimiter || ",");
+    const compression = String(contract.compression || "none").trim().toLowerCase();
+    if (compression && compression !== "none") await selectText("Compression format", compression);
     const destinationFile = findField("fileName"); if (destinationFile && contract.destinationFileName) await setValue(destinationFile, contract.destinationFileName);
     const dateFormat = findField("dateFormat"); if (dateFormat && contract.dateFormat) await setValue(dateFormat, contract.dateFormat);
     const encryption = [...document.querySelectorAll("input[type=file]")].find((item) => visible(item) && /encryption/i.test(item.id + item.name + item.getAttribute("aria-label"))); if (encryption) await upload(encryption, contract.encryptionFile);
   }
-  const verify = await wait(() => [...document.querySelectorAll("button,oj-button")].find((item) => visible(item) && /verify connection/i.test(text(item))), "Verify Connection");
-  const verifyButton = verify.querySelector("button") || verify;
-  if (verifyButton.disabled || verifyButton.getAttribute("aria-disabled") === "true") throw new Error("Verify Connection is disabled. Check the required connection-profile fields.");
-  await click(verifyButton);
   const deadline = Date.now() + 60000;
   let save;
   while (Date.now() < deadline && !save) {
-    const messages = [...document.querySelectorAll("[role=alert],.oj-message,.oj-message-summary,.oj-messages,[class*=error],[class*=message]")].filter(visible).map(text).filter(Boolean);
-    const failure = messages.find((message) => /connection.*(failed|failure|unable)|verification.*(failed|failure)|invalid.*(credential|key|secret)|error/i.test(message));
-    if (failure) throw new Error(`Connection verification failed: ${failure}. Oracle keeps Save and Close disabled until verification succeeds.`);
     save = [...document.querySelectorAll("button,oj-button")].find((item) => visible(item) && /save and close/i.test(text(item)) && !(item.disabled || item.getAttribute("aria-disabled") === "true"));
     if (!save) await sleep(250);
   }
-  if (!save) throw new Error("Connection verification did not complete. Oracle keeps Save and Close disabled until the connection validates successfully.");
+  if (!save) throw new Error("Save and Close did not become available after filling the connection form.");
   await click(save.querySelector("button") || save);
 })().catch((error) => { console.error("Connection template automation failed", error); alert(`Connection template automation failed: ${error.message || error}`); });

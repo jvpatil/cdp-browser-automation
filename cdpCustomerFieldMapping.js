@@ -249,7 +249,10 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
             const cleanedValue = getRowValue(row);
             if (!cleanedValue) return false;
 
-            const sourceKey = normalizeName(cleanedValue);
+            // This key must stay identical to the CSV header. CSV authors may
+            // use a convention that differs from CDP's display labels; only
+            // the later CDP-attribute comparison is formatting-tolerant.
+            const sourceKey = cleanedValue;
             const mappedTables = FIELD_TO_TABLE[sourceKey];
             if (!Array.isArray(mappedTables) || !mappedTables.length) {
                 throw new Error(`No target tables are configured for CSV field "${cleanedValue}".`);
