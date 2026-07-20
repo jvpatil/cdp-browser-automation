@@ -4,6 +4,7 @@ let DATA_VIEWER_TABLES = [];
 let DATA_VIEWER_RECORD_DEFAULTS = { tables: {} };
 let dataViewerEditorDraft = null;
 let catalogReady = false;
+let activeView = "run";
 const QUICK_VISIBLE_LIMIT = 6;
 const DEFAULT_FLOW = ["dataViewer", "source", "destination", "export", "import", "publish", "verify"];
 const DEFAULT_SCHEDULER = { mode: "scheduled", frequency: "Daily", startTime: "immediate" };
@@ -21,7 +22,7 @@ const state = {
 const statusEl = document.getElementById("status");
 const statusDot = document.getElementById("statusDot");
 const stopButton = document.getElementById("stopE2EBtn");
-const lastRunEl = document.getElementById("lastRun");
+const runHistoryEl = document.getElementById("runHistory");
 const templateSelect = document.getElementById("transferTemplate");
 const connectionPurposeInput = document.getElementById("connectionPurpose");
 const templateSummaryEl = document.getElementById("templateSummary");
@@ -76,7 +77,26 @@ function dataViewerRunOptions() {
 function importSummary() { const selected = selectedTables(); return !selected.length ? "Select tables" : `${selected[0].label}${selected.length > 1 ? ` +${selected.length - 1}` : ""}`; }
 function selectedTableSummary() { const names = selectedTables().map((table) => table.label); return !names.length ? "No tables" : `${names[0]}${names.length > 1 ? ` +${names.length - 1}` : ""}`; }
 function scheduleSummary(config) { return config.mode === "onDemand" ? "On-demand" : `Scheduled / ${config.frequency} / ${config.startTime === "plusOneHour" ? "+1 Hour" : "Immediate"}`; }
-function setLastRun(lastRun) { const text = lastRun?.summary || "No previous run"; lastRunEl.textContent = text; lastRunEl.title = lastRun?.details || text; lastRunEl.classList.toggle("empty", !lastRun); }
+function renderRunHistory(history = []) {
+  const entries = Array.isArray(history) ? history.slice(0, 5) : [];
+  if (!entries.length) { runHistoryEl.textContent = "No completed runs yet."; return; }
+  runHistoryEl.replaceChildren(...entries.map((entry) => {
+    const item = document.createElement("div"); item.className = "history-item"; item.title = entry.details || entry.detail || entry.summary || "";
+    const top = document.createElement("div"); top.className = "history-top";
+    const summary = document.createElement("span"); summary.textContent = entry.summary || "Automation run";
+    const outcome = document.createElement("span"); outcome.className = `outcome ${entry.outcome || "completed"}`; outcome.textContent = entry.outcome || "completed";
+    const detail = document.createElement("div"); detail.className = "detail"; detail.textContent = `${new Date(entry.finishedAt || entry.startedAt || Date.now()).toLocaleString()} · ${entry.detail || entry.details || ""}`;
+    top.append(summary, outcome); item.append(top, detail); return item;
+  }));
+}
+function showView(name, persist = true) {
+  activeView = name;
+  closeSheets(false);
+  ["run", "flow", "activity"].forEach((view) => { document.getElementById(`view-${view}`).hidden = view !== name; document.querySelector(`[data-view="${view}"]`).setAttribute("aria-selected", String(view === name)); });
+  if (persist) chrome.storage.local.set({ popupView: name });
+}
+function closeSheets(restoreView = true) { document.querySelectorAll(".sheet").forEach((sheet) => { sheet.hidden = true; }); if (restoreView) ["run", "flow", "activity"].forEach((view) => { document.getElementById(`view-${view}`).hidden = view !== activeView; }); }
+function openSheet(name) { closeSheets(false); document.querySelectorAll(".view").forEach((view) => { view.hidden = true; }); document.getElementById(`sheet-${name}`).hidden = false; window.scrollTo(0, 0); }
 function quickVisibleOptions(options, selected, filter, pinnedLabels = []) {
   const ordered = [...options].sort((left, right) => left.label.localeCompare(right.label));
   const matches = ordered.filter((option) => option.label.toLowerCase().includes(filter));
@@ -220,7 +240,6 @@ function renderPayloadChoices() {
 }
 function renderFlow() {
   const steps = selectedFlowSteps(); const hasJobs = steps.includes("export") || steps.includes("import");
-  document.getElementById("flowDataViewerConfig").hidden = !steps.includes("dataViewer"); document.getElementById("flowExportConfig").hidden = !steps.includes("export"); document.getElementById("flowImportConfig").hidden = !steps.includes("import");
   const publish = document.getElementById("flow-publish"); const verify = document.getElementById("flow-verify"); publish.disabled = !hasJobs; if (!hasJobs) publish.checked = false; verify.disabled = !hasJobs || !publish.checked; if (verify.disabled) verify.checked = false;
   const both = flowHasBothJobs();
   const preview = steps.map((step) => {
@@ -238,7 +257,7 @@ async function persistDraft() { await chrome.storage.local.set({ flowDraft: { im
 function setStatus(status) { const running = /^Running:/.test(status || ""); statusEl.textContent = status || "No automation running"; statusDot.classList.toggle("idle", !running); stopButton.hidden = !running; }
 async function activeTab() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); if (!tab?.id) throw new Error("No active tab found."); return tab.id; }
 function closeAfterLaunch() { document.querySelectorAll("button").forEach((button) => { button.disabled = true; }); setTimeout(() => window.close(), 1200); }
-async function send(message, label, lastRun) { try { const customTransferStep = message.type === "run-custom-flow" && message.flow.steps.some((step) => ["source", "destination", "export", "import"].includes(step)); const needsTemplate = !["run-publish-all", "run-data-viewer", "run-custom-flow"].includes(message.type) || customTransferStep; if (needsTemplate && !state.templateId) throw new Error("Select or create a transfer template first."); const tabId = await activeTab(); const status = `Running: ${label}`; await chrome.storage.local.set({ ...(lastRun ? { lastRun } : {}), e2eStatus: status, ...(needsTemplate ? { lastTemplateId: state.templateId } : {}) }); if (lastRun) setLastRun(lastRun); setStatus(status); chrome.runtime.sendMessage({ ...message, tabId, ...(needsTemplate ? { templateId: state.templateId, connectionPurpose: state.connectionPurpose.trim() } : {}) }); closeAfterLaunch(); } catch (error) { setStatus(`Failed: ${error.message || error}`); } }
+async function send(message, label, runInfo) { try { const customTransferStep = message.type === "run-custom-flow" && message.flow.steps.some((step) => ["source", "destination", "export", "import"].includes(step)); const needsTemplate = !["run-publish-all", "run-data-viewer", "run-custom-flow"].includes(message.type) || customTransferStep; if (needsTemplate && !state.templateId) throw new Error("Select a transfer template first."); const tabId = await activeTab(); const status = `Running: ${label}`; const pendingRun = { ...(runInfo || { summary: label, details: label }), startedAt: Date.now() }; await chrome.storage.local.set({ pendingRun, e2eStatus: status, ...(needsTemplate ? { lastTemplateId: state.templateId } : {}) }); setStatus(status); chrome.runtime.sendMessage({ ...message, tabId, ...(needsTemplate ? { templateId: state.templateId, connectionPurpose: state.connectionPurpose.trim() } : {}) }); closeAfterLaunch(); } catch (error) { setStatus(`Failed: ${error.message || error}`); } }
 
 document.getElementById("runE2EBtn").addEventListener("click", () => send({ type: "run-full-sequence" }, "Sanity Flow", { summary: "Sanity Flow — Data Viewer → Source → Destination → Export → Import", details: "Sanity Flow — Data Viewer → Source → Destination → Export → Import → Publish → Verify" }));
 document.getElementById("sourceBtn").addEventListener("click", () => send({ type: "run-task", filename: "source.js" }, "Create Source", { summary: "Create Source", details: "Create Source" }));
@@ -260,6 +279,9 @@ document.getElementById("manageTemplatesBtn").addEventListener("click", async ()
   }
 });
 document.getElementById("stopE2EBtn").addEventListener("click", async () => { try { await chrome.runtime.sendMessage({ type: "stop-current-flow", tabId: await activeTab() }); setStatus(""); } catch (error) { setStatus(`Stop failed: ${error.message || error}`); } });
+document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => { closeSheets(); showView(button.dataset.view); }));
+document.querySelectorAll("[data-open-sheet]").forEach((button) => button.addEventListener("click", () => openSheet(button.dataset.openSheet)));
+document.querySelectorAll("[data-close-sheet]").forEach((button) => button.addEventListener("click", closeSheets));
 document.getElementById("quickImportSearch").addEventListener("input", renderTableChoices); document.getElementById("quickExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("flowImportSearch").addEventListener("input", renderTableChoices); document.getElementById("flowExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("dataViewerSearch").addEventListener("input", renderDataViewerChoices); document.getElementById("flowDataViewerSearch").addEventListener("input", renderDataViewerChoices);
 document.getElementById("dataViewerRecordsPerTable").addEventListener("input", (event) => { state.dataViewerOptions.recordsPerTable = event.target.value; persistDraft(); renderDataViewerChoices(); });
 document.getElementById("dataViewerSourceId").addEventListener("input", (event) => { state.dataViewerOptions.sourceId = event.target.value; persistDraft(); });
@@ -280,7 +302,7 @@ DEFAULT_FLOW.forEach((step) => document.getElementById(`flow-${step}`).addEventL
 async function initialize() {
   try {
     await Promise.all([loadCatalog(), loadTemplates(), loadDataViewerRecordDefaults()]);
-    const { flowDraft, e2eStatus, lastRun, lastConnectionPurpose } = await chrome.storage.local.get({ flowDraft: null, e2eStatus: "", lastRun: null, lastConnectionPurpose: "" });
+    const { flowDraft, e2eStatus, lastRun, runHistory, popupView, lastConnectionPurpose } = await chrome.storage.local.get({ flowDraft: null, e2eStatus: "", lastRun: null, runHistory: [], popupView: "run", lastConnectionPurpose: "" });
     state.connectionPurpose = flowDraft?.connectionPurpose ?? lastConnectionPurpose;
     connectionPurposeInput.value = state.connectionPurpose;
     if (flowDraft) { state.importSettings = flowDraft.importSettings || {}; state.exportPayloadName = EXPORT_PAYLOAD_OPTIONS.includes(flowDraft.exportPayloadName) ? flowDraft.exportPayloadName : "Customer"; state.dataViewerSettings = flowDraft.dataViewerSettings || { Customer: true }; state.dataViewerOptions = { ...state.dataViewerOptions, ...(flowDraft.dataViewerOptions || {}) }; state.dataViewerOverrides = flowDraft.dataViewerOverrides || {}; if (state.dataViewerSettings.customer && !state.dataViewerSettings.Customer) { state.dataViewerSettings.Customer = true; delete state.dataViewerSettings.customer; } state.schedulers = { ...state.schedulers, ...(flowDraft.schedulers || {}) }; if (Array.isArray(flowDraft.flowSteps)) DEFAULT_FLOW.forEach((step) => { document.getElementById(`flow-${step}`).checked = flowDraft.flowSteps.includes(step); }); }
@@ -297,10 +319,12 @@ async function initialize() {
     document.getElementById("dataViewerDryRun").checked = state.dataViewerOptions.dryRun;
     document.getElementById("runDataViewerBtn").textContent = state.dataViewerOptions.dryRun ? "▶ Test Data Viewer Record" : "▶ Save Data Viewer Record";
     await chrome.storage.local.remove("popupAccordionState");
-    setStatus(e2eStatus); setLastRun(lastRun); renderAll();
+    const history = Array.isArray(runHistory) && runHistory.length ? runHistory : (lastRun ? [{ ...lastRun, outcome: lastRun.outcome || "completed" }] : []);
+    if (!runHistory?.length && history.length) await chrome.storage.local.set({ runHistory: history.slice(0, 5) });
+    setStatus(e2eStatus); renderRunHistory(history); showView(["run", "flow", "activity"].includes(popupView) ? popupView : "run", false); renderAll();
   } catch (error) {
     setStatus(`Catalog error: ${error.message || error}`);
   }
 }
 initialize();
-chrome.storage.onChanged.addListener((changes, area) => { if (area !== "local") return; if (changes.e2eStatus) setStatus(changes.e2eStatus.newValue || ""); if (changes.lastRun) setLastRun(changes.lastRun.newValue || null); });
+chrome.storage.onChanged.addListener((changes, area) => { if (area !== "local") return; if (changes.e2eStatus) setStatus(changes.e2eStatus.newValue || ""); if (changes.runHistory) renderRunHistory(changes.runHistory.newValue || []); });

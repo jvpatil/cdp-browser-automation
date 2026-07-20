@@ -300,6 +300,14 @@ async function clearFlowDraft() {
   await chrome.storage.local.remove("flowDraft");
 }
 
+async function finalizeRunHistory(outcome, detail = "") {
+  const { pendingRun = null, runHistory = [] } = await chrome.storage.local.get({ pendingRun: null, runHistory: [] });
+  if (!pendingRun) return;
+  const entry = { ...pendingRun, outcome, detail: detail || pendingRun.details || "", finishedAt: Date.now() };
+  await chrome.storage.local.set({ runHistory: [entry, ...(Array.isArray(runHistory) ? runHistory : [])].slice(0, 5), lastRun: entry });
+  await chrome.storage.local.remove("pendingRun");
+}
+
 async function installStopGuard(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
@@ -960,6 +968,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
   activeSequences.set(tabId, { runId, cancelled: false });
   await chrome.storage.local.set({ e2eRun: runMetadata });
   let completed = false;
+  let failure;
   try {
     for (const step of stepDefinitions) {
       await setE2EStatus(`Running: ${step.label}`, tabId);
@@ -1036,6 +1045,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
     }
     completed = true;
   } catch (error) {
+    failure = error;
     console.error("CDP flow failed", error);
     await setE2EStatus(`Failed: ${error.message || error}`, tabId);
     throw error;
@@ -1047,6 +1057,9 @@ async function runConfiguredFlow(tabId, flow = {}) {
       await setE2EStatus("", tabId);
       await chrome.storage.local.remove("e2eRun");
     }
+    if (failure) await finalizeRunHistory("failed", failure.message || String(failure));
+    else if (cancelled) await finalizeRunHistory("stopped");
+    else if (completed) await finalizeRunHistory("completed");
     await clearFlowDraft();
   }
 }
@@ -1098,12 +1111,21 @@ async function runPublishAll(tabId) {
   const runId = crypto.randomUUID();
   activeSequences.set(tabId, { runId, cancelled: false });
   await setE2EStatus("Running: Publish All Data Feeds", tabId);
+  let completed = false;
+  let failure;
   try {
     await runPublish(tabId, { mode: "all", runId, label: "Publish All Data Feeds" });
+    completed = true;
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
     const cancelled = activeSequences.get(tabId)?.runId === runId && activeSequences.get(tabId)?.cancelled;
     if (activeSequences.get(tabId)?.runId === runId) activeSequences.delete(tabId);
     await setE2EStatus("", tabId);
+    if (failure) await finalizeRunHistory("failed", failure.message || String(failure));
+    else if (cancelled) await finalizeRunHistory("stopped");
+    else if (completed) await finalizeRunHistory("completed");
     await clearFlowDraft();
   }
 }
@@ -1152,8 +1174,12 @@ async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = 
     if (!/stopped by the user/i.test(error.message || "")) await setE2EStatus(`Failed: Data Viewer Record — ${error.message || error}`, tabId);
     throw error;
   } finally {
+    const cancelled = activeSequences.get(tabId)?.runId === runId && activeSequences.get(tabId)?.cancelled;
     if (activeSequences.get(tabId)?.runId === runId) activeSequences.delete(tabId);
     if (!failed) await setE2EStatus("", tabId);
+    if (failed) await finalizeRunHistory("failed");
+    else if (cancelled) await finalizeRunHistory("stopped");
+    else await finalizeRunHistory("completed");
     await clearFlowDraft();
   }
 }
@@ -1240,6 +1266,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // the current route after Stop so the old automation is actually terminated
   // and the user can immediately start another run without a manual refresh.
   Promise.all([setE2EStatus("", tabId), cancelPublish])
+    .then(() => finalizeRunHistory("stopped"))
     .then(clearFlowDraft)
     .then(() => chrome.tabs.reload(tabId).catch(() => undefined))
     .finally(() => sendResponse({ ok: true, stopped: Boolean(activeSequence) }));
@@ -1258,6 +1285,7 @@ chrome.runtime.onMessage.addListener((message) => {
     activeSequences.delete(tabId);
     rememberConnectionSequence(activeRun.connectionTemplateId, activeRun.connectionSequence).catch((error) => console.warn("Could not record confirmed connection name", error));
     setE2EStatus("", tabId);
+    finalizeRunHistory("completed");
     clearFlowDraft();
     break;
   }
@@ -1279,7 +1307,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "run-data-viewer") {
     runDataViewer(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, sourceId: message.sourceId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
       .then(() => sendResponse({ ok: true }))
-      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+      .catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
     return true;
   }
   if (message?.type === "run-import-job") {
@@ -1294,6 +1322,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((error) => {
         console.error("CDP import batch failed", error);
+        finalizeRunHistory("failed", error.message || String(error));
         sendResponse({ ok: false, error: error.message || String(error) });
       });
     return true;
@@ -1313,7 +1342,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       importSchedule: message.schedule,
       staggerJobs: false
     };
-    runConfiguredFlow(message.tabId, flow).then(() => sendResponse({ ok: true })).catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    runConfiguredFlow(message.tabId, flow).then(() => sendResponse({ ok: true })).catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
     return true;
   }
 
@@ -1344,6 +1373,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     .catch((error) => {
       if (activeSequences.get(message.tabId)?.runId === runId) activeSequences.delete(message.tabId);
       setE2EStatus(`Failed: ${label}`, message.tabId);
+      finalizeRunHistory("failed", error.message || String(error));
       clearFlowDraft();
       console.error("CDP automation failed", error);
       sendResponse({ ok: false, error: error.message || String(error) });
@@ -1357,6 +1387,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((error) => {
         console.error("CDP custom flow failed", error);
+        finalizeRunHistory("failed", error.message || String(error));
         sendResponse({ ok: false, error: error.message || String(error) });
       });
     return true;
@@ -1367,6 +1398,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     .then(() => sendResponse({ ok: true }))
     .catch((error) => {
       console.error("CDP sequence failed", error);
+      finalizeRunHistory("failed", error.message || String(error));
       sendResponse({ ok: false, error: error.message || String(error) });
     });
   return true;
