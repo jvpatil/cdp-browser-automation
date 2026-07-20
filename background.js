@@ -290,6 +290,10 @@ function jobRuntime(template, side) {
 const sequenceStepState = new Map();
 const activeSequences = new Map();
 
+if (chrome.sidePanel?.setPanelBehavior) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.warn("Could not enable CDP Automation Side Panel", error));
+}
+
 async function setE2EStatus(status = "", tabId) {
   const activeRun = activeSequences.get(tabId);
   if (activeRun) activeRun.status = status;

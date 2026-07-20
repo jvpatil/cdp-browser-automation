@@ -84,7 +84,8 @@ function renderRunHistory(history = []) {
     const item = document.createElement("div"); item.className = "history-item"; item.title = entry.details || entry.detail || entry.summary || "";
     const top = document.createElement("div"); top.className = "history-top";
     const summary = document.createElement("span"); summary.textContent = entry.summary || "Automation run";
-    const outcome = document.createElement("span"); outcome.className = `outcome ${entry.outcome || "completed"}`; outcome.textContent = entry.outcome || "completed";
+    const outcomeValue = entry.outcome || "completed";
+    const outcome = document.createElement("span"); outcome.className = `outcome ${outcomeValue}`; outcome.textContent = outcomeValue.charAt(0).toUpperCase() + outcomeValue.slice(1);
     const detail = document.createElement("div"); detail.className = "detail"; detail.textContent = `${new Date(entry.finishedAt || entry.startedAt || Date.now()).toLocaleString()} · ${entry.detail || entry.details || ""}`;
     top.append(summary, outcome); item.append(top, detail); return item;
   }));
@@ -256,7 +257,11 @@ function renderAll() { renderTableChoices(); renderPayloadChoices(); renderDataV
 async function persistDraft() { await chrome.storage.local.set({ flowDraft: { importSettings: state.importSettings, exportPayloadName: state.exportPayloadName, dataViewerSettings: state.dataViewerSettings, dataViewerOptions: state.dataViewerOptions, dataViewerOverrides: state.dataViewerOverrides, connectionPurpose: state.connectionPurpose, schedulers: state.schedulers, flowSteps: selectedFlowSteps() } }); }
 function setStatus(status) { const running = /^Running:/.test(status || ""); statusEl.textContent = status || "No automation running"; statusDot.classList.toggle("idle", !running); stopButton.hidden = !running; }
 async function activeTab() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); if (!tab?.id) throw new Error("No active tab found."); return tab.id; }
-function closeAfterLaunch() { document.querySelectorAll("button").forEach((button) => { button.disabled = true; }); setTimeout(() => window.close(), 1200); }
+function closeAfterLaunch() {
+  // The in-page status pill remains the progress/Stop control while the
+  // automation runs, so release the browser workspace after a launch.
+  window.setTimeout(() => window.close(), 1000);
+}
 async function send(message, label, runInfo) { try { const customTransferStep = message.type === "run-custom-flow" && message.flow.steps.some((step) => ["source", "destination", "export", "import"].includes(step)); const needsTemplate = !["run-publish-all", "run-data-viewer", "run-custom-flow"].includes(message.type) || customTransferStep; if (needsTemplate && !state.templateId) throw new Error("Select a transfer template first."); const tabId = await activeTab(); const status = `Running: ${label}`; const pendingRun = { ...(runInfo || { summary: label, details: label }), startedAt: Date.now() }; await chrome.storage.local.set({ pendingRun, e2eStatus: status, ...(needsTemplate ? { lastTemplateId: state.templateId } : {}) }); setStatus(status); chrome.runtime.sendMessage({ ...message, tabId, ...(needsTemplate ? { templateId: state.templateId, connectionPurpose: state.connectionPurpose.trim() } : {}) }); closeAfterLaunch(); } catch (error) { setStatus(`Failed: ${error.message || error}`); } }
 
 document.getElementById("runE2EBtn").addEventListener("click", () => send({ type: "run-full-sequence" }, "Sanity Flow", { summary: "Sanity Flow — Data Viewer → Source → Destination → Export → Import", details: "Sanity Flow — Data Viewer → Source → Destination → Export → Import → Publish → Verify" }));
@@ -297,7 +302,12 @@ document.getElementById("dataViewerApplyEditor").addEventListener("click", () =>
   state.dataViewerOverrides[dataViewerEditorDraft.tableName] = { values, relationships };
   persistDraft(); closeDataViewerEditor();
 });
-document.getElementById("clearImportBtn").addEventListener("click", () => { state.importSettings = {}; persistDraft(); renderAll(); });
+function clearImportSelection() { state.importSettings = {}; persistDraft(); renderAll(); }
+function clearDataViewerSelection() { state.dataViewerSettings = {}; persistDraft(); renderAll(); }
+document.getElementById("clearImportBtn").addEventListener("click", clearImportSelection);
+document.getElementById("flowImportClearBtn").addEventListener("click", clearImportSelection);
+document.getElementById("dataViewerClearBtn").addEventListener("click", clearDataViewerSelection);
+document.getElementById("flowDataViewerClearBtn").addEventListener("click", clearDataViewerSelection);
 DEFAULT_FLOW.forEach((step) => document.getElementById(`flow-${step}`).addEventListener("change", () => { persistDraft(); renderAll(); }));
 async function initialize() {
   try {
@@ -309,11 +319,11 @@ async function initialize() {
     // Drafts saved before the Custom Flow picker had a first-use selection
     // contain an empty import map. Migrate those drafts so the default flow
     // can be launched rather than presenting a permanently disabled button.
-    if (document.getElementById("flow-import").checked && !selectedTableIds().length) state.importSettings = { customer: true };
+    if (!flowDraft?.importSettings && document.getElementById("flow-import").checked && !selectedTableIds().length) state.importSettings = { customer: true };
     // The same first-use default applies to the independent Data Viewer step.
     // Older drafts did not contain its selection state, which made the Custom
     // Flow handler stop before it sent the automation message.
-    if (document.getElementById("flow-dataViewer").checked && !selectedDataViewerTables().length) state.dataViewerSettings = { Customer: true };
+    if (!flowDraft?.dataViewerSettings && document.getElementById("flow-dataViewer").checked && !selectedDataViewerTables().length) state.dataViewerSettings = { Customer: true };
     document.getElementById("dataViewerRecordsPerTable").value = state.dataViewerOptions.recordsPerTable;
     document.getElementById("dataViewerSourceId").value = state.dataViewerOptions.sourceId;
     document.getElementById("dataViewerDryRun").checked = state.dataViewerOptions.dryRun;

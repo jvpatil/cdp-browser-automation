@@ -8,7 +8,8 @@
     "activeTab",
     "tabs",
     "storage",
-    "debugger"
+    "debugger",
+    "sidePanel"
   ],
   "background": {
     "service_worker": "background.js"
@@ -25,14 +26,16 @@
     "<all_urls>"
   ],
   "action": {
-    "default_title": "CDP UI Automation",
-    "default_popup": "popup.html",
+    "default_title": "Open CDP Automation",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
+  },
+  "side_panel": {
+    "default_path": "popup.html"
   },
   "icons": {
     "16": "icons/icon16.png",
