@@ -14,7 +14,7 @@ const state = {
   // A Custom Flow includes Import by default. Keep Customer selected on a
   // first-use popup so its primary Run action is immediately actionable.
   // Users can still clear this selection or choose any catalog table.
-  importSettings: { customer: true }, exportPayloadName: "Customer", dataViewerSettings: { Customer: true }, dataViewerOptions: { recordsPerTable: "", sourceId: "", dryRun: true }, dataViewerOverrides: {}, templateId: "", connectionPurpose: "", templates: [], schedulers: {
+  importSettings: { customer: true }, exportPayloadName: "Customer", dataViewerSettings: { Customer: true }, dataViewerOptions: { recordsPerTable: "", sourceId: "", dryRun: false }, dataViewerOverrides: {}, templateId: "", connectionPurpose: "", templates: [], schedulers: {
     responsys: { ...DEFAULT_SCHEDULER }, quickImport: { ...DEFAULT_SCHEDULER }, quickExport: { ...DEFAULT_SCHEDULER }, flowImport: { ...DEFAULT_SCHEDULER }, flowExport: { ...DEFAULT_SCHEDULER }
   }
 };
@@ -127,7 +127,8 @@ function tableChoice(table) {
   const label = document.createElement("label"); label.className = "choice";
   const input = document.createElement("input"); input.type = "checkbox"; input.checked = Boolean(state.importSettings[table.id]);
   input.addEventListener("change", () => { state.importSettings[table.id] = input.checked; persistDraft(); renderAll(); });
-  label.append(input, document.createTextNode(table.label)); return label;
+  const text = document.createElement("span"); text.className = "choice-label"; text.textContent = table.label;
+  label.append(input, text); return label;
 }
 function renderTableChoices() {
   const filter = document.getElementById("quickImportSearch").value.trim().toLowerCase();
@@ -145,16 +146,18 @@ function copyRecordTemplate(tableName) {
   const configured = state.dataViewerOverrides[tableName] || DATA_VIEWER_RECORD_DEFAULTS.tables?.[tableName] || {};
   return {
     tableName,
-    values: Object.entries(configured.values || {}).map(([field, item]) => ({ field, value: typeof item === "object" ? item.value ?? "" : item, suffix: typeof item === "object" ? item.suffix ?? "" : "" })),
+    values: Object.entries(configured.values || {}).map(([field, item]) => ({ field, value: typeof item === "object" ? item.value ?? "" : item })),
     relationships: Object.entries(configured.relationships || {}).map(([field, table]) => ({ field, table }))
   };
 }
 function editorRow(row, relationship = false) {
   const element = document.createElement("div"); element.className = `editor-row${relationship ? " relationship" : ""}`;
   const field = document.createElement("input"); field.placeholder = "Field ID"; field.value = row.field || ""; field.addEventListener("input", () => { row.field = field.value; });
-  const value = document.createElement("input"); value.placeholder = relationship ? "Referenced table" : "Value"; value.value = relationship ? row.table || "" : row.value || ""; value.addEventListener("input", () => { if (relationship) row.table = value.value; else row.value = value.value; });
+  const value = document.createElement(relationship ? "input" : "textarea"); value.placeholder = relationship ? "Referenced table" : dataViewerEditorDraft?.tableName === "Address" ? "Value — one per line" : "Value — comma or one per line"; value.value = relationship ? row.table || "" : row.value || ""; value.title = relationship ? "Referenced table" : dataViewerEditorDraft?.tableName === "Address" ? "Use one line per record for Address values." : "Use commas or one line per record.";
+  const resizeValue = () => { if (relationship) return; value.style.height = "30px"; value.style.height = `${Math.min(value.scrollHeight, 78)}px`; };
+  value.addEventListener("input", () => { if (relationship) row.table = value.value; else { row.value = value.value; resizeValue(); } });
   element.append(field, value);
-  if (!relationship) { const suffix = document.createElement("input"); suffix.placeholder = "Suffix"; suffix.value = row.suffix || ""; suffix.addEventListener("input", () => { row.suffix = suffix.value; }); element.append(suffix); }
+  resizeValue();
   const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×"; remove.title = "Remove"; remove.addEventListener("click", () => { const list = relationship ? dataViewerEditorDraft.relationships : dataViewerEditorDraft.values; list.splice(list.indexOf(row), 1); renderDataViewerEditor(); }); element.append(remove);
   return element;
 }
@@ -183,7 +186,7 @@ function renderDataViewerChoices() {
     const input = document.createElement("input"); input.type = "checkbox"; input.checked = Boolean(state.dataViewerSettings[table.id]);
     input.addEventListener("change", () => { state.dataViewerSettings[table.id] = input.checked; persistDraft(); renderDataViewerChoices(); });
     const name = document.createElement("span"); name.className = "data-viewer-choice-name"; name.textContent = table.label;
-    const edit = document.createElement("button"); edit.type = "button"; edit.className = "data-viewer-edit"; edit.textContent = "✎"; edit.title = `Edit ${table.label} values`; edit.setAttribute("aria-label", `Edit ${table.label} record values`);
+    const edit = document.createElement("button"); edit.type = "button"; edit.className = "data-viewer-edit"; edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.5V20h3.5L18.4 9.1l-3.5-3.5L4 16.5Zm12.7-12.7 3.5 3.5 1.1-1.1a1.25 1.25 0 0 0 0-1.8l-1.7-1.7a1.25 1.25 0 0 0-1.8 0l-1.1 1.1Z"/></svg>'; edit.title = `Edit ${table.label} values`; edit.setAttribute("aria-label", `Edit ${table.label} record values`);
     edit.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openDataViewerEditor(table.id); });
     label.append(input, name, edit); return label;
   };
@@ -200,7 +203,8 @@ function payloadChoice(name, scope) {
   const label = document.createElement("label"); label.className = "choice";
   const input = document.createElement("input"); input.type = "radio"; input.name = `${scope}-payload`; input.checked = state.exportPayloadName === name;
   input.addEventListener("change", () => { state.exportPayloadName = name; persistDraft(); renderAll(); });
-  label.append(input, document.createTextNode(name)); return label;
+  const text = document.createElement("span"); text.className = "choice-label"; text.textContent = name;
+  label.append(input, text); return label;
 }
 function renderPayloadChoices() {
   const filter = document.getElementById("quickExportSearch").value.trim().toLowerCase();
@@ -261,12 +265,12 @@ document.getElementById("dataViewerRecordsPerTable").addEventListener("input", (
 document.getElementById("dataViewerSourceId").addEventListener("input", (event) => { state.dataViewerOptions.sourceId = event.target.value; persistDraft(); });
 document.getElementById("dataViewerDryRun").addEventListener("change", (event) => { state.dataViewerOptions.dryRun = event.target.checked; document.getElementById("runDataViewerBtn").textContent = event.target.checked ? "▶ Test Data Viewer Record" : "▶ Save Data Viewer Record"; persistDraft(); });
 document.getElementById("dataViewerEditorBack").addEventListener("click", closeDataViewerEditor);
-document.getElementById("dataViewerAddValue").addEventListener("click", () => { dataViewerEditorDraft?.values.push({ field: "", value: "", suffix: "" }); renderDataViewerEditor(); });
+document.getElementById("dataViewerAddValue").addEventListener("click", () => { dataViewerEditorDraft?.values.push({ field: "", value: "" }); renderDataViewerEditor(); });
 document.getElementById("dataViewerAddRelationship").addEventListener("click", () => { dataViewerEditorDraft?.relationships.push({ field: "", table: "" }); renderDataViewerEditor(); });
 document.getElementById("dataViewerUseDefaults").addEventListener("click", () => { if (!dataViewerEditorDraft) return; delete state.dataViewerOverrides[dataViewerEditorDraft.tableName]; persistDraft(); closeDataViewerEditor(); });
 document.getElementById("dataViewerApplyEditor").addEventListener("click", () => {
   if (!dataViewerEditorDraft) return;
-  const values = Object.fromEntries(dataViewerEditorDraft.values.filter((row) => row.field.trim()).map((row) => [row.field.trim(), { value: row.value, suffix: row.suffix }]));
+  const values = Object.fromEntries(dataViewerEditorDraft.values.filter((row) => row.field.trim()).map((row) => [row.field.trim(), { value: row.value }]));
   const relationships = Object.fromEntries(dataViewerEditorDraft.relationships.filter((row) => row.field.trim() && row.table.trim()).map((row) => [row.field.trim(), row.table.trim()]));
   state.dataViewerOverrides[dataViewerEditorDraft.tableName] = { values, relationships };
   persistDraft(); closeDataViewerEditor();

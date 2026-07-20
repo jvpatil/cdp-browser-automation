@@ -219,13 +219,18 @@
   };
   const suffixEligible = (field, input) => !isChoiceInput(input)
     && !/(date|timestamp|(?:ts|dt)$|birth(day|month|year)|age|amount|revenue|score|rank|count|number|quantity|year|month|day|level|^is|flag)/i.test(field);
-  const configuredValueFor = (entry, field, drawer, context, repeatCount) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return resolveValue(entry, context);
-    const base = resolveValue(entry.value, context);
+  const configuredValueFor = (entry, field, tableName, drawer, context, repeatCount) => {
+    const rawValue = entry && typeof entry === "object" && !Array.isArray(entry) ? entry.value : entry;
+    const delimiters = String(tableName || "").toLowerCase() === "address" ? /\r?\n/ : /[\n,]+/;
+    const suppliedValues = String(rawValue ?? "").split(delimiters).map((value) => value.trim()).filter(Boolean);
+    if (suppliedValues.length > 1) {
+      if (suppliedValues.length < repeatCount) throw new Error(`${field} has ${suppliedValues.length} supplied values but ${repeatCount} records were requested.`);
+      return resolveValue(suppliedValues[context.tableSequence - 1], context);
+    }
+    const base = resolveValue(suppliedValues[0] || rawValue, context);
     const input = findField(drawer, field);
     if (repeatCount <= 1 || !base || !suffixEligible(field, input)) return base;
-    const suffix = String(entry.suffix || "").trim();
-    const marker = suffix ? `${suffix}-${context.tableSequence}` : context.tableSequence;
+    const marker = context.tableSequence;
     const at = base.indexOf("@");
     return at > 0 ? `${base.slice(0, at)}-${marker}${base.slice(at)}` : `${base}-${marker}`;
   };
@@ -322,9 +327,10 @@
         setProgress(`Filling ${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
         const skippedFields = [];
         for (const field of fields) {
-          const value = Object.hasOwn(configuredValues, field)
-            ? configuredValueFor(configuredValues[field], field, drawer, context, recordsPerTable)
+          const configuredValue = Object.hasOwn(configuredValues, field)
+            ? configuredValues[field]
             : defaultFieldValue(field, context);
+          const value = configuredValueFor(configuredValue, field, table.cdpTable, drawer, context, recordsPerTable);
           try {
             await chooseValue(drawer, field, value);
           } catch (error) {
