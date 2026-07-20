@@ -56,10 +56,12 @@ extension combines the selected fragments into one CSV, uploads it, and maps
 each field only to its configured CDP table. A header used by multiple selected
 tables appears once in the combined CSV and maps to every matching table.
 
-To add an Import table, create its CSV fragment and add one record under
-`importTables` in `config/tables.json` with `id`, `label`, `cdpTable`, and
-`csvFile`. Add Export choices under `exportPayloads`. Reload the extension
-after editing the catalog or a CSV file.
+`importTables` may list any CDP Data Warehouse table. To make a listed table
+usable for an Import job, create its CSV fragment and add its `csvFile` value
+alongside `id`, `label`, and `cdpTable`. Tables without a `csvFile` remain
+visible but show a clear message until their sample CSV is configured. Add
+Export choices under `exportPayloads`. Reload the extension after editing the
+catalog or a CSV file.
 
 ## Scheduling and E2E
 

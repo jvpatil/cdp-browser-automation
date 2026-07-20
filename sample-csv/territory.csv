@@ -1,0 +1,3 @@
+sourceid,sourceterritoryid,territoryowner,territoryname,description,effectiveenddate,effectivestartdate,statuscode,parentterritoryid
+UI,TE-1001,TE-TerritoryOwner-1001,TE-TerritoryName-1001,TE-Description-1001,TE-EffectiveEndDate-1001,TE-EffectiveStartDate-1001,TE-StatusCode-1001,TE-ParentTerritoryID-1001
+UI,TE-1002,TE-TerritoryOwner-1002,TE-TerritoryName-1002,TE-Description-1002,TE-EffectiveEndDate-1002,TE-EffectiveStartDate-1002,TE-StatusCode-1002,TE-ParentTerritoryID-1002

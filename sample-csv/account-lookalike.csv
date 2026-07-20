@@ -1,0 +1,3 @@
+sourceid,sourceaccountlookalikeid,masteraccountid,sourcemasteraccountid,lookalikescore,lookalikebin,modelname,seedsegment,targetsegment
+UI,AL-1001,AL-MasterAccountID-1001,AL-SourceMasterAccountID-1001,AL-LookalikeScore-1001,AL-LookalikeBin-1001,AL-ModelName-1001,AL-SeedSegment-1001,AL-TargetSegment-1001
+UI,AL-1002,AL-MasterAccountID-1002,AL-SourceMasterAccountID-1002,AL-LookalikeScore-1002,AL-LookalikeBin-1002,AL-ModelName-1002,AL-SeedSegment-1002,AL-TargetSegment-1002

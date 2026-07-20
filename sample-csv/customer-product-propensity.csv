@@ -1,0 +1,3 @@
+sourceid,sourcecustomerproductpropensityid,mastercustomerid,sourcemastercustomerid,productid,sourceproductid,propensityscore,propensitystatus,type,rank,repurchasewindow
+UI,CPP-1001,CPP-MasterCustomerID-1001,CPP-SourceMasterCustomerID-1001,CPP-ProductID-1001,CPP-SourceProductID-1001,CPP-PropensityScore-1001,CPP-PropensityStatus-1001,CPP-Type-1001,CPP-Rank-1001,CPP-RepurchaseWindow-1001
+UI,CPP-1002,CPP-MasterCustomerID-1002,CPP-SourceMasterCustomerID-1002,CPP-ProductID-1002,CPP-SourceProductID-1002,CPP-PropensityScore-1002,CPP-PropensityStatus-1002,CPP-Type-1002,CPP-Rank-1002,CPP-RepurchaseWindow-1002

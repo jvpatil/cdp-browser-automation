@@ -1,22 +1,514 @@
 {
   "importTables": [
     {
+      "id": "subscription",
+      "label": "Subscription",
+      "cdpTable": "Subscription",
+      "csvFile": "sample-csv/subscription.csv"
+    },
+    {
+      "id": "socialIdentity",
+      "label": "Social Identity",
+      "cdpTable": "Social Identity",
+      "csvFile": "sample-csv/social-identity.csv"
+    },
+    {
+      "id": "socialEngagement",
+      "label": "Social Engagement",
+      "cdpTable": "Social Engagement",
+      "csvFile": "sample-csv/social-engagement.csv"
+    },
+    {
+      "id": "promotion",
+      "label": "Promotion",
+      "cdpTable": "Promotion",
+      "csvFile": "sample-csv/promotion.csv"
+    },
+    {
+      "id": "productCategory",
+      "label": "Product Category",
+      "cdpTable": "Product Category",
+      "csvFile": "sample-csv/product-category.csv"
+    },
+    {
+      "id": "product",
+      "label": "Product",
+      "cdpTable": "Product",
+      "csvFile": "sample-csv/product.csv"
+    },
+    {
+      "id": "organization",
+      "label": "Organization",
+      "cdpTable": "Organization",
+      "csvFile": "sample-csv/organization.csv"
+    },
+    {
+      "id": "orderItem",
+      "label": "Order Item",
+      "cdpTable": "Order Item",
+      "csvFile": "sample-csv/order-item.csv"
+    },
+    {
+      "id": "order",
+      "label": "Order",
+      "cdpTable": "Order",
+      "csvFile": "sample-csv/order.csv"
+    },
+    {
+      "id": "group",
+      "label": "Group",
+      "cdpTable": "Group",
+      "csvFile": "sample-csv/group.csv"
+    },
+    {
+      "id": "geoDemographics",
+      "label": "GeoDemographics",
+      "cdpTable": "GeoDemographics",
+      "csvFile": "sample-csv/geodemographics.csv"
+    },
+    {
+      "id": "event",
+      "label": "Event",
+      "cdpTable": "Event",
+      "csvFile": "sample-csv/event.csv"
+    },
+    {
+      "id": "dataDeletionRequests",
+      "label": "Data Deletion Requests",
+      "cdpTable": "Data Deletion Requests",
+      "csvFile": "sample-csv/data-deletion-requests.csv"
+    },
+    {
+      "id": "customerGroup",
+      "label": "Customer Group",
+      "cdpTable": "Customer Group",
+      "csvFile": "sample-csv/customer-group.csv"
+    },
+    {
       "id": "customer",
       "label": "Customer",
       "cdpTable": "Customer",
       "csvFile": "sample-csv/customer.csv"
     },
     {
-      "id": "contactPoint",
-      "label": "Contacts",
-      "cdpTable": "ContactPoint",
-      "csvFile": "sample-csv/contactpoint.csv"
+      "id": "category",
+      "label": "Category",
+      "cdpTable": "Category",
+      "csvFile": "sample-csv/category.csv"
     },
     {
       "id": "address",
       "label": "Address",
       "cdpTable": "Address",
       "csvFile": "sample-csv/address.csv"
+    },
+    {
+      "id": "visitor",
+      "label": "Visitor",
+      "cdpTable": "Visitor",
+      "csvFile": "sample-csv/visitor.csv"
+    },
+    {
+      "id": "titleRepository",
+      "label": "Title Repository",
+      "cdpTable": "Title Repository",
+      "csvFile": "sample-csv/title-repository.csv"
+    },
+    {
+      "id": "territoryHierarchy",
+      "label": "Territory Hierarchy",
+      "cdpTable": "Territory Hierarchy",
+      "csvFile": "sample-csv/territory-hierarchy.csv"
+    },
+    {
+      "id": "territory",
+      "label": "Territory",
+      "cdpTable": "Territory",
+      "csvFile": "sample-csv/territory.csv"
+    },
+    {
+      "id": "tenantPreference",
+      "label": "Tenant Preference",
+      "cdpTable": "Tenant Preference",
+      "csvFile": "sample-csv/tenant-preference.csv"
+    },
+    {
+      "id": "serviceTicket",
+      "label": "Service Ticket",
+      "cdpTable": "Service Ticket",
+      "csvFile": "sample-csv/service-ticket.csv"
+    },
+    {
+      "id": "segment",
+      "label": "Segment",
+      "cdpTable": "Segment",
+      "csvFile": "sample-csv/segment.csv"
+    },
+    {
+      "id": "salesOffers",
+      "label": "Sales Offers",
+      "cdpTable": "Sales Offers",
+      "csvFile": "sample-csv/sales-offers.csv"
+    },
+    {
+      "id": "revenueLine",
+      "label": "Revenue Line",
+      "cdpTable": "Revenue Line",
+      "csvFile": "sample-csv/revenue-line.csv"
+    },
+    {
+      "id": "promotionCategory",
+      "label": "Promotion Category",
+      "cdpTable": "Promotion Category",
+      "csvFile": "sample-csv/promotion-category.csv"
+    },
+    {
+      "id": "productUsage",
+      "label": "Product Usage",
+      "cdpTable": "Product Usage",
+      "csvFile": "sample-csv/product-usage.csv"
+    },
+    {
+      "id": "productRecommendation",
+      "label": "Product Recommendation",
+      "cdpTable": "Product Recommendation",
+      "csvFile": "sample-csv/product-recommendation.csv"
+    },
+    {
+      "id": "productTerritory",
+      "label": "Product Territory",
+      "cdpTable": "Product Territory",
+      "csvFile": "sample-csv/product-territory.csv"
+    },
+    {
+      "id": "potentialRevenue",
+      "label": "Potential Revenue",
+      "cdpTable": "Potential Revenue",
+      "csvFile": "sample-csv/potential-revenue.csv"
+    },
+    {
+      "id": "opportunityActivity",
+      "label": "Opportunity Activity",
+      "cdpTable": "Opportunity Activity",
+      "csvFile": "sample-csv/opportunity-activity.csv"
+    },
+    {
+      "id": "opportunityCustomer",
+      "label": "Opportunity Customer",
+      "cdpTable": "Opportunity Customer",
+      "csvFile": "sample-csv/opportunity-customer.csv"
+    },
+    {
+      "id": "opportunity",
+      "label": "Opportunity",
+      "cdpTable": "Opportunity",
+      "csvFile": "sample-csv/opportunity.csv"
+    },
+    {
+      "id": "masterCustomerRecommendation",
+      "label": "Master Customer Recommendation",
+      "cdpTable": "Master Customer Recommendation",
+      "csvFile": "sample-csv/master-customer-recommendation.csv"
+    },
+    {
+      "id": "marketingWebPage",
+      "label": "Marketing Web Page",
+      "cdpTable": "Marketing Web Page",
+      "csvFile": "sample-csv/marketing-web-page.csv"
+    },
+    {
+      "id": "marketingRule",
+      "label": "Marketing Rule",
+      "cdpTable": "Marketing Rule",
+      "csvFile": "sample-csv/marketing-rule.csv"
+    },
+    {
+      "id": "marketingProgram",
+      "label": "Marketing Program",
+      "cdpTable": "Marketing Program",
+      "csvFile": "sample-csv/marketing-program.csv"
+    },
+    {
+      "id": "marketingMessage",
+      "label": "Marketing Message",
+      "cdpTable": "Marketing Message",
+      "csvFile": "sample-csv/marketing-message.csv"
+    },
+    {
+      "id": "marketingLinkSignatureLink",
+      "label": "Marketing Link Signature Link",
+      "cdpTable": "Marketing Link Signature Link",
+      "csvFile": "sample-csv/marketing-link-signature-link.csv"
+    },
+    {
+      "id": "marketingLinkSignature",
+      "label": "Marketing Link Signature",
+      "cdpTable": "Marketing Link Signature",
+      "csvFile": "sample-csv/marketing-link-signature.csv"
+    },
+    {
+      "id": "marketingLink",
+      "label": "Marketing Link",
+      "cdpTable": "Marketing Link",
+      "csvFile": "sample-csv/marketing-link.csv"
+    },
+    {
+      "id": "marketingAutomationStage",
+      "label": "Marketing Automation Stage",
+      "cdpTable": "Marketing Automation Stage",
+      "csvFile": "sample-csv/marketing-automation-stage.csv"
+    },
+    {
+      "id": "marketingAutomation",
+      "label": "Marketing Automation",
+      "cdpTable": "Marketing Automation",
+      "csvFile": "sample-csv/marketing-automation.csv"
+    },
+    {
+      "id": "leadActivity",
+      "label": "Lead Activity",
+      "cdpTable": "Lead Activity",
+      "csvFile": "sample-csv/lead-activity.csv"
+    },
+    {
+      "id": "lead",
+      "label": "Lead",
+      "cdpTable": "Lead",
+      "csvFile": "sample-csv/lead.csv"
+    },
+    {
+      "id": "jobLevelLOV",
+      "label": "Job Level LOV",
+      "cdpTable": "Job Level LOV",
+      "csvFile": "sample-csv/job-level-lov.csv"
+    },
+    {
+      "id": "jobFunctionLOV",
+      "label": "Job Function LOV",
+      "cdpTable": "Job Function LOV",
+      "csvFile": "sample-csv/job-function-lov.csv"
+    },
+    {
+      "id": "jobDepartmentLOV",
+      "label": "Job Department LOV",
+      "cdpTable": "Job Department LOV",
+      "csvFile": "sample-csv/job-department-lov.csv"
+    },
+    {
+      "id": "intentDataBombora",
+      "label": "Intent Data Bombora",
+      "cdpTable": "Intent Data Bombora",
+      "csvFile": "sample-csv/intent-data-bombora.csv"
+    },
+    {
+      "id": "hGInsightsProductInstall",
+      "label": "HG Insights Product Install",
+      "cdpTable": "HG Insights Product Install",
+      "csvFile": "sample-csv/hg-insights-product-install.csv"
+    },
+    {
+      "id": "fusionUser",
+      "label": "Fusion User",
+      "cdpTable": "Fusion User",
+      "csvFile": "sample-csv/fusion-user.csv"
+    },
+    {
+      "id": "contactPoint",
+      "label": "ContactPoint",
+      "cdpTable": "ContactPoint",
+      "csvFile": "sample-csv/contactpoint.csv"
+    },
+    {
+      "id": "categoryMapping",
+      "label": "Category Mapping",
+      "cdpTable": "Category Mapping",
+      "csvFile": "sample-csv/category-mapping.csv"
+    },
+    {
+      "id": "buyingGroupPersonaDefinition",
+      "label": "Buying Group Persona Definition",
+      "cdpTable": "Buying Group Persona Definition",
+      "csvFile": "sample-csv/buying-group-persona-definition.csv"
+    },
+    {
+      "id": "buyingGroupPersona",
+      "label": "Buying Group Persona",
+      "cdpTable": "Buying Group Persona",
+      "csvFile": "sample-csv/buying-group-persona.csv"
+    },
+    {
+      "id": "buyingGroupDemandType",
+      "label": "Buying Group Demand Type",
+      "cdpTable": "Buying Group Demand Type",
+      "csvFile": "sample-csv/buying-group-demand-type.csv"
+    },
+    {
+      "id": "buyingGroupDefinitionDetail",
+      "label": "Buying Group Definition Detail",
+      "cdpTable": "Buying Group Definition Detail",
+      "csvFile": "sample-csv/buying-group-definition-detail.csv"
+    },
+    {
+      "id": "buyingGroupDefinition",
+      "label": "Buying Group Definition",
+      "cdpTable": "Buying Group Definition",
+      "csvFile": "sample-csv/buying-group-definition.csv"
+    },
+    {
+      "id": "buyingGroupBuyerRole",
+      "label": "Buying Group Buyer Role",
+      "cdpTable": "Buying Group Buyer Role",
+      "csvFile": "sample-csv/buying-group-buyer-role.csv"
+    },
+    {
+      "id": "bOFOLink",
+      "label": "BOFO Links",
+      "cdpTable": "BOFO Links",
+      "csvFile": "sample-csv/bofo-links.csv"
+    },
+    {
+      "id": "assetSubscription",
+      "label": "Asset Subscription",
+      "cdpTable": "Asset Subscription",
+      "csvFile": "sample-csv/asset-subscription.csv"
+    },
+    {
+      "id": "asset",
+      "label": "Asset",
+      "cdpTable": "Asset",
+      "csvFile": "sample-csv/asset.csv"
+    },
+    {
+      "id": "accountProductRisk",
+      "label": "Account Product Risk",
+      "cdpTable": "Account Product Risk",
+      "csvFile": "sample-csv/account-product-risk.csv"
+    },
+    {
+      "id": "accountProductFit",
+      "label": "Account Product Fit",
+      "cdpTable": "Account Product Fit",
+      "csvFile": "sample-csv/account-product-fit.csv"
+    },
+    {
+      "id": "accountClassification",
+      "label": "Account Classification",
+      "cdpTable": "Account Classification",
+      "csvFile": "sample-csv/account-classification.csv"
+    },
+    {
+      "id": "accountTerritory",
+      "label": "Account Territory",
+      "cdpTable": "Account Territory",
+      "csvFile": "sample-csv/account-territory.csv"
+    },
+    {
+      "id": "account",
+      "label": "Account",
+      "cdpTable": "Account",
+      "csvFile": "sample-csv/account.csv"
+    },
+    {
+      "id": "programChannelRecommendation",
+      "label": "Program Channel Recommender",
+      "cdpTable": "Program Channel Recommender",
+      "csvFile": "sample-csv/program-channel-recommender.csv"
+    },
+    {
+      "id": "programAttribution",
+      "label": "Program Attribution",
+      "cdpTable": "Program Attribution",
+      "csvFile": "sample-csv/program-attribution.csv"
+    },
+    {
+      "id": "engagementPropensity",
+      "label": "Engagement Propensity",
+      "cdpTable": "Engagement Propensity",
+      "csvFile": "sample-csv/engagement-propensity.csv"
+    },
+    {
+      "id": "customerSTO",
+      "label": "Customer STO",
+      "cdpTable": "Customer STO",
+      "csvFile": "sample-csv/customer-sto.csv"
+    },
+    {
+      "id": "customerRFM",
+      "label": "Customer RFM",
+      "cdpTable": "Customer RFM",
+      "csvFile": "sample-csv/customer-rfm.csv"
+    },
+    {
+      "id": "customerProductPropensity",
+      "label": "Customer Product Propensity",
+      "cdpTable": "Customer Product Propensity",
+      "csvFile": "sample-csv/customer-product-propensity.csv"
+    },
+    {
+      "id": "customerPricePromotion",
+      "label": "Customer Price Promotion",
+      "cdpTable": "Customer Price Promotion",
+      "csvFile": "sample-csv/customer-price-promotion.csv"
+    },
+    {
+      "id": "customerLookalike",
+      "label": "Customer Lookalike",
+      "cdpTable": "Customer Lookalike",
+      "csvFile": "sample-csv/customer-lookalike.csv"
+    },
+    {
+      "id": "customerLifetimeValue",
+      "label": "Customer Lifetime Value",
+      "cdpTable": "Customer Lifetime Value",
+      "csvFile": "sample-csv/customer-lifetime-value.csv"
+    },
+    {
+      "id": "customerFatigue",
+      "label": "Customer Fatigue",
+      "cdpTable": "Customer Fatigue",
+      "csvFile": "sample-csv/customer-fatigue.csv"
+    },
+    {
+      "id": "customerChurn",
+      "label": "Customer Churn",
+      "cdpTable": "Customer Churn",
+      "csvFile": "sample-csv/customer-churn.csv"
+    },
+    {
+      "id": "contactLeadScore",
+      "label": "Contact Lead Score",
+      "cdpTable": "Contact Lead Score",
+      "csvFile": "sample-csv/contact-lead-score.csv"
+    },
+    {
+      "id": "automationMapping",
+      "label": "AutomationMapping",
+      "cdpTable": "AutomationMapping",
+      "csvFile": "sample-csv/automationmapping.csv"
+    },
+    {
+      "id": "automationDataReporting",
+      "label": "AutomationDataReporting",
+      "cdpTable": "AutomationDataReporting",
+      "csvFile": "sample-csv/automationdatareporting.csv"
+    },
+    {
+      "id": "agentCreatedOpportunity",
+      "label": "Agent Created Opportunity",
+      "cdpTable": "Agent Created Opportunity",
+      "csvFile": "sample-csv/agent-created-opportunity.csv"
+    },
+    {
+      "id": "accountProductScore",
+      "label": "Account Product Score",
+      "cdpTable": "Account Product Score",
+      "csvFile": "sample-csv/account-product-score.csv"
+    },
+    {
+      "id": "accountLookalike",
+      "label": "Account Lookalike",
+      "cdpTable": "Account Lookalike",
+      "csvFile": "sample-csv/account-lookalike.csv"
     }
   ],
   "exportPayloads": [
@@ -108,5 +600,92 @@
     "Account Product Score",
     "Account Lookalike",
     "AccountEnvironment"
+  ],
+  "dataViewerTables": [
+    "Subscription",
+    "Social Identity",
+    "Social Engagement",
+    "Promotion",
+    "Product Category",
+    "Product",
+    "Organization",
+    "Order Item",
+    "Order",
+    "Group",
+    "GeoDemographics",
+    "Event",
+    "Data Deletion Requests",
+    "Customer Group",
+    "Customer",
+    "Category",
+    "Address",
+    "Visitor",
+    "Title Repository",
+    "Territory Hierarchy",
+    "Territory",
+    "Tenant Preference",
+    "Service Ticket",
+    "Segment",
+    "Sales Offers",
+    "Revenue Line",
+    "Promotion Category",
+    "Product Usage",
+    "Product Recommendation",
+    "Product Territory",
+    "Potential Revenue",
+    "Opportunity Activity",
+    "Opportunity Customer",
+    "Opportunity",
+    "Master Customer Recommendation",
+    "Marketing Web Page",
+    "Marketing Rule",
+    "Marketing Program",
+    "Marketing Message",
+    "Marketing Link Signature Link",
+    "Marketing Link Signature",
+    "Marketing Link",
+    "Marketing Automation Stage",
+    "Marketing Automation",
+    "Lead Activity",
+    "Lead",
+    "Job Level LOV",
+    "Job Function LOV",
+    "Job Department LOV",
+    "Intent Data Bombora",
+    "HG Insights Product Install",
+    "Fusion User",
+    "ContactPoint",
+    "Category Mapping",
+    "Buying Group Persona Definition",
+    "Buying Group Persona",
+    "Buying Group Demand Type",
+    "Buying Group Definition Detail",
+    "Buying Group Definition",
+    "Buying Group Buyer Role",
+    "BOFO Links",
+    "Asset Subscription",
+    "Asset",
+    "Account Product Risk",
+    "Account Product Fit",
+    "Account Classification",
+    "Account Territory",
+    "Account",
+    "Program Channel Recommender",
+    "Program Attribution",
+    "Engagement Propensity",
+    "Customer STO",
+    "Customer RFM",
+    "Customer Product Propensity",
+    "Customer Price Promotion",
+    "Customer Lookalike",
+    "Customer Lifetime Value",
+    "Customer Fatigue",
+    "Customer Churn",
+    "Contact Lead Score",
+    "AutomationMapping",
+    "AutomationDataReporting",
+    "Agent Created Opportunity",
+    "Account Product Score",
+    "Account Lookalike"
   ]
 }

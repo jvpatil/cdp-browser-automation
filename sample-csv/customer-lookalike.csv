@@ -1,0 +1,3 @@
+sourceid,sourcecustomerlookalikeid,mastercustomerid,sourcemastercustomerid,lookalikescore,lookalikebin,modelname,seedsegment,targetsegment,segmentid,sourcesegmentid
+UI,CL-1001,CL-MasterCustomerID-1001,CL-SourceMasterCustomerID-1001,CL-LookalikeScore-1001,CL-LookalikeBin-1001,CL-ModelName-1001,CL-SeedSegment-1001,CL-TargetSegment-1001,CL-SegmentID-1001,CL-SourceSegmentID-1001
+UI,CL-1002,CL-MasterCustomerID-1002,CL-SourceMasterCustomerID-1002,CL-LookalikeScore-1002,CL-LookalikeBin-1002,CL-ModelName-1002,CL-SeedSegment-1002,CL-TargetSegment-1002,CL-SegmentID-1002,CL-SourceSegmentID-1002

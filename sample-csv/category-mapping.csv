@@ -1,0 +1,3 @@
+sourceid,sourcecategorymappingid,sourcemappedfromcategoryid,mappedfromcategoryid,sourcemappedtocategoryid,mappedtocategoryid,isactive
+UI,CM-1001,CM-SourceMappedFromCategoryID-1001,CM-MappedFromCategoryID-1001,CM-SourceMappedToCategoryID-1001,CM-MappedToCategoryID-1001,CM-IsActive-1001
+UI,CM-1002,CM-SourceMappedFromCategoryID-1002,CM-MappedFromCategoryID-1002,CM-SourceMappedToCategoryID-1002,CM-MappedToCategoryID-1002,CM-IsActive-1002

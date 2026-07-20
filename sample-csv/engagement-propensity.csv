@@ -1,0 +1,3 @@
+sourceid,sourceengagementpropensityid,mastercustomerid,sourcemastercustomerid,medium,marketingprogramtype,eventtype,propensityscore,propensityscorebin
+UI,EP-1001,EP-MasterCustomerID-1001,EP-SourceMasterCustomerID-1001,EP-Medium-1001,EP-MarketingProgramType-1001,EP-EventType-1001,EP-PropensityScore-1001,EP-PropensityScoreBin-1001
+UI,EP-1002,EP-MasterCustomerID-1002,EP-SourceMasterCustomerID-1002,EP-Medium-1002,EP-MarketingProgramType-1002,EP-EventType-1002,EP-PropensityScore-1002,EP-PropensityScoreBin-1002

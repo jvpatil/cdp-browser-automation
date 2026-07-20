@@ -1,0 +1,3 @@
+sourceid,sourcemarketingmessageid,identifier,version,name,channeltype,purpose,subject,content,messagetype,programname,programstrategy,domain,expirationts
+UI,MM-1001,MM-Identifier-1001,MM-Version-1001,MM-Name-1001,MM-ChannelType-1001,MM-Purpose-1001,MM-Subject-1001,MM-Content-1001,MM-MessageType-1001,MM-ProgramName-1001,MM-ProgramStrategy-1001,MM-Domain-1001,MM-ExpirationTS-1001
+UI,MM-1002,MM-Identifier-1002,MM-Version-1002,MM-Name-1002,MM-ChannelType-1002,MM-Purpose-1002,MM-Subject-1002,MM-Content-1002,MM-MessageType-1002,MM-ProgramName-1002,MM-ProgramStrategy-1002,MM-Domain-1002,MM-ExpirationTS-1002

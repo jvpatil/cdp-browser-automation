@@ -1,0 +1,3 @@
+sourceid,sourcecustomerpricepromotionid,mastercustomerid,sourcemastercustomerid,productid,sourceproductid,productrank,recommendationtype,pricemax,pricemin
+UI,CPP-1001,CPP-MasterCustomerID-1001,CPP-SourceMasterCustomerID-1001,CPP-ProductID-1001,CPP-SourceProductID-1001,CPP-ProductRank-1001,CPP-RecommendationType-1001,CPP-PriceMax-1001,CPP-PriceMin-1001
+UI,CPP-1002,CPP-MasterCustomerID-1002,CPP-SourceMasterCustomerID-1002,CPP-ProductID-1002,CPP-SourceProductID-1002,CPP-ProductRank-1002,CPP-RecommendationType-1002,CPP-PriceMax-1002,CPP-PriceMin-1002

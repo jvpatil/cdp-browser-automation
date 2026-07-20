@@ -1,0 +1,3 @@
+sourceid,sourcecustomerrfmid,mastercustomerid,sourcemastercustomerid,rfpersona,rfmts,rscore,fscore,mscore
+UI,CR-1001,CR-MasterCustomerID-1001,CR-SourceMasterCustomerID-1001,CR-RFPersona-1001,CR-RFMTS-1001,CR-RScore-1001,CR-FScore-1001,CR-MScore-1001
+UI,CR-1002,CR-MasterCustomerID-1002,CR-SourceMasterCustomerID-1002,CR-RFPersona-1002,CR-RFMTS-1002,CR-RScore-1002,CR-FScore-1002,CR-MScore-1002

@@ -33,11 +33,30 @@ const TASKS = {
     dependencies: ["cdpCustomerFieldMapping.js"]
   },
   "exportJob.js": { path: "/data/", root: "createExportJob", readySelector: "div[class*='create-export-job-body']", saveSelector: "#saveNclose-create-job" },
+  // The Oracle JET input ID contains `|`, which must be escaped when queried
+  // as CSS by waitForPageElement.
+  "dataViewer.js": { path: "/data/", root: "dataViewer", readySelector: "#data-object-dropdown\\|input" },
   "publish.js": { path: "/data/", root: "publishChanges" },
   "integrationStatus.js": { path: "/data/", root: "integrations" }
 };
 
 let tableCatalogPromise;
+let dataViewerRecordConfigPromise;
+
+async function loadDataViewerRecordConfig() {
+  if (!dataViewerRecordConfigPromise) {
+    dataViewerRecordConfigPromise = fetch(chrome.runtime.getURL("config/data-viewer-records.json"))
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Could not read config/data-viewer-records.json.");
+        return response.json();
+      })
+      .then((config) => {
+        const tables = config?.tables && typeof config.tables === "object" && !Array.isArray(config.tables) ? config.tables : {};
+        return { tables };
+      });
+  }
+  return dataViewerRecordConfigPromise;
+}
 
 async function loadTableCatalog() {
   if (!tableCatalogPromise) {
@@ -49,16 +68,22 @@ async function loadTableCatalog() {
       .then((catalog) => {
         const imports = Array.isArray(catalog?.importTables) ? catalog.importTables : [];
         const exports = Array.isArray(catalog?.exportPayloads) ? catalog.exportPayloads : [];
+        const dataViewerTables = Array.isArray(catalog?.dataViewerTables) ? catalog.dataViewerTables : [];
         const validImports = imports.length && imports.every((table) =>
           typeof table?.id === "string" && table.id &&
           typeof table.label === "string" && table.label &&
           typeof table.cdpTable === "string" && table.cdpTable &&
-          typeof table.csvFile === "string" && table.csvFile
+          (table.csvFile === undefined || typeof table.csvFile === "string")
         );
         const uniqueIds = new Set(imports.map((table) => table.id)).size === imports.length;
         const validExports = exports.length && exports.every((payload) => typeof payload === "string" && payload);
-        if (!validImports || !uniqueIds || !validExports) throw new Error("config/tables.json has an invalid table or payload entry.");
-        return { importsById: Object.fromEntries(imports.map((table) => [table.id, table])), exportPayloads: exports };
+        const validDataViewerTables = dataViewerTables.length && dataViewerTables.every((table) => typeof table === "string" && table);
+        if (!validImports || !uniqueIds || !validExports || !validDataViewerTables) throw new Error("config/tables.json has an invalid table or payload entry.");
+        return {
+          importsById: Object.fromEntries(imports.map((table) => [table.id, table])),
+          exportPayloads: exports,
+          dataViewerTables: [...new Set(dataViewerTables)]
+        };
       });
   }
   return tableCatalogPromise;
@@ -111,7 +136,15 @@ function csvCell(value, delimiter) {
     : text;
 }
 
+// cdpCustomerFieldMapping.js matches source CSV fields after removing spaces,
+// punctuation, and casing. Keep this config in that same form while retaining
+// the original header text in the uploaded sample CSV.
+function normalizeImportFieldName(value) {
+  return String(value || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
 async function loadCsvFields(table) {
+  if (!table.csvFile) throw new Error(`${table.label} has no sample CSV configured. Add its csvFile in config/tables.json before creating an Import job.`);
   const response = await fetch(chrome.runtime.getURL(table.csvFile));
   if (!response.ok) throw new Error(`Could not read ${table.csvFile}.`);
   const lines = (await response.text()).split(/\r?\n/).filter((line) => line.trim());
@@ -145,7 +178,7 @@ async function buildImportConfig(tableIds, delimiter = ",") {
   const separator = csvDelimiter(delimiter);
   return {
     targetTables: selected.map((table) => table.cdpTable),
-    fieldToTable: Object.fromEntries(uniqueFields.map((field) => [field.header, field.tables])),
+    fieldToTable: Object.fromEntries(uniqueFields.map((field) => [normalizeImportFieldName(field.header), field.tables])),
     csvContent: `${uniqueFields.map((field) => csvCell(field.header, separator)).join(separator)}\n${uniqueFields.map((field) => csvCell(field.value, separator)).join(separator)}\n`
   };
 }
@@ -173,14 +206,11 @@ async function selectedTransferTemplate(templateId) {
 }
 
 async function nextConnectionSequence(templateId) {
-  const { [CDP_CONNECTION_SEQUENCE_KEY]: saved = {} } = await chrome.storage.local.get(CDP_CONNECTION_SEQUENCE_KEY);
   const now = new Date();
-  const dateTag = `${String(now.getDate()).padStart(2, "0")}${now.toLocaleString("en-US", { month: "short" }).toUpperCase()}${String(now.getFullYear()).slice(-2)}`;
-  const previous = saved[templateId];
-  const ordinal = previous && typeof previous === "object" && previous.dateTag === dateTag
-    ? Number(previous.ordinal || 0) + 1
-    : 1;
-  return { dateTag, ordinal };
+  const dateTag = `${String(now.getDate()).padStart(2, "0")}${now.toLocaleString("en-US", { month: "short" })}${String(now.getFullYear()).slice(-2)}`;
+  // CDP is the authority for collisions. A local counter can be advanced by
+  // an interrupted attempt, so always begin with the unsuffixed base name.
+  return { dateTag, ordinal: 1 };
 }
 
 async function rememberConnectionSequence(templateId, sequence) {
@@ -204,7 +234,7 @@ function connectionProviderCode(type) {
 }
 
 function dateTagForName(date = new Date()) {
-  return `${String(date.getDate()).padStart(2, "0")}${date.toLocaleString("en-US", { month: "short" }).toUpperCase()}${String(date.getFullYear()).slice(-2)}`;
+  return `${String(date.getDate()).padStart(2, "0")}${date.toLocaleString("en-US", { month: "short" })}${String(date.getFullYear()).slice(-2)}`;
 }
 
 function templateShortName(template, providerCode) {
@@ -216,24 +246,25 @@ function templateShortName(template, providerCode) {
 
 function transferJobName(template, connection, operation, sequence) {
   const provider = connectionProviderCode(connection.type);
-  const purpose = String(template.connectionPurpose || "Transfer")
-    .replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 28) || "Transfer";
+  const purpose = String(template.connectionPurpose || "")
+    .replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 28);
   const dateTag = sequence?.dateTag || dateTagForName();
-  const repeat = Number(sequence?.ordinal || 1) > 1 ? `_${String(sequence.ordinal).padStart(2, "0")}` : "";
-  return `${operation}_${provider}_${purpose}_${templateShortName(template, provider)}_${dateTag}${repeat}`;
+  const actualConnectionSuffix = String(connection?.name || "").match(/_(\d{2})$/)?.[1];
+  const repeat = actualConnectionSuffix
+    ? `_${actualConnectionSuffix}`
+    : Number(sequence?.ordinal || 1) > 1 ? `_${String(sequence.ordinal).padStart(2, "0")}` : "";
+  return [operation, provider, purpose, templateShortName(template, provider), `${dateTag}${repeat}`].filter(Boolean).join("_");
 }
 
 function connectionRuntime(template, side, sequence = null) {
   const connection = template[side];
-  const fallbackPurpose = String(connection.profileName || "Transfer")
-    .replace(connection.type || "", "").replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "");
-  const purpose = String(template.connectionPurpose || fallbackPurpose || "Transfer")
-    .replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 28) || "Transfer";
+  const purpose = String(template.connectionPurpose || "")
+    .replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 28);
   const now = new Date();
-  const fallbackDate = `${String(now.getDate()).padStart(2, "0")}${now.toLocaleString("en-US", { month: "short" }).toUpperCase()}${String(now.getFullYear()).slice(-2)}`;
+  const fallbackDate = `${String(now.getDate()).padStart(2, "0")}${now.toLocaleString("en-US", { month: "short" })}${String(now.getFullYear()).slice(-2)}`;
   const dateTag = sequence?.dateTag || fallbackDate;
   const ordinal = Number(sequence?.ordinal || 1);
-  const name = `${connectionProviderCode(connection.type)}_${purpose}_${dateTag}${ordinal > 1 ? `_${String(ordinal).padStart(2, "0")}` : ""}`;
+  const name = [connectionProviderCode(connection.type), purpose, `${dateTag}${ordinal > 1 ? `_${String(ordinal).padStart(2, "0")}` : ""}`].filter(Boolean).join("_");
   return {
     side,
     type: connection.type,
@@ -292,6 +323,22 @@ async function installStopGuard(tabId) {
   });
 }
 
+// CDP routes in place, so a cancelled run's click guard may survive the next
+// navigation. Reset it before any new scripted Create/Save interaction and
+// expose the active run ID to make older monitor listeners harmless.
+async function activatePageAutomationRun(tabId, runId = "") {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    args: [runId],
+    func: (nextRunId) => {
+      window.__cdpAutomationStopped = false;
+      window.__cdpPublishCancelled = false;
+      document.documentElement.dataset.cdpAutomationRunId = nextRunId || "";
+    }
+  });
+}
+
 function navigationUrl(tabUrl, path, root) {
   const hostKey = new URL(tabUrl).hostname.split(".")[0];
   if (!hostKey) throw new Error("Could not determine the CDP host key from the active tab.");
@@ -341,6 +388,7 @@ async function captureCreatedEntity(tabId, runMetadata, filename) {
     runMetadata.creations.jobs.import?.name
   ].filter(Boolean);
   await chrome.storage.local.set({ e2eRun: runMetadata });
+  return savedEntity;
 }
 
 function navigateAndWait(tabId, url) {
@@ -391,7 +439,9 @@ async function prepareConnectionForm(tabId, { createLabel, typeDropdownId, formI
     args: [createLabel, typeDropdownId, formInputIds, connectionType],
     func: async (label, dropdownId, inputIds, selectedType) => {
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      const deadline = Date.now() + 30000;
+      // The Sources/Destinations list can report page-ready while Oracle is
+      // still rendering its JET action bar. Allow the full form transition.
+      const deadline = Date.now() + 60000;
       const visible = (element) => Boolean(element?.getClientRects().length);
       const text = (element) => (element?.textContent || "").replace(/\s+/g, " ").trim();
       const enabled = (element) =>
@@ -420,10 +470,13 @@ async function prepareConnectionForm(tabId, { createLabel, typeDropdownId, formI
       };
 
       const create = await waitFor(() =>
-        [...document.querySelectorAll("button, oj-button, [role='button']")].find((element) =>
-          visible(element) && enabled(element) && text(element) === label
-        ), label);
-      await click(create.querySelector("button") || create);
+        [...document.querySelectorAll("button, oj-button, [role='button']")].find((element) => {
+          const nativeButton = element.matches("button") ? element : element.querySelector("button");
+          return visible(element) && enabled(nativeButton || element) && text(element).toLowerCase() === label.toLowerCase();
+        }), label);
+      // Click the real button where JET exposes one. Calling click() on the
+      // custom-element wrapper alone is unreliable after a slow navigation.
+      await click(create.matches("button") ? create : (create.querySelector("button") || create));
 
       const chooser = await waitFor(() => {
         const element = document.getElementById(dropdownId);
@@ -437,7 +490,7 @@ async function prepareConnectionForm(tabId, { createLabel, typeDropdownId, formI
       `${selectedType} option`);
       await click(option.closest("[role='option'], oj-option, li") || option);
 
-      await waitFor(() => text(document.getElementById(dropdownId)) === selectedType,
+      await waitFor(() => text(document.getElementById(dropdownId)).toLowerCase().includes(selectedType.toLowerCase()),
         `${selectedType} selection`);
 
       await waitFor(() => inputIds.every((id) => {
@@ -459,6 +512,7 @@ async function installStepMonitor(tabId, { runId, stepId, saveSelector }) {
         .find((element) => visible(element) && text(element) === "Save" && !element.disabled);
 
       document.addEventListener("click", (event) => {
+        if (document.documentElement.dataset.cdpAutomationRunId !== activeRunId) return;
         if (!(event.target instanceof Element) || !event.target.closest(selector)) return;
 
         const saveButton = plainSaveButton();
@@ -512,6 +566,7 @@ async function installTaskCompletionMonitor(tabId, runId, saveSelector) {
     args: [runId, saveSelector],
     func: (activeRunId, selector) => {
       document.addEventListener("click", (event) => {
+        if (document.documentElement.dataset.cdpAutomationRunId !== activeRunId) return;
         if (event.target instanceof Element && event.target.closest(selector)) {
           chrome.runtime.sendMessage({ type: "individual-task-finished", runId: activeRunId });
         }
@@ -581,7 +636,10 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
   }
 
   await navigateAndWait(tabId, navigationUrl(tab.url, task.path, task.root));
-  if (task.createLabel) await prepareConnectionForm(tabId, task, connectionConfig?.type);
+  await activatePageAutomationRun(tabId, monitor?.runId || schedule?.runId || "");
+  if (task.createLabel) {
+    await prepareConnectionForm(tabId, task, connectionConfig?.type);
+  }
   if (task.readySelector) await waitForPageElement(tabId, task.readySelector);
 
   // In E2E, navigate first. This ensures the Export→Import handoff is visible
@@ -833,19 +891,46 @@ async function verifyPublishedJobs(tabId, options) {
   });
 }
 
+async function runDataViewerStep(tabId, flow, runId) {
+  const recordsPerTable = flow.recordsPerTable ?? 1;
+  if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
+  const sourceId = String(flow.sourceId || "").trim() || "UI";
+  const [catalog, recordConfig] = await Promise.all([loadTableCatalog(), loadDataViewerRecordConfig()]);
+  const tables = [...new Set(flow.dataViewerTableIds || ["Customer"])].map((tableName) => catalog.dataViewerTables.includes(tableName)
+    ? { id: tableName, label: tableName, cdpTable: tableName, recordConfig: dataViewerRecordConfigFor(tableName, recordConfig, flow.dataViewerOverrides) }
+    : null);
+  if (!tables.length || tables.some((table) => !table)) throw new Error("Select valid Data Viewer tables.");
+  const tab = await chrome.tabs.get(tabId);
+  await navigateAndWait(tabId, navigationUrl(tab.url, TASKS["dataViewer.js"].path, TASKS["dataViewer.js"].root));
+  await activatePageAutomationRun(tabId, runId);
+  await waitForPageElement(tabId, TASKS["dataViewer.js"].readySelector, 60000);
+  await chrome.scripting.executeScript({ target: { tabId }, world: "ISOLATED", files: ["dataViewerClickBridge.js"] });
+  await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["dataViewer.js"] });
+  await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN",
+    args: [tables, { recordsPerTable, sourceId, saveRecords: Boolean(flow.saveRecords) }],
+    func: async (dataViewerTables, options) => {
+      if (typeof window.runCdpDataViewer !== "function") throw new Error("Data Viewer automation did not load.");
+      return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
+    }
+  });
+}
+
 async function runConfiguredFlow(tabId, flow = {}) {
   if (activeSequences.has(tabId)) throw new Error("An E2E flow is already running in this tab.");
-  const selectedTemplate = await selectedTransferTemplate(flow.templateId);
-  const template = { ...selectedTemplate, connectionPurpose: flow.connectionPurpose || "" };
-  const connectionSequence = await nextConnectionSequence(template.id);
-  const sourceConfig = connectionRuntime(template, "source", connectionSequence);
-  const destinationConfig = connectionRuntime(template, "destination", connectionSequence);
-  const selectedSteps = new Set(flow.steps || ["source", "destination", "export", "import", "publish", "verify"]);
+  const selectedSteps = new Set(flow.steps || ["dataViewer", "source", "destination", "export", "import", "publish", "verify"]);
+  const usesTransfer = [...selectedSteps].some((step) => ["source", "destination", "export", "import"].includes(step));
+  const selectedTemplate = usesTransfer ? await selectedTransferTemplate(flow.templateId) : null;
+  const template = selectedTemplate ? { ...selectedTemplate, connectionPurpose: flow.connectionPurpose || "" } : null;
+  const connectionSequence = template ? await nextConnectionSequence(template.id) : 0;
+  const sourceConfig = template ? connectionRuntime(template, "source", connectionSequence) : null;
+  const destinationConfig = template ? connectionRuntime(template, "destination", connectionSequence) : null;
   // A job always owns its prerequisite connection, even when the user did not
   // select the connection card explicitly in a custom flow.
   if (selectedSteps.has("import")) selectedSteps.add("source");
   if (selectedSteps.has("export")) selectedSteps.add("destination");
   const stepDefinitions = [
+    { id: "dataViewer", label: "Data Viewer" },
     { id: "source", filename: "source.js", label: "Create Source", saveSelector: "#create-source-saveClose" },
     { id: "destination", filename: "destination.js", label: "Create Destination", saveSelector: "#dst-saveClose-btn" },
     { id: "export", filename: "exportJob.js", label: "Create Export Job", saveSelector: "#saveNclose-create-job" },
@@ -880,6 +965,10 @@ async function runConfiguredFlow(tabId, flow = {}) {
   try {
     for (const step of stepDefinitions) {
       await setE2EStatus(`Running: ${step.label}`, tabId);
+      if (step.id === "dataViewer") {
+        await runDataViewerStep(tabId, flow, runId);
+        continue;
+      }
       if (step.id === "export" && flow.staggerJobs && !runMetadata.exportScheduledAt) {
         const exportHour = new Date();
         exportHour.setHours(exportHour.getHours() + 1, 0, 0, 0);
@@ -929,7 +1018,12 @@ async function runConfiguredFlow(tabId, flow = {}) {
       if (step.id === "source" || step.id === "destination") {
         await rememberConnectionSequence(template.id, connectionSequence);
       }
-      await captureCreatedEntity(tabId, runMetadata, step.filename);
+      const savedEntity = await captureCreatedEntity(tabId, runMetadata, step.filename);
+      // The connection form may have added a suffix only after CDP rejected a
+      // duplicate name. Carry that actual saved name into the later job's
+      // source/destination selector.
+      if (step.id === "source" && savedEntity?.name) sourceConfig.name = savedEntity.name;
+      if (step.id === "destination" && savedEntity?.name) destinationConfig.name = savedEntity.name;
     }
     if (selectedSteps.has("publish")) {
       if (!selectedJobSteps.length || !runMetadata.jobNames.length) throw new Error("Publish requires an Export or Import job in the flow.");
@@ -963,7 +1057,11 @@ async function runFullSequence(tabId, templateId, connectionPurpose) {
   return runConfiguredFlow(tabId, {
     templateId,
     connectionPurpose,
-    steps: ["source", "destination", "export", "import", "publish", "verify"],
+    steps: ["dataViewer", "source", "destination", "export", "import", "publish", "verify"],
+    dataViewerTableIds: ["Customer"],
+    recordsPerTable: 1,
+    sourceId: "UI",
+    saveRecords: false,
     importTableIds: ["customer", "contactPoint"],
     exportPayloadName: "Customer",
     staggerJobs: true,
@@ -1012,6 +1110,56 @@ async function runPublishAll(tabId) {
   }
 }
 
+function dataViewerRecordConfigFor(tableName, defaults, overrides) {
+  const base = defaults.tables?.[tableName] || {};
+  const override = overrides && typeof overrides === "object" ? overrides[tableName] : null;
+  return {
+    ...base,
+    values: { ...(base.values || {}), ...(override?.values || {}) },
+    relationships: { ...(base.relationships || {}), ...(override?.relationships || {}) }
+  };
+}
+
+async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = "UI", saveRecords = false, dataViewerOverrides = {} } = {}) {
+  if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
+  if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
+  const resolvedSourceId = String(sourceId || "").trim() || "UI";
+  const [catalog, recordConfig] = await Promise.all([loadTableCatalog(), loadDataViewerRecordConfig()]);
+  const tables = [...new Set(tableIds || [])].map((tableName) => catalog.dataViewerTables.includes(tableName)
+    ? { id: tableName, label: tableName, cdpTable: tableName, recordConfig: dataViewerRecordConfigFor(tableName, recordConfig, dataViewerOverrides) }
+    : null);
+  if (!tables.length || tables.some((table) => !table)) throw new Error("Select valid tables from config/tables.json.");
+  const runId = crypto.randomUUID();
+  let failed = false;
+  activeSequences.set(tabId, { runId, cancelled: false, status: "Running: Data Viewer Record" });
+  await setE2EStatus("Running: Data Viewer Record", tabId);
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    await navigateAndWait(tabId, navigationUrl(tab.url, TASKS["dataViewer.js"].path, TASKS["dataViewer.js"].root));
+    await activatePageAutomationRun(tabId, runId);
+    await waitForPageElement(tabId, TASKS["dataViewer.js"].readySelector, 60000);
+    await chrome.scripting.executeScript({ target: { tabId }, world: "ISOLATED", files: ["dataViewerClickBridge.js"] });
+    await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["dataViewer.js"] });
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, recordConfig: table.recordConfig })), { recordsPerTable, sourceId: resolvedSourceId, saveRecords: Boolean(saveRecords) }],
+      func: async (dataViewerTables, options) => {
+        if (typeof window.runCdpDataViewer !== "function") throw new Error("Data Viewer automation did not load.");
+        return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
+      }
+    });
+  } catch (error) {
+    failed = true;
+    if (!/stopped by the user/i.test(error.message || "")) await setE2EStatus(`Failed: Data Viewer Record — ${error.message || error}`, tabId);
+    throw error;
+  } finally {
+    if (activeSequences.get(tabId)?.runId === runId) activeSequences.delete(tabId);
+    if (!failed) await setE2EStatus("", tabId);
+    await clearFlowDraft();
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "connection-profile-list") {
     cdpReadConnectionProfiles().then((profiles) => sendResponse({ profiles }));
@@ -1043,6 +1191,33 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "trusted-data-viewer-next") {
+    const tabId = sender.tab?.id;
+    const rect = message.rect;
+    if (!tabId || !rect || !Number.isFinite(rect.x) || !Number.isFinite(rect.y)) {
+      sendResponse({ ok: false, error: "Missing Data Viewer Next button bounds." });
+      return undefined;
+    }
+    const target = { tabId };
+    const x = Math.round(rect.x);
+    const y = Math.round(rect.y);
+    (async () => {
+      let attached = false;
+      try {
+        await chrome.debugger.attach(target, "1.3");
+        attached = true;
+        await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", buttons: 0 });
+        await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 });
+        await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 });
+        if (attached) await chrome.debugger.detach(target);
+        sendResponse({ ok: true });
+      } catch (error) {
+        if (attached) await chrome.debugger.detach(target).catch(() => undefined);
+        sendResponse({ ok: false, error: error.message || String(error) });
+      }
+    })();
+    return true;
+  }
   if (message?.type !== "stop-full-sequence" && message?.type !== "stop-current-flow") return;
   const tabId = message.tabId ?? sender.tab?.id;
   const activeSequence = activeSequences.get(tabId);
@@ -1054,14 +1229,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       func: () => {
         window.__cdpPublishCancelled = true;
         window.__cdpAutomationStopped = true;
+        document.documentElement.dataset.cdpAutomationRunId = "";
       }
     }).catch(() => undefined)
     : Promise.resolve();
   if (activeSequence && activeSequences.get(tabId)?.runId === activeSequence.runId) {
     activeSequences.delete(tabId);
   }
+  // A flow has several long-running MAIN-world scripts. Removing the
+  // background sequence alone cannot cancel JavaScript already executing in
+  // the CDP SPA, and those stale scripts can leave the form unusable. Reload
+  // the current route after Stop so the old automation is actually terminated
+  // and the user can immediately start another run without a manual refresh.
   Promise.all([setE2EStatus("", tabId), cancelPublish])
     .then(clearFlowDraft)
+    .then(() => chrome.tabs.reload(tabId).catch(() => undefined))
     .finally(() => sendResponse({ ok: true, stopped: Boolean(activeSequence) }));
   return true;
 });
@@ -1096,6 +1278,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "run-data-viewer") {
+    runDataViewer(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, sourceId: message.sourceId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
   if (message?.type === "run-import-job") {
     runConfiguredFlow(message.tabId, {
       templateId: message.templateId,

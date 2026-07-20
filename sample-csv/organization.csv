@@ -1,0 +1,3 @@
+sourceid,sourceorganizationid,parentorganization,name,type,subtype,status,description,division,region,district,subdistrict,zone,territory,brandidentifier
+UI,OR-1001,OR-ParentOrganization-1001,OR-Name-1001,OR-Type-1001,OR-SubType-1001,OR-Status-1001,OR-Description-1001,OR-Division-1001,OR-Region-1001,OR-District-1001,OR-SubDistrict-1001,OR-Zone-1001,OR-Territory-1001,OR-BrandIdentifier-1001
+UI,OR-1002,OR-ParentOrganization-1002,OR-Name-1002,OR-Type-1002,OR-SubType-1002,OR-Status-1002,OR-Description-1002,OR-Division-1002,OR-Region-1002,OR-District-1002,OR-SubDistrict-1002,OR-Zone-1002,OR-Territory-1002,OR-BrandIdentifier-1002

@@ -1,0 +1,3 @@
+sourceid,sourceprogramattributionid,marketingprogramid,sourcemarketingprogramid,productid,sourceproductid,quarter,type,attributionvalue,attributionconversion,attributionpercentage
+UI,PA-1001,PA-MarketingProgramID-1001,PA-SourceMarketingProgramID-1001,PA-ProductID-1001,PA-SourceProductID-1001,PA-Quarter-1001,PA-Type-1001,PA-AttributionValue-1001,PA-AttributionConversion-1001,PA-AttributionPercentage-1001
+UI,PA-1002,PA-MarketingProgramID-1002,PA-SourceMarketingProgramID-1002,PA-ProductID-1002,PA-SourceProductID-1002,PA-Quarter-1002,PA-Type-1002,PA-AttributionValue-1002,PA-AttributionConversion-1002,PA-AttributionPercentage-1002

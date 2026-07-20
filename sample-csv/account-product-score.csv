@@ -1,0 +1,3 @@
+sourceid,sourceaccountproductscoreid,masteraccountid,sourcemasteraccountid,scorets,score,status,productid,sourceproductid,productname,productidoutput
+UI,APS-1001,APS-MasterAccountID-1001,APS-SourceMasterAccountID-1001,APS-ScoreTS-1001,APS-Score-1001,APS-Status-1001,APS-ProductID-1001,APS-SourceProductID-1001,APS-ProductName-1001,APS-ProductIDoutput-1001
+UI,APS-1002,APS-MasterAccountID-1002,APS-SourceMasterAccountID-1002,APS-ScoreTS-1002,APS-Score-1002,APS-Status-1002,APS-ProductID-1002,APS-SourceProductID-1002,APS-ProductName-1002,APS-ProductIDoutput-1002

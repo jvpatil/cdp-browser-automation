@@ -1,0 +1,3 @@
+sourceid,sourcesocialidentityid,handle,displayname,type,isactive,sourceaccountid,deviceid,pushnotificationenabled
+UI,SI-1001,SI-Handle-1001,SI-DisplayName-1001,SI-Type-1001,SI-IsActive-1001,SI-SourceAccountID-1001,SI-DeviceId-1001,SI-PushNotificationEnabled-1001
+UI,SI-1002,SI-Handle-1002,SI-DisplayName-1002,SI-Type-1002,SI-IsActive-1002,SI-SourceAccountID-1002,SI-DeviceId-1002,SI-PushNotificationEnabled-1002

@@ -1,0 +1,3 @@
+sourceid,sourcemarketingautomationid,identifier,version,name,automationtype,tactictype,tactictemplateid,tactictemplatename,participanttype,lasteventts,expectedsuccessrate
+UI,MA-1001,MA-Identifier-1001,MA-Version-1001,MA-Name-1001,MA-AutomationType-1001,MA-TacticType-1001,MA-TacticTemplateID-1001,MA-TacticTemplateName-1001,MA-ParticipantType-1001,MA-LastEventTS-1001,MA-ExpectedSuccessRate-1001
+UI,MA-1002,MA-Identifier-1002,MA-Version-1002,MA-Name-1002,MA-AutomationType-1002,MA-TacticType-1002,MA-TacticTemplateID-1002,MA-TacticTemplateName-1002,MA-ParticipantType-1002,MA-LastEventTS-1002,MA-ExpectedSuccessRate-1002

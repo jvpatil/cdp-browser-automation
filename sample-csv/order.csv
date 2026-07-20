@@ -1,0 +1,3 @@
+sourceid,sourceorderid,type,status,orderentryts,completedts,total,subtotal,taxtotal,discounttotal,costtotal,qty,awardtotal,currency
+UI,OR-1001,OR-Type-1001,OR-Status-1001,OR-OrderEntryTS-1001,OR-CompletedTS-1001,OR-Total-1001,OR-SubTotal-1001,OR-TaxTotal-1001,OR-DiscountTotal-1001,OR-CostTotal-1001,OR-Qty-1001,OR-AwardTotal-1001,OR-Currency-1001
+UI,OR-1002,OR-Type-1002,OR-Status-1002,OR-OrderEntryTS-1002,OR-CompletedTS-1002,OR-Total-1002,OR-SubTotal-1002,OR-TaxTotal-1002,OR-DiscountTotal-1002,OR-CostTotal-1002,OR-Qty-1002,OR-AwardTotal-1002,OR-Currency-1002

@@ -8,6 +8,7 @@
     style.id = `${id}-styles`;
     style.textContent = `
       #cdp-automation-status.status-pill { position:fixed !important; right:24px !important; top:12px !important; z-index:2147483647 !important; display:inline-flex !important; align-items:center !important; gap:5px !important; width:auto !important; height:auto !important; min-width:0 !important; max-width:280px !important; padding:3px 4px 3px 8px !important; border-radius:9999px !important; font-family:system-ui,-apple-system,sans-serif !important; font-size:11px !important; font-weight:600 !important; line-height:1 !important; white-space:nowrap !important; border:1px solid #ceead6 !important; background:#e6f4ea !important; color:#137333 !important; box-shadow:0 3px 10px rgba(19,115,51,.14) !important; }
+      #cdp-automation-status.status-pill--failed { border-color:#efb4ae !important; background:#fce8e6 !important; color:#b3261e !important; }
       #cdp-automation-status .status-pill__spinner { display:block !important; flex:0 0 11px !important; width:11px !important; height:11px !important; max-width:11px !important; max-height:11px !important; animation:cdp-status-spin 1s linear infinite !important; opacity:.85 !important; }
       @keyframes cdp-status-spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
       #cdp-automation-status .status-pill__label { line-height:1 !important; overflow:hidden !important; text-overflow:ellipsis !important; }
@@ -21,8 +22,10 @@
 
   function render(status) {
     activeStatus = status || "";
+    const running = /^Running:/.test(status || "");
+    const failed = /^Failed:/.test(status || "");
     let panel = document.getElementById(id);
-    if (!status || !/^Running:/.test(status)) {
+    if (!status || (!running && !failed)) {
       panel?.remove();
       return;
     }
@@ -98,7 +101,10 @@
       panel.append(stop);
       document.documentElement.append(panel);
     }
+    panel.classList.toggle("status-pill--failed", failed);
     panel.querySelector(`#${id}-message`).textContent = status;
+    panel.querySelector(".status-pill__spinner").hidden = !running;
+    panel.querySelector(".status-pill__stop-btn").hidden = !running;
   }
 
   function refresh() {

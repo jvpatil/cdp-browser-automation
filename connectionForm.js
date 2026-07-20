@@ -17,6 +17,30 @@
     const enabled = (button) => Boolean(button) && !button.disabled && button.getAttribute("aria-disabled") !== "true" && !button.closest("oj-button")?.classList.contains("oj-disabled");
     const realButton = (item) => item?.tagName?.toLowerCase() === "oj-button" ? item.querySelector("button") || item : item;
     const clickButton = (button) => { const target = realButton(button); target.scrollIntoView({ block:"center" }); target.focus(); target.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,cancelable:true,view:window,button:0})); target.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,cancelable:true,view:window,button:0})); target.click(); };
+    // CDP runs its unique-name validator asynchronously. An invalid state by
+    // itself can be transient, so only its explicit duplicate-name message
+    // authorizes a suffix. Source/Destination ID remains irrelevant here.
+    const resolveDuplicateName = async () => {
+      const nameInput = d.getElementById("source-name-input|input");
+      if (!nameInput || nameInput.disabled || nameInput.readOnly) return;
+      const duplicateName = async () => {
+        await sleep(2000);
+        if (nameInput.getAttribute("aria-invalid") !== "true") return false;
+        const messages = [...d.querySelectorAll("[role=alert], [role=tooltip], .oj-message, .oj-message-detail, .oj-messages, .oj-popup-content")]
+          .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim())
+          .filter(Boolean)
+          .join(" ");
+        return /(?:source|destination|connection)?\s*(?:with\s+this\s+)?name\s+already\s+exists|name\s+must\s+be\s+unique|try\s+another/i.test(messages);
+      };
+      if (!(await duplicateName())) return;
+      const baseName = String(config.name).replace(/_\d{2}$/, "");
+      for (let index = 2; index <= 99; index += 1) {
+        const candidate = `${baseName}_${String(index).padStart(2, "0")}`;
+        touch(nameInput, candidate);
+        if (!(await duplicateName())) { config.name = candidate; return; }
+      }
+      throw new Error(`CDP kept the connection name invalid for ${baseName}; no available suffix was found.`);
+    };
     const saveId = config.side === "destination" ? "dst-saveClose-btn" : "create-source-saveClose";
     const waitSave = async () => { for (let tries = 0; tries < 120; tries += 1) { const save = realButton(d.getElementById(saveId)); if (enabled(save)) { clickButton(save); return; } await sleep(250); } throw new Error("Connection verification did not enable Save and Close. Check the profile path, endpoint, key, and secret."); };
     const selectOption = async (input, value) => { if (!input || input.disabled) return; clickButton(input.closest("oj-select-single,oj-combobox-one")?.querySelector(".oj-searchselect-arrow,.oj-select-arrow") || input); for (let tries = 0; tries < 20; tries += 1) { const option = [...d.querySelectorAll("[role=option],oj-option,li")].find((item) => item.getClientRects().length && (item.textContent || "").replace(/\s+/g," ").trim().toLowerCase().includes(String(value).toLowerCase())); if (option) { clickButton(option); d.activeElement?.blur?.(); return; } await sleep(100); } };
@@ -76,14 +100,14 @@
       }
     };
     const verify = async () => { for (let tries = 0; tries < 40; tries += 1) { const button = realButton([...d.querySelectorAll("button,.oj-button-button,oj-button")].find((item) => /verify connection/i.test((item.textContent || "").replace(/\s+/g," ").trim()))); if (button && enabled(button)) { clickButton(button); await sleep(2000); return waitSave(); } await sleep(250); } throw new Error("Verify Connection is disabled. Check the profile values were committed."); };
-    ids.forEach(([id,value], index) => setTimeout(() => { const input = d.getElementById(id); if (!input) missing.push(id); else touch(input,value); if (index === ids.length - 1) { if (missing.length) throw new Error(`Missing OOS fields: ${missing.join(", ")}`); setTimeout(() => applyContract().then(verify).catch((error) => { alert(`Connection template automation failed: ${error.message || error}`); }),700); } }, 300 * index));
+    ids.forEach(([id,value], index) => setTimeout(() => { const input = d.getElementById(id); if (!input) missing.push(id); else touch(input,value); if (index === ids.length - 1) { if (missing.length) throw new Error(`Missing OOS fields: ${missing.join(", ")}`); setTimeout(() => resolveDuplicateName().then(applyContract).then(verify).catch((error) => { alert(`Connection template automation failed: ${error.message || error}`); }),700); } }, 300 * index));
     return;
   }
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const visible = (element) => Boolean(element?.getClientRects().length);
   const normalize = (value) => String(value || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
   const text = (element) => (element?.textContent || "").replace(/\s+/g, " ").trim();
-  const wait = async (find, label, timeout = 30000) => { const end = Date.now() + timeout; while (Date.now() < end) { const result = find(); if (result) return result; await sleep(180); } throw new Error(`Not available: ${label}`); };
+  const wait = async (find, label, timeout = 60000) => { const end = Date.now() + timeout; while (Date.now() < end) { const result = find(); if (result) return result; await sleep(180); } throw new Error(`Not available: ${label}`); };
   const click = async (element) => { element.scrollIntoView({ block:"center" }); element.focus?.(); element.dispatchEvent(new MouseEvent("mousedown", { bubbles:true, cancelable:true })); element.dispatchEvent(new MouseEvent("mouseup", { bubbles:true, cancelable:true })); element.click(); await sleep(250); };
   const setValue = async (element, value) => {
     element.scrollIntoView({ block:"center" }); element.focus();
@@ -97,12 +121,115 @@
     element.blur(); element.dispatchEvent(new FocusEvent("focusout", { bubbles:true }));
     await sleep(180);
   };
+  // Oracle JET can transiently mark the name invalid while its asynchronous
+  // validator runs. Require CDP's duplicate-name message before adding a
+  // suffix; do not infer validity from the generated ID.
+  const resolveDuplicateName = async () => {
+    const nameInput = document.getElementById("source-name-input|input");
+    if (!nameInput || !visible(nameInput) || nameInput.disabled || nameInput.readOnly) return;
+    const duplicateName = async () => {
+      await sleep(2000);
+      if (nameInput.getAttribute("aria-invalid") !== "true") return false;
+      const messages = [...document.querySelectorAll("[role=alert], [role=tooltip], .oj-message, .oj-message-detail, .oj-messages, .oj-popup-content")]
+        .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .join(" ");
+      return /(?:source|destination|connection)?\s*(?:with\s+this\s+)?name\s+already\s+exists|name\s+must\s+be\s+unique|try\s+another/i.test(messages);
+    };
+    if (!(await duplicateName())) return;
+    const baseName = String(config.name).replace(/_\d{2}$/, "");
+    for (let index = 2; index <= 99; index += 1) {
+      const candidate = `${baseName}_${String(index).padStart(2, "0")}`;
+      await setValue(nameInput, candidate);
+      if (!(await duplicateName())) { config.name = candidate; return; }
+    }
+    throw new Error(`CDP kept the connection name invalid for ${baseName}; no available suffix was found.`);
+  };
   const aliases = { path:["oos-path|input","path"], endpoint:["oos-storeEndpoint|input","endpoint","storageendpoint"], key:["oos-storeKey|input","storagekey"], secret:["oos-storeSecret|input","storagesecret"], server:["sftp-server-name|input","sftpservername","server"], folder:["sftp-folder-name|input","foldername","folder"], region:["region"], accessKey:["accesskey"], secretKey:["secretkey"], instanceUrl:["instanceurl"], serviceUrl:["serviceurl"], username:["username"], password:["password"], securityToken:["securitytoken"], fileName:["file-name|input","filename"], dateFormat:["date-format|input","dateformat"], delimiter:["fielddelimiter","delimiter"] };
   const findField = (key) => { const candidates = aliases[key] || [key]; for (const candidate of candidates) { const direct = document.getElementById(candidate); if (visible(direct)) return direct; const input = [...document.querySelectorAll("input,textarea")].find((item) => visible(item) && [item.id,item.name,item.getAttribute("aria-label"),item.placeholder].some((value) => normalize(value).includes(normalize(candidate)))); if (input) return input; } const label = [...document.querySelectorAll("label")].find((item) => visible(item) && normalize(text(item)).includes(normalize(key))); if (label) return document.getElementById(label.htmlFor) || label.querySelector("input,textarea"); return null; };
   const selectText = async (labelText, value) => { const label = [...document.querySelectorAll("label")].find((item) => visible(item) && normalize(text(item)).includes(normalize(labelText))); const host = label?.parentElement?.querySelector("oj-select-single,oj-combobox-one,[role=combobox],input[role=combobox]") || [...document.querySelectorAll("oj-select-single,oj-combobox-one,input[role=combobox]")].find((item) => normalize(item.id).includes(normalize(labelText))); if (!host) return; await click(host.querySelector?.("input,[role=combobox],.oj-select-arrow") || host); const option = await wait(() => [...document.querySelectorAll("[role=option],oj-option,li")].find((item) => visible(item) && normalize(text(item)) === normalize(value)), `${labelText} ${value}`); await click(option); document.activeElement?.blur?.(); await sleep(180); };
-  const upload = async (element, stored) => { if (!element || !stored?.data) return; const blob = await (await fetch(stored.data)).blob(); const file = new File([blob], stored.fileName || "key", { type: blob.type || "application/octet-stream" }); const transfer = new DataTransfer(); transfer.items.add(file); element.files = transfer.files; element.dispatchEvent(new Event("change", { bubbles:true })); };
-  const nameInput = await wait(() => document.getElementById("source-name-input|input"), "connection name"); await setValue(nameInput, config.name);
-  for (const [key, value] of Object.entries(config.fields || {})) { const element = findField(key); if (!element) { if (value) throw new Error(`The ${config.type} form does not expose a field for ${key}.`); continue; } if (value?.data) await upload(element, value); else await setValue(element, value); }
+  const upload = async (element, stored) => {
+    if (!element || !stored?.data) return;
+    let blob;
+    if (typeof stored.data === "string" && stored.data.startsWith("data:")) {
+      // CDP's page CSP can reject fetch(data:...) even though the file was
+      // safely captured by the extension. Decode the stored data URI locally.
+      const comma = stored.data.indexOf(",");
+      if (comma < 0) throw new Error("The saved key file is not a valid data URI.");
+      const header = stored.data.slice(0, comma);
+      const payload = stored.data.slice(comma + 1);
+      const mime = (header.match(/^data:([^;,]+)/i) || [])[1] || "application/octet-stream";
+      const bytes = header.includes(";base64")
+        ? Uint8Array.from(atob(payload), (char) => char.charCodeAt(0))
+        : new TextEncoder().encode(decodeURIComponent(payload));
+      blob = new Blob([bytes], { type: mime });
+    } else {
+      blob = await (await fetch(stored.data)).blob();
+    }
+    const file = new File([blob], stored.fileName || "key", { type: blob.type || "application/octet-stream" });
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    if (element.matches?.("oj-file-picker")) {
+      const nativeInput = element.querySelector('input[type="file"]') || element.shadowRoot?.querySelector('input[type="file"]');
+      if (nativeInput) {
+        nativeInput.files = transfer.files;
+        nativeInput.dispatchEvent(new Event("change", { bubbles:true, composed:true }));
+      }
+      // Oracle JET exposes the selected files to the Knockout handler through
+      // this component event; this is required when its native input is in a
+      // shadow tree or has not yet been rendered.
+      element.dispatchEvent(new CustomEvent("ojSelect", { bubbles:true, composed:true, detail:{ files: transfer.files } }));
+      const fileControl = element.closest(".form-control") || element.parentElement;
+      for (let tries = 0; tries < 40; tries += 1) {
+        const clearLink = fileControl?.querySelector("[id$='-click']");
+        if (clearLink?.getClientRects().length) return;
+        await sleep(100);
+      }
+      throw new Error("CDP did not finish accepting the selected authentication key file.");
+    }
+    element.files = transfer.files;
+    element.dispatchEvent(new Event("change", { bubbles:true }));
+  };
+  // Defensive recovery for Oracle's delayed list-to-form transition. The
+  // background normally opens Create and selects the provider first; this
+  // handles a list that re-rendered after that operation instead of failing
+  // with an unhelpful missing-name error.
+  const ensureConnectionForm = async () => {
+    const nameInput = () => {
+      const input = document.getElementById("source-name-input|input");
+      return visible(input) && !input.disabled ? input : null;
+    };
+    if (nameInput()) return nameInput();
+    const createLabel = config.side === "destination" ? "Create Destination" : "Create Source";
+    const dropdownId = config.side === "destination" ? "oj-select-choice-destination-type" : "oj-select-choice-source-type";
+    const end = Date.now() + 60000;
+    let createRequested = false;
+    while (Date.now() < end) {
+      if (nameInput()) return nameInput();
+      const create = [...document.querySelectorAll("button,oj-button,[role=button]")].find((element) => {
+        const nativeButton = element.matches("button") ? element : element.querySelector("button");
+        return visible(element) && !createRequested && normalize(text(element)) === normalize(createLabel) && !(nativeButton || element).disabled;
+      });
+      if (create) { createRequested = true; await click(create.matches("button") ? create : (create.querySelector("button") || create)); await sleep(350); continue; }
+      const chooser = document.getElementById(dropdownId);
+      if (visible(chooser)) {
+        if (!normalize(text(chooser)).includes(normalize(config.type))) {
+          await click(chooser.querySelector("input,[role=combobox],.oj-select-arrow,.oj-searchselect-arrow") || chooser);
+          const option = await wait(() => [...document.querySelectorAll("[role=option],oj-option,li")].find((item) => visible(item) && normalize(text(item)) === normalize(config.type)), `${config.type} option`, 10000);
+          await click(option);
+        }
+      }
+      await sleep(180);
+    }
+    throw new Error("Not available: connection name after opening the Create form.");
+  };
+  const nameInput = await ensureConnectionForm(); await setValue(nameInput, config.name);
+  await resolveDuplicateName();
+  const authKeyPicker = () => {
+    const textArea = document.getElementById("auth-key|input") || findField("authenticationKey");
+    return textArea?.closest(".form-control")?.querySelector("oj-file-picker") || null;
+  };
+  for (const [key, value] of Object.entries(config.fields || {})) { const element = key === "authenticationKey" && value?.data ? authKeyPicker() : findField(key); if (!element) { if (value) throw new Error(`The ${config.type} form does not expose a field for ${key}.`); continue; } if (value?.data) await upload(element, value); else await setValue(element, value); }
   const contract = config.fileContract || {};
   if (config.type !== "CX Sales") {
     await selectText("File type", contract.format || "CSV"); await selectText("Format", contract.format || "CSV");

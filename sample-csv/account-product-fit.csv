@@ -1,0 +1,3 @@
+sourceid,sourceaccountproductfitid,productfitstrength,explainer,sourceaccountid,accountid,sourcecategoryid,categoryid,potentialrevenueamount,countrycode,productid,sourceproductid,modelversion,modelrunts
+UI,APF-1001,APF-ProductFitStrength-1001,APF-Explainer-1001,APF-SourceAccountID-1001,APF-AccountID-1001,APF-SourceCategoryID-1001,APF-CategoryID-1001,APF-PotentialRevenueAmount-1001,APF-CountryCode-1001,APF-ProductID-1001,APF-SourceProductID-1001,APF-ModelVersion-1001,APF-ModelRunTS-1001
+UI,APF-1002,APF-ProductFitStrength-1002,APF-Explainer-1002,APF-SourceAccountID-1002,APF-AccountID-1002,APF-SourceCategoryID-1002,APF-CategoryID-1002,APF-PotentialRevenueAmount-1002,APF-CountryCode-1002,APF-ProductID-1002,APF-SourceProductID-1002,APF-ModelVersion-1002,APF-ModelRunTS-1002

@@ -1,0 +1,3 @@
+sourceid,sourcesocialengagementid,title,type,activityts,source,handle,isauthor,reactioncounts,sentiments,hashtags,promocodes,url
+UI,SE-1001,SE-Title-1001,SE-Type-1001,SE-ActivityTS-1001,SE-Source-1001,SE-Handle-1001,SE-IsAuthor-1001,SE-ReactionCounts-1001,SE-Sentiments-1001,SE-Hashtags-1001,SE-PromoCodes-1001,https://example.com/social-engagement-1
+UI,SE-1002,SE-Title-1002,SE-Type-1002,SE-ActivityTS-1002,SE-Source-1002,SE-Handle-1002,SE-IsAuthor-1002,SE-ReactionCounts-1002,SE-Sentiments-1002,SE-Hashtags-1002,SE-PromoCodes-1002,https://example.com/social-engagement-2

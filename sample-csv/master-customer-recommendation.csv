@@ -1,0 +1,3 @@
+sourceid,sourcemastercustomerrecommendationid,mastercustomerid,sourcemastercustomerid,promotionid,categoryid,rank,score
+UI,MCR-1001,MCR-MasterCustomerID-1001,MCR-SourceMasterCustomerID-1001,MCR-PromotionID-1001,MCR-CategoryID-1001,MCR-Rank-1001,MCR-Score-1001
+UI,MCR-1002,MCR-MasterCustomerID-1002,MCR-SourceMasterCustomerID-1002,MCR-PromotionID-1002,MCR-CategoryID-1002,MCR-Rank-1002,MCR-Score-1002

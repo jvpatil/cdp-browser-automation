@@ -1,0 +1,381 @@
+{
+  "profiles": [
+    {
+      "key": "qa-phx",
+      "name": "QA-PHX",
+      "type": "Oracle Object Storage",
+      "fields": {
+        "endpoint": "cxunitydevcorp.compat.objectstorage.us-phoenix-1.oraclecloud.com",
+        "key": "a76989a2839c190d5beca963571b4eda36a1a6ae",
+        "path": "s3a://qa-phx/scheduled-exports/",
+        "secret": "LDeCMtTwbSp++h6o7hP3tI4UJ362UnzO4b7MQtp6Ato="
+      }
+    },
+    {
+      "key": "oos-dummy-profile",
+      "name": "OOS — Dummy profile",
+      "type": "Oracle Object Storage",
+      "fields": {}
+    },
+    {
+      "key": "sftp-datarsysqa1",
+      "name": "SFTP — DataRsysQA1",
+      "type": "Secure FTP",
+      "fields": {
+        "server": "datarsysqa1_scp@dluoh5-sftp.qa.responsys.ocs.oc-test.com",
+        "authenticationKey": {
+          "fileName": "rsysqa1_pvt_key.pem",
+          "data": "data:application/x-x509-ca-cert;base64,LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFb3dJQkFBS0NBUUVBdkQyN3N4bTFnV1Q1bVU4a0FGMkg3ajI1K3A1dVJ0aWZkcFRaYndQdHlDZDZZVExGCitVVHJ3VWZpR2Q0cGJFVnBtQjk4bzlBa0dhNzBUa2dLMHpPY0hFMSsvRXZlbnJRVC9nOXVWT09GdUJGYUMwQ1AKV0pQazFPOWF4YmlBQlBNUTVRNElIUlR3cFIwLy8wbFdrenk1ZDhiTDNyV1hYcVdIOXo3UzdsWFI3c3k0UTc0SgpPeUlTM2NkblhFN1N2S2w0WFl0VlpnZTlmaE9DZERMak5RbUpwU28vOUE1NnA5MUx3YU5XS3BvNXUzTEt4RjRSCjdKOTYzVCtpby9UZXp5aEJzT3RLZUw1bHpOS2FpellvTktGbUJkVERyRGNUZ3hZNXN5NVhWV29OVDlsZmhDMkoKZ3BKZ3ExKzFSd093aVM0Mm1LcnJQZ0dqUGJWeHR1dzgvbUlucXdJREFRQUJBb0lCQUhuZkJleTRrbGlKeFVkSwpnNlp3NTVhSkJDV0wrUjJKRmdTeDdld0FBU3g2MHJLbktxRnR5NnpCRzFOZ0VEVjI0eHlJRml3QWo3N0pGSWF5CkFjQW5ROFRYTDRXc29SN2l1NmJhMnJXKzhFM3hmZmlXL2JkOVdNTzdpMnREUGk3MkoxUUV0NkFNZEppUnpXTTgKV2Y3TmE4NXVPSU9oMGJTSE92WUtDSW9ocWQ4T00xSUtWOVJPcG5KcmJWbkRraVp0L3dOZHVVcFZNY0p5YzJSegp6ZjJQbXFQNjJZZFNLQVhXNE5ZVEQrNHVzbjhIdmNYcDZvTU0yV1RTNmlqRnNuWnp2RjlnWVhDMmx1NHYvQUNuCndXWSthNURXWE9ZeEl4cWtDWkEyREp2NXQrZXgxVUdwR0J1SGUyMktBek5yalBEQkt5Z3FZVXpWbFUraTZkSjcKVllBTDJMRUNnWUVBNE1GYTFyUmpWdzBvL3ZjWlJyVWhtV3h2TzcrMDlNL1pXUDkzRGVhUEwwZjdyRE92ZDl1Zwovclpwb3E1QjhmZ2ptOWdyTWpMd1pSbWNPSDRKNXpHMExvWUtaOG81ak5LM1dObHRRRHhwdnMydXgzZHBmdVh3CmpJRGhFNTgzZmltMzlpN2I2dWdnZ2YxMURjckNHT0ZkTmtja2ZpajRLTHF3UnMvQTEzRFhUOTBDZ1lFQTFtam4KZHJ5ZSt5Sy9RV0F5SWUvYXd4SXhYc2ZrQWtjNCt2ZjltR2lYM2hPN3pLaDM2OGxDKzJHVHRWWW1NczNuRTdhNwpaWXF5K3Q1MkZkYWRaTDljUE5vZk92c2VvWGJpbHRLay9wNkdaQjZkZkZGSytPZEtwZjIwVXI4NHVlR3FFRkdOClJJNWJNTGRlVDdPczFEM2taOGpNSnU0RThNVy92TnN4TUYyWG9TY0NnWUVBMFlyVGt5czVGdGI1S3NUYnR2VjIKcnVET3oraks0QmZNYnRJMmdDbzl3bm9kSlE1SEFMc3VYV3RhRDBiaHlxTnJKNGdodGJxU0w5L3hxeVd2Ty9JMgpKODNtYzUreGloNkd1L3B5aGhvTkNNd2dzRzBmV1NVdDRRRGpWM1R3dXRwUVhlQ1FQbkZPcFlMVm1CYzZZUkh6CjRuL3ZnUVBYWWJtMFVVQ3ViTzRTZjYwQ2dZQkdzaFpIejArNFRLKzFOYXV5QnUwaHp0amFnSnhNcUFGQXR3NDEKOTU3RGljd3RZZ3NRZ3E4RVJoczIrbTNqNklKZHZLMnpnSFVkUk1hNDBxZlk5VVBMaUx3dGJXbWZJWno2ei8rNQpPTG5sUHpiOEs2M0Z2aldkMzdaYVpsU2s3YVJ1ZHdWV2FuM2s1VUZDbEdMVEpJa3dNMFFsUGV3Qkc2THArWGdSCmszcVFsd0tCZ0VaOGs3UFdGUFBGNzBJdE0rMnRtb1JwUi9rVTVPUDRGSzdnNTVCU0tzVTZWWERzR1VXNjZkL1kKYTZZWlROY3RQb3BYNFN4d1BqNDArNTViQjNQQVhGa2hhSGlqdURBU0hIaUQ2RzVvckNucm9sMW1qeDMzcEY5bApPL0QwRzI4VUQxMG0wSFZ2RFc4M0F3K0lsaVZOSEs0Y3VtNytpWnhNMlBuRTU5ZWRJWnRNCi0tLS0tRU5EIFJTQSBQUklWQVRFIEtFWS0tLS0tCg=="
+        },
+        "folder": "FCDP"
+      }
+    },
+    {
+      "key": "aws-dummy-profile",
+      "name": "AWS — Dummy profile",
+      "type": "AWS",
+      "fields": {}
+    },
+    {
+      "key": "gcs-dummy-profile",
+      "name": "GCS — Dummy profile",
+      "type": "Google Cloud Storage",
+      "fields": {}
+    }
+  ],
+  "templates": [
+    {
+      "id": "2f31c30d-a78e-4585-8ae8-874fd79c60ad",
+      "name": "OOS-RFC-GZ",
+      "description": "",
+      "sourceProfileKey": "qa-phx",
+      "destinationProfileKey": "qa-phx",
+      "fileContract": {
+        "charset": "UTF-8",
+        "compression": "gzip",
+        "csvParser": "RFC 4180",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "decryptionFile": "",
+        "decryptionPassphrase": "",
+        "delimiter": ",",
+        "destinationFileName": "",
+        "encryptionFile": "",
+        "filePattern": "^PROFILE_.*.*\\.gz$",
+        "filePatternMode": "automatic",
+        "format": "CSV"
+      }
+    },
+    {
+      "id": "11daef82-4625-4fbe-a132-147fe281f108",
+      "name": "OOS-CSV-Tab-None",
+      "description": "",
+      "sourceProfileKey": "qa-phx",
+      "destinationProfileKey": "qa-phx",
+      "fileContract": {
+        "charset": "UTF-8",
+        "compression": "none",
+        "csvParser": "Open CSV",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "decryptionFile": "",
+        "decryptionPassphrase": "",
+        "delimiter": "tab",
+        "destinationFileName": "",
+        "encryptionFile": "",
+        "filePattern": "",
+        "filePatternMode": "automatic",
+        "format": "CSV"
+      }
+    },
+    {
+      "id": "0abe43e4-7758-4181-8e13-ee96b4eb5d6c",
+      "name": "OOS-JSON-Pipe-GZ",
+      "description": "",
+      "sourceProfileKey": "qa-phx",
+      "destinationProfileKey": "qa-phx",
+      "fileContract": {
+        "charset": "UTF-8",
+        "compression": "gzip",
+        "csvParser": "Open CSV",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "decryptionFile": "",
+        "decryptionPassphrase": "",
+        "delimiter": "|",
+        "destinationFileName": "",
+        "encryptionFile": "",
+        "filePattern": "^PROFILE_.*.*\\.gz$",
+        "filePatternMode": "automatic",
+        "format": "JSON"
+      }
+    },
+    {
+      "id": "starter-oos-csv",
+      "name": "OOS-CSV",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "qa-phx",
+      "destinationProfileKey": "qa-phx",
+      "fileContract": {
+        "format": "CSV",
+        "filePatternMode": "automatic",
+        "filePattern": "",
+        "charset": "UTF-8",
+        "csvParser": "RFC 4180",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "compression": "none",
+        "decryptionPassphrase": "",
+        "encryptionFile": "",
+        "decryptionFile": ""
+      }
+    },
+    {
+      "id": "starter-oos-gz",
+      "name": "OOS-GZ",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "qa-phx",
+      "destinationProfileKey": "qa-phx",
+      "fileContract": {
+        "format": "CSV",
+        "filePatternMode": "automatic",
+        "filePattern": "^PROFILE_{host}.*\\.gz$",
+        "charset": "UTF-8",
+        "csvParser": "RFC 4180",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "compression": "gzip",
+        "decryptionPassphrase": "",
+        "encryptionFile": {
+          "fileName": "Jp_PvtKey.pem",
+          "data": "data:application/x-x509-ca-cert;base64,LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlKSmdJQkFBS0NBZ0VBNTFyY0JCUDdzMGZGa2UzMGxYRXBwZHlGeEFZVlpzYmpQNUprVjAvZS9rTXJzbVZ1CkVYRnBXWkJkWEQ4QWRySUlGWjUxM1NGeUVCQlBRcHMvdWNXbm9HZjJwOEtMbUp4K3JqTnk3MzZhREp1VTF4aXUKWHF2QjZMK3dKaVlEUlkzQlBxYTE2VlYwTjBWeGNCdnRuMlpCRUJpUGRTcGJBNE5HMEFhSlUwd0F1NGtQbzNTcwozUDJ6c0trejZJa3NTNjQvYUNPaUV0UWQ0emRaMXcwdW5tYWZ5WG1SaFo3Sno0WTJTaDhEdGtzU2dGWVRDREVTCkRweXZTbVZhNnNEcS9wL09kWXRXTjFHK2VoTlJrdmx1cm1SWjdCRTZ2eUVsZXd0cDNFaU43bk5ORllZQlRlNTcKWFQzSlhYS3UycDBtNkdJR0hHN0hBMXk4K3l4amRMbFJrU0tqTW5PM3VMR2JkUVJkSndpRW1iZld3YjcwVmJSeQpsVGJybHZiVU1kbmZVYkpFa2xkN01mbXFCYytSUkpOam44Y3drN2ZTOTJLcGVMUHlBK09jQStsUzdOQklGRTF3CnFxV2FiOHR6N3VSbVZtdFFSZE14Sm9uKzVwUVBpVm4vU21JSTdHaUo5SkVNdmZoeGZuc0xCenNlNW5vd1JtYk0KOGZjN2xiRjZWV09JQ2h0QkwwVmNWWFNaZk9TejB3cWJQUHdFemswR2pLSm1YTlp2eXV3b1dJQ0hyL0NDTE52VQpnZkErTXhqOHh0ZC9xa0xORFJlZ2dEeU1udW5nMzhTWXZwWTNTR0Zoc29RUVBJcEhXd2V0aXdmQllMWEUzUzE4CmtVVnliVlkyOGtiaWZzZjdvZlZwUVlySEg0Qk8wUFpzU0k5UkxxM0FhZW5OaGphZGZIcGxwKytpQmJzQ0FTTUMKZ2dJQWFjTWl3QWtpbXhsKzQ1LzZ4L2szbkVlTm0zQit6K1hrT2xHTTlMYk1Wdm9pbXJJR2JsKzdJYUVVdkhTUwpmMmRVSnlQZUcvSUlRZHVSOHBBZElibHhNMks1NWtwT2NhYWdUNko5cjAvUlpObG9uTmdWTXBlcEdmRTZsUml4CkNkcG0rQkd5UHNmNm5PeUxvUGJUQndvc1h5RXJvMGFRQVpzWkRxUG5BWUhVY3Z6VDh2T0NPU09GV0JMVjVxVWIKa0UrbjlSZWFqRU8xNURhUGVFQ0tWd3BYckk5WWQ1a0x6SlVnSWVKSzF2Mi9VSnhnZU1YNW9FZWdsd25ES1h6RApNcEl5ZnVDY2NROXRCSnNkK2d1Z1Q3allwbTVHdmNZQ2dXUk5wb2VSVnhBalBRb1BPWkdYZXhUdVZwclRseU5FCi9JU1ZGRS9sOHVpUTU5bkhFTW0rNDBNSXhieTN2VWN2Wm9VWlV3dWpHdlZXZTlQaFZjSU14MVdxT3h1ejJQeGoKd0NYdy9HVHFkcHczclB3cm9aNU1XTVBKOHlkbWxFL2sxS3dpMjF5Sjk4MWhWQ3ZNYk1selVxdTEzMHByYk9GeAp5RHE0Z1p4c0tsQXlqVnd3eUxBVGtNMk10L3EwRjVjR1RQNFhRUUxHMWNyYkdyTDlaRGZVUkF6eTBzOWdQVkZFCklHUThrNm5GNEp0N3JhTG5abW51TzhLRjVmTytlbTdud0ZwRVN1MlVqYXpLWjhydUhYSnF6TXl0SzRaZzJER28KSmlBa2srTExBTmRVaUZRUlU5d1lPQXhhS3pyTDNsb0toYnpSbldQMWJKMm51cS9XaVBsdXBkTTUxdGEwWVJwRgpnbGFkTnBEbzNnSkRJVmRZb0Q1MFJDYzRJOUtZTHMwdVFIMUFFV1Z6blMrdG13c0NnZ0VCQVBuUFd2YUU2cGJJClpKRTd6SkFCY1U4WXZFNDM0WktzNGRZdGp6YTVacXpTV2RHZTZoRnRxTHZNWllaWlN5L3V6OHRLQVNyZHpKMDcKL290V2VmTXByRjZ0YlgvekgyMlJuTFp3ZGQxU0NPc2pqMnA1ODFqUTllV1ZPc0w4SnBuVkN1Z2craG5UZHJjdwpFMGZQWWdORzUzdEhyRng2dnlJbHprQzRKYXdaV3J3U1pjMW9TK0kwM2VOTDdCakFTYmFwME9jaXlxcDNSVFF4CmZKUk1zQjZLVG1YYW9pSFJUTXpSMktvcFZzODA3cERnVklDOUJsQWF6aDhqQ2lrRFg1WEoxSXVYYmlNb1kwaUUKcVpvNTdQRXdyN3BldGRjYXVnaGl5M1U1cnRKcllxQ3E3VVY5b2pTL3lJOHRmN2pDWEpMSE91TC9TTy9tMENlNQpVSjdSVmFmVCtOY0NnZ0VCQU8wV2I2OWUyaXB0WE0zVUFpOG9JWkJlcmMyK3Y1amFVOVFOTi9zTHRySnpFR2tiClpIS0NrcXdsYllMRFVtcjRBQVpZa2NrSEd0NHB4WDNYdStUa1dGSExlTlRSUm1CcStxSTRldG5yWjMrNUd1S0sKbHFHL1czVFBsNVhZVndhUUR3di9CdHpiZnRWdWpQMG9zWXdZdEpkZVR0QXgzZmpDbWtzZnFaV3BxSVBxUm5TVApMajVHRXkwTnR1b2gwSXZXRm1DekZpVlVJdHpJNm5BbXNuZ0NubjYrcWsrNWxTT3hpempmbHh1cTZFdWN0UmJICmFCVm81cExYN2lvZ1pHVm9OVVVzVGZ2dzFMUzRLU0xLd0gyeHlKckEyN1Mvekg4QkcrdFNyd3IvRHduWXpWTHUKT2JFVWZnSVBjclVMbHVhL0pXNFVPcGtSaVB6b0JjMm5hbStDU2IwQ2dnRUFEa1pjK0NUYU5JQjZ4bmh5RnR1QwowVkhlMytYdm9mdEFHdDRJTHdOSHNocW1DL3B6eG50TGVISVViaE83SjA5NWxwYUR1VTZBdUljVjNCT1I4S05MCnJhT0NtWmpkT1hZSTlIdDBjd3dBZ25jUGdtMWVYTmk5bUJjbjdlS0YzT2VhT1NaMHNRVEU5SVpuZ0hKQUhYSEUKRmF4Uy9maGlzWDZBMEgrTkg4YnZQZkpzTjUrUFRzRXhRREE1WUlBRU5sTFl2TUFvMW9wNCs2c09idC9QakxkeQpNYlM0enJ1QXV6OHc4OGZaRXllWW1wQjUyM2lFQkpQUlE1dWFManExQVQ2N3NEU0o4MkZrd2xDNVBBTlBYajFMCjNzT1ZYTCt5MitoalpjaklLVWYzQWQzaHJETVFsVXpKb2NnVjdVenZXTmd2UUN2WVNEa1ROWGhOdis2MGIvMTcKN3dLQ0FRRUF0dVZzR1pKUWh5RXFWYU9NcUFrRDh3YzFucmU0WC9qaGxQUkJJTC9rdFl2MnQzdUlBSkNkQ0hTawo3OWlCYUhZcjU2TnBKZ3pMbFhDdVN5TEVKWm8xZ08xcjExK2NzTWVPSlY3Rks4UTU1aSsxcDNJNXIvb0V1VEp0Cm4zc0JUalNkNUs3S3g2SUN3ZWVSVlpScnRUZWhRWkhsQndIbHYrYVVTSlRFcHFkelhuTGw1T2FSWXoxZlFBTkQKOW5IYlpJODExWkYzZStIUndFTTRnbWIrdEZuS3VZdkZOakFUOXZhdE9vQ1pJL2pmRmNJSUNrSU9kdXFGL0VBcwp3V2x5QlJYZjg0aVQ3ajF3NHk3N0tYZldVbFh5aGdKOW1oQk5UQWdyZXdWRk5GNWNEdWtUYTl4WVpBaCtkcDR6CjZyL01MbGp3L1NXTVNqSVpPQ0MwQlF3ZTZFNlFwd0tDQVFBTWNkeUJDZy83K3NmUGFNaHFMWW9MblFlTGVFdVUKL0hsUlFsc1lmK2JWQkxoYzZvc0EwT3NxSnBRTXRkbllEbTZVZW9MM1F4c0pXOExIYXgveXdtVWdoWDlWaHUxRQpCek9ZdHNSdlhVM3k3ckhkMEMzeGM4a1N3OEQyUXBQZG0vVTFMYWV3eDVDanpDbUMzWGN0K29jL2lCSWQzZ2JBCkZMbFFwSFRtVys1ZXFFUUxyN2d2MklWQnJLNkhWaW9oZnArRnNkY3FGMzN4OUQrRm5GQlZPa044ZkE4NnMzSFgKNkJ3MTBKejVrL1BaOXRscDFDcWFuejBBb05DYzIxejRsZTRRd3p4NTcycDBRWVBGaFJ1Yk0xVlRmWEhieTB3KwpwR1ZZWG5zR1ovMFUvS2lnWHExaXhIMTIyeFBhSTZWeFRoa3FoMERnZVNqUm9NRVFsQkl2WU1zOAotLS0tLUVORCBSU0EgUFJJVkFURSBLRVktLS0tLQo="
+        },
+        "decryptionFile": {
+          "fileName": "Jp.pub",
+          "data": "data:application/x-mspublisher;base64,c3NoLXJzYSBBQUFBQjNOemFDMXljMkVBQUFBQkl3QUFBZ0VBNTFyY0JCUDdzMGZGa2UzMGxYRXBwZHlGeEFZVlpzYmpQNUprVjAvZS9rTXJzbVZ1RVhGcFdaQmRYRDhBZHJJSUZaNTEzU0Z5RUJCUFFwcy91Y1dub0dmMnA4S0xtSngrcmpOeTczNmFESnVVMXhpdVhxdkI2TCt3SmlZRFJZM0JQcWExNlZWME4wVnhjQnZ0bjJaQkVCaVBkU3BiQTRORzBBYUpVMHdBdTRrUG8zU3MzUDJ6c0trejZJa3NTNjQvYUNPaUV0UWQ0emRaMXcwdW5tYWZ5WG1SaFo3Sno0WTJTaDhEdGtzU2dGWVRDREVTRHB5dlNtVmE2c0RxL3AvT2RZdFdOMUcrZWhOUmt2bHVybVJaN0JFNnZ5RWxld3RwM0VpTjduTk5GWVlCVGU1N1hUM0pYWEt1MnAwbTZHSUdIRzdIQTF5OCt5eGpkTGxSa1NLak1uTzN1TEdiZFFSZEp3aUVtYmZXd2I3MFZiUnlsVGJybHZiVU1kbmZVYkpFa2xkN01mbXFCYytSUkpOam44Y3drN2ZTOTJLcGVMUHlBK09jQStsUzdOQklGRTF3cXFXYWI4dHo3dVJtVm10UVJkTXhKb24rNXBRUGlWbi9TbUlJN0dpSjlKRU12Zmh4Zm5zTEJ6c2U1bm93Um1iTThmYzdsYkY2VldPSUNodEJMMFZjVlhTWmZPU3owd3FiUFB3RXprMEdqS0ptWE5adnl1d29XSUNIci9DQ0xOdlVnZkErTXhqOHh0ZC9xa0xORFJlZ2dEeU1udW5nMzhTWXZwWTNTR0Zoc29RUVBJcEhXd2V0aXdmQllMWEUzUzE4a1VWeWJWWTI4a2JpZnNmN29mVnBRWXJISDRCTzBQWnNTSTlSTHEzQWFlbk5oamFkZkhwbHArK2lCYnM9IGltcG9ydGVkLW9wZW5zc2gta2V5"
+        }
+      }
+    },
+    {
+      "id": "starter-oos-pgp",
+      "name": "OOS-PGP",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "qa-phx",
+      "destinationProfileKey": "qa-phx",
+      "fileContract": {
+        "format": "CSV",
+        "filePatternMode": "automatic",
+        "filePattern": "^PROFILE_.*\\.pgp$",
+        "charset": "UTF-8",
+        "csvParser": "RFC 4180",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "compression": "PGP",
+        "decryptionPassphrase": "",
+        "encryptionFile": {
+          "fileName": "Jp.pub",
+          "data": "data:application/x-mspublisher;base64,c3NoLXJzYSBBQUFBQjNOemFDMXljMkVBQUFBQkl3QUFBZ0VBNTFyY0JCUDdzMGZGa2UzMGxYRXBwZHlGeEFZVlpzYmpQNUprVjAvZS9rTXJzbVZ1RVhGcFdaQmRYRDhBZHJJSUZaNTEzU0Z5RUJCUFFwcy91Y1dub0dmMnA4S0xtSngrcmpOeTczNmFESnVVMXhpdVhxdkI2TCt3SmlZRFJZM0JQcWExNlZWME4wVnhjQnZ0bjJaQkVCaVBkU3BiQTRORzBBYUpVMHdBdTRrUG8zU3MzUDJ6c0trejZJa3NTNjQvYUNPaUV0UWQ0emRaMXcwdW5tYWZ5WG1SaFo3Sno0WTJTaDhEdGtzU2dGWVRDREVTRHB5dlNtVmE2c0RxL3AvT2RZdFdOMUcrZWhOUmt2bHVybVJaN0JFNnZ5RWxld3RwM0VpTjduTk5GWVlCVGU1N1hUM0pYWEt1MnAwbTZHSUdIRzdIQTF5OCt5eGpkTGxSa1NLak1uTzN1TEdiZFFSZEp3aUVtYmZXd2I3MFZiUnlsVGJybHZiVU1kbmZVYkpFa2xkN01mbXFCYytSUkpOam44Y3drN2ZTOTJLcGVMUHlBK09jQStsUzdOQklGRTF3cXFXYWI4dHo3dVJtVm10UVJkTXhKb24rNXBRUGlWbi9TbUlJN0dpSjlKRU12Zmh4Zm5zTEJ6c2U1bm93Um1iTThmYzdsYkY2VldPSUNodEJMMFZjVlhTWmZPU3owd3FiUFB3RXprMEdqS0ptWE5adnl1d29XSUNIci9DQ0xOdlVnZkErTXhqOHh0ZC9xa0xORFJlZ2dEeU1udW5nMzhTWXZwWTNTR0Zoc29RUVBJcEhXd2V0aXdmQllMWEUzUzE4a1VWeWJWWTI4a2JpZnNmN29mVnBRWXJISDRCTzBQWnNTSTlSTHEzQWFlbk5oamFkZkhwbHArK2lCYnM9IGltcG9ydGVkLW9wZW5zc2gta2V5"
+        },
+        "decryptionFile": {
+          "fileName": "Jp_PvtKey.pem",
+          "data": "data:application/x-x509-ca-cert;base64,LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlKSmdJQkFBS0NBZ0VBNTFyY0JCUDdzMGZGa2UzMGxYRXBwZHlGeEFZVlpzYmpQNUprVjAvZS9rTXJzbVZ1CkVYRnBXWkJkWEQ4QWRySUlGWjUxM1NGeUVCQlBRcHMvdWNXbm9HZjJwOEtMbUp4K3JqTnk3MzZhREp1VTF4aXUKWHF2QjZMK3dKaVlEUlkzQlBxYTE2VlYwTjBWeGNCdnRuMlpCRUJpUGRTcGJBNE5HMEFhSlUwd0F1NGtQbzNTcwozUDJ6c0trejZJa3NTNjQvYUNPaUV0UWQ0emRaMXcwdW5tYWZ5WG1SaFo3Sno0WTJTaDhEdGtzU2dGWVRDREVTCkRweXZTbVZhNnNEcS9wL09kWXRXTjFHK2VoTlJrdmx1cm1SWjdCRTZ2eUVsZXd0cDNFaU43bk5ORllZQlRlNTcKWFQzSlhYS3UycDBtNkdJR0hHN0hBMXk4K3l4amRMbFJrU0tqTW5PM3VMR2JkUVJkSndpRW1iZld3YjcwVmJSeQpsVGJybHZiVU1kbmZVYkpFa2xkN01mbXFCYytSUkpOam44Y3drN2ZTOTJLcGVMUHlBK09jQStsUzdOQklGRTF3CnFxV2FiOHR6N3VSbVZtdFFSZE14Sm9uKzVwUVBpVm4vU21JSTdHaUo5SkVNdmZoeGZuc0xCenNlNW5vd1JtYk0KOGZjN2xiRjZWV09JQ2h0QkwwVmNWWFNaZk9TejB3cWJQUHdFemswR2pLSm1YTlp2eXV3b1dJQ0hyL0NDTE52VQpnZkErTXhqOHh0ZC9xa0xORFJlZ2dEeU1udW5nMzhTWXZwWTNTR0Zoc29RUVBJcEhXd2V0aXdmQllMWEUzUzE4CmtVVnliVlkyOGtiaWZzZjdvZlZwUVlySEg0Qk8wUFpzU0k5UkxxM0FhZW5OaGphZGZIcGxwKytpQmJzQ0FTTUMKZ2dJQWFjTWl3QWtpbXhsKzQ1LzZ4L2szbkVlTm0zQit6K1hrT2xHTTlMYk1Wdm9pbXJJR2JsKzdJYUVVdkhTUwpmMmRVSnlQZUcvSUlRZHVSOHBBZElibHhNMks1NWtwT2NhYWdUNko5cjAvUlpObG9uTmdWTXBlcEdmRTZsUml4CkNkcG0rQkd5UHNmNm5PeUxvUGJUQndvc1h5RXJvMGFRQVpzWkRxUG5BWUhVY3Z6VDh2T0NPU09GV0JMVjVxVWIKa0UrbjlSZWFqRU8xNURhUGVFQ0tWd3BYckk5WWQ1a0x6SlVnSWVKSzF2Mi9VSnhnZU1YNW9FZWdsd25ES1h6RApNcEl5ZnVDY2NROXRCSnNkK2d1Z1Q3allwbTVHdmNZQ2dXUk5wb2VSVnhBalBRb1BPWkdYZXhUdVZwclRseU5FCi9JU1ZGRS9sOHVpUTU5bkhFTW0rNDBNSXhieTN2VWN2Wm9VWlV3dWpHdlZXZTlQaFZjSU14MVdxT3h1ejJQeGoKd0NYdy9HVHFkcHczclB3cm9aNU1XTVBKOHlkbWxFL2sxS3dpMjF5Sjk4MWhWQ3ZNYk1selVxdTEzMHByYk9GeAp5RHE0Z1p4c0tsQXlqVnd3eUxBVGtNMk10L3EwRjVjR1RQNFhRUUxHMWNyYkdyTDlaRGZVUkF6eTBzOWdQVkZFCklHUThrNm5GNEp0N3JhTG5abW51TzhLRjVmTytlbTdud0ZwRVN1MlVqYXpLWjhydUhYSnF6TXl0SzRaZzJER28KSmlBa2srTExBTmRVaUZRUlU5d1lPQXhhS3pyTDNsb0toYnpSbldQMWJKMm51cS9XaVBsdXBkTTUxdGEwWVJwRgpnbGFkTnBEbzNnSkRJVmRZb0Q1MFJDYzRJOUtZTHMwdVFIMUFFV1Z6blMrdG13c0NnZ0VCQVBuUFd2YUU2cGJJClpKRTd6SkFCY1U4WXZFNDM0WktzNGRZdGp6YTVacXpTV2RHZTZoRnRxTHZNWllaWlN5L3V6OHRLQVNyZHpKMDcKL290V2VmTXByRjZ0YlgvekgyMlJuTFp3ZGQxU0NPc2pqMnA1ODFqUTllV1ZPc0w4SnBuVkN1Z2craG5UZHJjdwpFMGZQWWdORzUzdEhyRng2dnlJbHprQzRKYXdaV3J3U1pjMW9TK0kwM2VOTDdCakFTYmFwME9jaXlxcDNSVFF4CmZKUk1zQjZLVG1YYW9pSFJUTXpSMktvcFZzODA3cERnVklDOUJsQWF6aDhqQ2lrRFg1WEoxSXVYYmlNb1kwaUUKcVpvNTdQRXdyN3BldGRjYXVnaGl5M1U1cnRKcllxQ3E3VVY5b2pTL3lJOHRmN2pDWEpMSE91TC9TTy9tMENlNQpVSjdSVmFmVCtOY0NnZ0VCQU8wV2I2OWUyaXB0WE0zVUFpOG9JWkJlcmMyK3Y1amFVOVFOTi9zTHRySnpFR2tiClpIS0NrcXdsYllMRFVtcjRBQVpZa2NrSEd0NHB4WDNYdStUa1dGSExlTlRSUm1CcStxSTRldG5yWjMrNUd1S0sKbHFHL1czVFBsNVhZVndhUUR3di9CdHpiZnRWdWpQMG9zWXdZdEpkZVR0QXgzZmpDbWtzZnFaV3BxSVBxUm5TVApMajVHRXkwTnR1b2gwSXZXRm1DekZpVlVJdHpJNm5BbXNuZ0NubjYrcWsrNWxTT3hpempmbHh1cTZFdWN0UmJICmFCVm81cExYN2lvZ1pHVm9OVVVzVGZ2dzFMUzRLU0xLd0gyeHlKckEyN1Mvekg4QkcrdFNyd3IvRHduWXpWTHUKT2JFVWZnSVBjclVMbHVhL0pXNFVPcGtSaVB6b0JjMm5hbStDU2IwQ2dnRUFEa1pjK0NUYU5JQjZ4bmh5RnR1QwowVkhlMytYdm9mdEFHdDRJTHdOSHNocW1DL3B6eG50TGVISVViaE83SjA5NWxwYUR1VTZBdUljVjNCT1I4S05MCnJhT0NtWmpkT1hZSTlIdDBjd3dBZ25jUGdtMWVYTmk5bUJjbjdlS0YzT2VhT1NaMHNRVEU5SVpuZ0hKQUhYSEUKRmF4Uy9maGlzWDZBMEgrTkg4YnZQZkpzTjUrUFRzRXhRREE1WUlBRU5sTFl2TUFvMW9wNCs2c09idC9QakxkeQpNYlM0enJ1QXV6OHc4OGZaRXllWW1wQjUyM2lFQkpQUlE1dWFManExQVQ2N3NEU0o4MkZrd2xDNVBBTlBYajFMCjNzT1ZYTCt5MitoalpjaklLVWYzQWQzaHJETVFsVXpKb2NnVjdVenZXTmd2UUN2WVNEa1ROWGhOdis2MGIvMTcKN3dLQ0FRRUF0dVZzR1pKUWh5RXFWYU9NcUFrRDh3YzFucmU0WC9qaGxQUkJJTC9rdFl2MnQzdUlBSkNkQ0hTawo3OWlCYUhZcjU2TnBKZ3pMbFhDdVN5TEVKWm8xZ08xcjExK2NzTWVPSlY3Rks4UTU1aSsxcDNJNXIvb0V1VEp0Cm4zc0JUalNkNUs3S3g2SUN3ZWVSVlpScnRUZWhRWkhsQndIbHYrYVVTSlRFcHFkelhuTGw1T2FSWXoxZlFBTkQKOW5IYlpJODExWkYzZStIUndFTTRnbWIrdEZuS3VZdkZOakFUOXZhdE9vQ1pJL2pmRmNJSUNrSU9kdXFGL0VBcwp3V2x5QlJYZjg0aVQ3ajF3NHk3N0tYZldVbFh5aGdKOW1oQk5UQWdyZXdWRk5GNWNEdWtUYTl4WVpBaCtkcDR6CjZyL01MbGp3L1NXTVNqSVpPQ0MwQlF3ZTZFNlFwd0tDQVFBTWNkeUJDZy83K3NmUGFNaHFMWW9MblFlTGVFdVUKL0hsUlFsc1lmK2JWQkxoYzZvc0EwT3NxSnBRTXRkbllEbTZVZW9MM1F4c0pXOExIYXgveXdtVWdoWDlWaHUxRQpCek9ZdHNSdlhVM3k3ckhkMEMzeGM4a1N3OEQyUXBQZG0vVTFMYWV3eDVDanpDbUMzWGN0K29jL2lCSWQzZ2JBCkZMbFFwSFRtVys1ZXFFUUxyN2d2MklWQnJLNkhWaW9oZnArRnNkY3FGMzN4OUQrRm5GQlZPa044ZkE4NnMzSFgKNkJ3MTBKejVrL1BaOXRscDFDcWFuejBBb05DYzIxejRsZTRRd3p4NTcycDBRWVBGaFJ1Yk0xVlRmWEhieTB3KwpwR1ZZWG5zR1ovMFUvS2lnWHExaXhIMTIyeFBhSTZWeFRoa3FoMERnZVNqUm9NRVFsQkl2WU1zOAotLS0tLUVORCBSU0EgUFJJVkFURSBLRVktLS0tLQo="
+        }
+      }
+    },
+    {
+      "id": "starter-sftp-csv",
+      "name": "SFTP-CSV",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "sftp-datarsysqa1",
+      "destinationProfileKey": "sftp-datarsysqa1",
+      "fileContract": {
+        "charset": "UTF-8",
+        "compression": "none",
+        "csvParser": "RFC 4180",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "decryptionFile": "",
+        "decryptionPassphrase": "",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "encryptionFile": "",
+        "filePattern": "",
+        "filePatternMode": "automatic",
+        "format": "CSV"
+      }
+    },
+    {
+      "id": "starter-sftp-gz",
+      "name": "SFTP-GZ",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "sftp-datarsysqa1",
+      "destinationProfileKey": "sftp-datarsysqa1",
+      "fileContract": {
+        "format": "CSV",
+        "filePatternMode": "automatic",
+        "filePattern": "^PROFILE_{host}.*\\.gz$",
+        "charset": "UTF-8",
+        "csvParser": "RFC 4180",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "compression": "gzip",
+        "decryptionPassphrase": "",
+        "encryptionFile": "",
+        "decryptionFile": ""
+      }
+    },
+    {
+      "id": "starter-sftp-pgp",
+      "name": "SFTP-PGP",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "sftp-datarsysqa1",
+      "destinationProfileKey": "sftp-datarsysqa1",
+      "fileContract": {
+        "format": "CSV",
+        "filePatternMode": "automatic",
+        "filePattern": "^PROFILE_.*\\.pgp$",
+        "charset": "UTF-8",
+        "csvParser": "RFC 4180",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "compression": "PGP",
+        "decryptionPassphrase": "",
+        "encryptionFile": {
+          "fileName": "Jp.pub",
+          "data": "data:application/x-mspublisher;base64,c3NoLXJzYSBBQUFBQjNOemFDMXljMkVBQUFBQkl3QUFBZ0VBNTFyY0JCUDdzMGZGa2UzMGxYRXBwZHlGeEFZVlpzYmpQNUprVjAvZS9rTXJzbVZ1RVhGcFdaQmRYRDhBZHJJSUZaNTEzU0Z5RUJCUFFwcy91Y1dub0dmMnA4S0xtSngrcmpOeTczNmFESnVVMXhpdVhxdkI2TCt3SmlZRFJZM0JQcWExNlZWME4wVnhjQnZ0bjJaQkVCaVBkU3BiQTRORzBBYUpVMHdBdTRrUG8zU3MzUDJ6c0trejZJa3NTNjQvYUNPaUV0UWQ0emRaMXcwdW5tYWZ5WG1SaFo3Sno0WTJTaDhEdGtzU2dGWVRDREVTRHB5dlNtVmE2c0RxL3AvT2RZdFdOMUcrZWhOUmt2bHVybVJaN0JFNnZ5RWxld3RwM0VpTjduTk5GWVlCVGU1N1hUM0pYWEt1MnAwbTZHSUdIRzdIQTF5OCt5eGpkTGxSa1NLak1uTzN1TEdiZFFSZEp3aUVtYmZXd2I3MFZiUnlsVGJybHZiVU1kbmZVYkpFa2xkN01mbXFCYytSUkpOam44Y3drN2ZTOTJLcGVMUHlBK09jQStsUzdOQklGRTF3cXFXYWI4dHo3dVJtVm10UVJkTXhKb24rNXBRUGlWbi9TbUlJN0dpSjlKRU12Zmh4Zm5zTEJ6c2U1bm93Um1iTThmYzdsYkY2VldPSUNodEJMMFZjVlhTWmZPU3owd3FiUFB3RXprMEdqS0ptWE5adnl1d29XSUNIci9DQ0xOdlVnZkErTXhqOHh0ZC9xa0xORFJlZ2dEeU1udW5nMzhTWXZwWTNTR0Zoc29RUVBJcEhXd2V0aXdmQllMWEUzUzE4a1VWeWJWWTI4a2JpZnNmN29mVnBRWXJISDRCTzBQWnNTSTlSTHEzQWFlbk5oamFkZkhwbHArK2lCYnM9IGltcG9ydGVkLW9wZW5zc2gta2V5"
+        },
+        "decryptionFile": {
+          "fileName": "Jp_PvtKey.pem",
+          "data": "data:application/x-x509-ca-cert;base64,LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlKSmdJQkFBS0NBZ0VBNTFyY0JCUDdzMGZGa2UzMGxYRXBwZHlGeEFZVlpzYmpQNUprVjAvZS9rTXJzbVZ1CkVYRnBXWkJkWEQ4QWRySUlGWjUxM1NGeUVCQlBRcHMvdWNXbm9HZjJwOEtMbUp4K3JqTnk3MzZhREp1VTF4aXUKWHF2QjZMK3dKaVlEUlkzQlBxYTE2VlYwTjBWeGNCdnRuMlpCRUJpUGRTcGJBNE5HMEFhSlUwd0F1NGtQbzNTcwozUDJ6c0trejZJa3NTNjQvYUNPaUV0UWQ0emRaMXcwdW5tYWZ5WG1SaFo3Sno0WTJTaDhEdGtzU2dGWVRDREVTCkRweXZTbVZhNnNEcS9wL09kWXRXTjFHK2VoTlJrdmx1cm1SWjdCRTZ2eUVsZXd0cDNFaU43bk5ORllZQlRlNTcKWFQzSlhYS3UycDBtNkdJR0hHN0hBMXk4K3l4amRMbFJrU0tqTW5PM3VMR2JkUVJkSndpRW1iZld3YjcwVmJSeQpsVGJybHZiVU1kbmZVYkpFa2xkN01mbXFCYytSUkpOam44Y3drN2ZTOTJLcGVMUHlBK09jQStsUzdOQklGRTF3CnFxV2FiOHR6N3VSbVZtdFFSZE14Sm9uKzVwUVBpVm4vU21JSTdHaUo5SkVNdmZoeGZuc0xCenNlNW5vd1JtYk0KOGZjN2xiRjZWV09JQ2h0QkwwVmNWWFNaZk9TejB3cWJQUHdFemswR2pLSm1YTlp2eXV3b1dJQ0hyL0NDTE52VQpnZkErTXhqOHh0ZC9xa0xORFJlZ2dEeU1udW5nMzhTWXZwWTNTR0Zoc29RUVBJcEhXd2V0aXdmQllMWEUzUzE4CmtVVnliVlkyOGtiaWZzZjdvZlZwUVlySEg0Qk8wUFpzU0k5UkxxM0FhZW5OaGphZGZIcGxwKytpQmJzQ0FTTUMKZ2dJQWFjTWl3QWtpbXhsKzQ1LzZ4L2szbkVlTm0zQit6K1hrT2xHTTlMYk1Wdm9pbXJJR2JsKzdJYUVVdkhTUwpmMmRVSnlQZUcvSUlRZHVSOHBBZElibHhNMks1NWtwT2NhYWdUNko5cjAvUlpObG9uTmdWTXBlcEdmRTZsUml4CkNkcG0rQkd5UHNmNm5PeUxvUGJUQndvc1h5RXJvMGFRQVpzWkRxUG5BWUhVY3Z6VDh2T0NPU09GV0JMVjVxVWIKa0UrbjlSZWFqRU8xNURhUGVFQ0tWd3BYckk5WWQ1a0x6SlVnSWVKSzF2Mi9VSnhnZU1YNW9FZWdsd25ES1h6RApNcEl5ZnVDY2NROXRCSnNkK2d1Z1Q3allwbTVHdmNZQ2dXUk5wb2VSVnhBalBRb1BPWkdYZXhUdVZwclRseU5FCi9JU1ZGRS9sOHVpUTU5bkhFTW0rNDBNSXhieTN2VWN2Wm9VWlV3dWpHdlZXZTlQaFZjSU14MVdxT3h1ejJQeGoKd0NYdy9HVHFkcHczclB3cm9aNU1XTVBKOHlkbWxFL2sxS3dpMjF5Sjk4MWhWQ3ZNYk1selVxdTEzMHByYk9GeAp5RHE0Z1p4c0tsQXlqVnd3eUxBVGtNMk10L3EwRjVjR1RQNFhRUUxHMWNyYkdyTDlaRGZVUkF6eTBzOWdQVkZFCklHUThrNm5GNEp0N3JhTG5abW51TzhLRjVmTytlbTdud0ZwRVN1MlVqYXpLWjhydUhYSnF6TXl0SzRaZzJER28KSmlBa2srTExBTmRVaUZRUlU5d1lPQXhhS3pyTDNsb0toYnpSbldQMWJKMm51cS9XaVBsdXBkTTUxdGEwWVJwRgpnbGFkTnBEbzNnSkRJVmRZb0Q1MFJDYzRJOUtZTHMwdVFIMUFFV1Z6blMrdG13c0NnZ0VCQVBuUFd2YUU2cGJJClpKRTd6SkFCY1U4WXZFNDM0WktzNGRZdGp6YTVacXpTV2RHZTZoRnRxTHZNWllaWlN5L3V6OHRLQVNyZHpKMDcKL290V2VmTXByRjZ0YlgvekgyMlJuTFp3ZGQxU0NPc2pqMnA1ODFqUTllV1ZPc0w4SnBuVkN1Z2craG5UZHJjdwpFMGZQWWdORzUzdEhyRng2dnlJbHprQzRKYXdaV3J3U1pjMW9TK0kwM2VOTDdCakFTYmFwME9jaXlxcDNSVFF4CmZKUk1zQjZLVG1YYW9pSFJUTXpSMktvcFZzODA3cERnVklDOUJsQWF6aDhqQ2lrRFg1WEoxSXVYYmlNb1kwaUUKcVpvNTdQRXdyN3BldGRjYXVnaGl5M1U1cnRKcllxQ3E3VVY5b2pTL3lJOHRmN2pDWEpMSE91TC9TTy9tMENlNQpVSjdSVmFmVCtOY0NnZ0VCQU8wV2I2OWUyaXB0WE0zVUFpOG9JWkJlcmMyK3Y1amFVOVFOTi9zTHRySnpFR2tiClpIS0NrcXdsYllMRFVtcjRBQVpZa2NrSEd0NHB4WDNYdStUa1dGSExlTlRSUm1CcStxSTRldG5yWjMrNUd1S0sKbHFHL1czVFBsNVhZVndhUUR3di9CdHpiZnRWdWpQMG9zWXdZdEpkZVR0QXgzZmpDbWtzZnFaV3BxSVBxUm5TVApMajVHRXkwTnR1b2gwSXZXRm1DekZpVlVJdHpJNm5BbXNuZ0NubjYrcWsrNWxTT3hpempmbHh1cTZFdWN0UmJICmFCVm81cExYN2lvZ1pHVm9OVVVzVGZ2dzFMUzRLU0xLd0gyeHlKckEyN1Mvekg4QkcrdFNyd3IvRHduWXpWTHUKT2JFVWZnSVBjclVMbHVhL0pXNFVPcGtSaVB6b0JjMm5hbStDU2IwQ2dnRUFEa1pjK0NUYU5JQjZ4bmh5RnR1QwowVkhlMytYdm9mdEFHdDRJTHdOSHNocW1DL3B6eG50TGVISVViaE83SjA5NWxwYUR1VTZBdUljVjNCT1I4S05MCnJhT0NtWmpkT1hZSTlIdDBjd3dBZ25jUGdtMWVYTmk5bUJjbjdlS0YzT2VhT1NaMHNRVEU5SVpuZ0hKQUhYSEUKRmF4Uy9maGlzWDZBMEgrTkg4YnZQZkpzTjUrUFRzRXhRREE1WUlBRU5sTFl2TUFvMW9wNCs2c09idC9QakxkeQpNYlM0enJ1QXV6OHc4OGZaRXllWW1wQjUyM2lFQkpQUlE1dWFManExQVQ2N3NEU0o4MkZrd2xDNVBBTlBYajFMCjNzT1ZYTCt5MitoalpjaklLVWYzQWQzaHJETVFsVXpKb2NnVjdVenZXTmd2UUN2WVNEa1ROWGhOdis2MGIvMTcKN3dLQ0FRRUF0dVZzR1pKUWh5RXFWYU9NcUFrRDh3YzFucmU0WC9qaGxQUkJJTC9rdFl2MnQzdUlBSkNkQ0hTawo3OWlCYUhZcjU2TnBKZ3pMbFhDdVN5TEVKWm8xZ08xcjExK2NzTWVPSlY3Rks4UTU1aSsxcDNJNXIvb0V1VEp0Cm4zc0JUalNkNUs3S3g2SUN3ZWVSVlpScnRUZWhRWkhsQndIbHYrYVVTSlRFcHFkelhuTGw1T2FSWXoxZlFBTkQKOW5IYlpJODExWkYzZStIUndFTTRnbWIrdEZuS3VZdkZOakFUOXZhdE9vQ1pJL2pmRmNJSUNrSU9kdXFGL0VBcwp3V2x5QlJYZjg0aVQ3ajF3NHk3N0tYZldVbFh5aGdKOW1oQk5UQWdyZXdWRk5GNWNEdWtUYTl4WVpBaCtkcDR6CjZyL01MbGp3L1NXTVNqSVpPQ0MwQlF3ZTZFNlFwd0tDQVFBTWNkeUJDZy83K3NmUGFNaHFMWW9MblFlTGVFdVUKL0hsUlFsc1lmK2JWQkxoYzZvc0EwT3NxSnBRTXRkbllEbTZVZW9MM1F4c0pXOExIYXgveXdtVWdoWDlWaHUxRQpCek9ZdHNSdlhVM3k3ckhkMEMzeGM4a1N3OEQyUXBQZG0vVTFMYWV3eDVDanpDbUMzWGN0K29jL2lCSWQzZ2JBCkZMbFFwSFRtVys1ZXFFUUxyN2d2MklWQnJLNkhWaW9oZnArRnNkY3FGMzN4OUQrRm5GQlZPa044ZkE4NnMzSFgKNkJ3MTBKejVrL1BaOXRscDFDcWFuejBBb05DYzIxejRsZTRRd3p4NTcycDBRWVBGaFJ1Yk0xVlRmWEhieTB3KwpwR1ZZWG5zR1ovMFUvS2lnWHExaXhIMTIyeFBhSTZWeFRoa3FoMERnZVNqUm9NRVFsQkl2WU1zOAotLS0tLUVORCBSU0EgUFJJVkFURSBLRVktLS0tLQo="
+        }
+      }
+    },
+    {
+      "id": "starter-aws-csv",
+      "name": "AWS-CSV",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "aws-dummy-profile",
+      "destinationProfileKey": "aws-dummy-profile",
+      "fileContract": {
+        "charset": "UTF-8",
+        "compression": "none",
+        "csvParser": "RFC 4180",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "decryptionFile": "",
+        "decryptionPassphrase": "",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "encryptionFile": "",
+        "filePattern": "",
+        "filePatternMode": "automatic",
+        "format": "CSV"
+      }
+    },
+    {
+      "id": "starter-aws-gz",
+      "name": "AWS-GZ",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "aws-dummy-profile",
+      "destinationProfileKey": "aws-dummy-profile",
+      "fileContract": {
+        "charset": "UTF-8",
+        "compression": "gzip",
+        "csvParser": "RFC 4180",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "decryptionFile": "",
+        "decryptionPassphrase": "",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "encryptionFile": "",
+        "filePattern": "^PROFILE_.*\\.gz$",
+        "filePatternMode": "automatic",
+        "format": "CSV"
+      }
+    },
+    {
+      "id": "starter-aws-pgp",
+      "name": "AWS-PGP",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "aws-dummy-profile",
+      "destinationProfileKey": "aws-dummy-profile",
+      "fileContract": {
+        "charset": "UTF-8",
+        "compression": "PGP",
+        "csvParser": "RFC 4180",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "decryptionFile": "",
+        "decryptionPassphrase": "",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "encryptionFile": "",
+        "filePattern": "^PROFILE_.*\\.pgp$",
+        "filePatternMode": "automatic",
+        "format": "CSV"
+      }
+    },
+    {
+      "id": "starter-gcs-csv",
+      "name": "GCS-CSV",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "gcs-dummy-profile",
+      "destinationProfileKey": "gcs-dummy-profile",
+      "fileContract": {
+        "charset": "UTF-8",
+        "compression": "none",
+        "csvParser": "RFC 4180",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "decryptionFile": "",
+        "decryptionPassphrase": "",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "encryptionFile": "",
+        "filePattern": "",
+        "filePatternMode": "automatic",
+        "format": "CSV"
+      }
+    },
+    {
+      "id": "starter-gcs-gz",
+      "name": "GCS-GZ",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "gcs-dummy-profile",
+      "destinationProfileKey": "gcs-dummy-profile",
+      "fileContract": {
+        "charset": "UTF-8",
+        "compression": "gzip",
+        "csvParser": "RFC 4180",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "decryptionFile": "",
+        "decryptionPassphrase": "",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "encryptionFile": "",
+        "filePattern": "^PROFILE_.*\\.gz$",
+        "filePatternMode": "automatic",
+        "format": "CSV"
+      }
+    },
+    {
+      "id": "starter-gcs-pgp",
+      "name": "GCS-PGP",
+      "description": "Starter transfer template — add connection values to the selected profile.",
+      "sourceProfileKey": "gcs-dummy-profile",
+      "destinationProfileKey": "gcs-dummy-profile",
+      "fileContract": {
+        "charset": "UTF-8",
+        "compression": "PGP",
+        "csvParser": "RFC 4180",
+        "dateFormat": "yyyy-MM-dd-HH-mm-ss-SSS",
+        "decryptionFile": "",
+        "decryptionPassphrase": "",
+        "delimiter": ",",
+        "destinationFileName": "PROFILE_{host}",
+        "encryptionFile": "",
+        "filePattern": "^PROFILE_.*\\.pgp$",
+        "filePatternMode": "automatic",
+        "format": "CSV"
+      }
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+sourceid,sourcebuyinggroupdefinitionid,name,description,status,sourceproductid,productid,lastjobrundate
+UI,BGD-1001,BGD-Name-1001,BGD-Description-1001,BGD-Status-1001,BGD-SourceProductID-1001,BGD-ProductID-1001,BGD-LastJobRunDate-1001
+UI,BGD-1002,BGD-Name-1002,BGD-Description-1002,BGD-Status-1002,BGD-SourceProductID-1002,BGD-ProductID-1002,BGD-LastJobRunDate-1002

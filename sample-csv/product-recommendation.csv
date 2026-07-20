@@ -1,0 +1,3 @@
+sourceid,sourceproductrecommendationid,actionname,actiondestination,actioncode,salesplay,salesmotion,criteria,sourceaccountid,accountid,sourceproductid,productid
+UI,PR-1001,PR-ActionName-1001,PR-ActionDestination-1001,PR-ActionCode-1001,PR-SalesPlay-1001,PR-SalesMotion-1001,PR-Criteria-1001,PR-SourceAccountID-1001,PR-AccountID-1001,PR-SourceProductID-1001,PR-ProductID-1001
+UI,PR-1002,PR-ActionName-1002,PR-ActionDestination-1002,PR-ActionCode-1002,PR-SalesPlay-1002,PR-SalesMotion-1002,PR-Criteria-1002,PR-SourceAccountID-1002,PR-AccountID-1002,PR-SourceProductID-1002,PR-ProductID-1002

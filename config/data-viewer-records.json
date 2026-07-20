@@ -1,0 +1,55 @@
+{
+  "description": "Overrides for Data Viewer records. At runtime the extension captures every editable field in the selected table's live Add record form and generates a value for fields not listed here. Keys are CDP field IDs without the field- prefix. Tokens {{date}}, {{timestamp}}, {{day}}, {{month}}, {{year}}, {{ddmm}}, {{sequence}}, {{tableSequence}}, {{sourceId}}, and {{objectId}} are generated for every record. SourceID comes from the optional popup value and defaults to UI; Source<Table>ID is generated from the table code, DDMM, and repetition sequence.",
+  "tables": {
+    "Customer": {
+      "values": {
+        "Email": "jagannath.patil@oracle.com",
+        "FirstName": "Jagannath",
+        "MiddleName": "Responsys",
+        "LastName": "Patil",
+        "Gender": "M",
+        "BirthDate": "{{date}}",
+        "JobTitle": "Engineer",
+        "okToEmail": "Y",
+        "IsActive": "True"
+      }
+    },
+    "ContactPoint": {
+      "values": {
+        "Email": "jagannath.patil@oracle.com",
+        "ChannelType": "Email",
+        "IsDeliverable": "True",
+        "OptInStatus": "In"
+      },
+      "relationships": {
+        "SourceCustomerID": "Customer"
+      }
+    },
+    "Address": {
+      "values": {
+        "AddressLine1": "500 Oracle Parkway",
+        "City": "Redwood City",
+        "State": "CA",
+        "ZipCode": "94065",
+        "Country": "United States",
+        "IsActive": "True"
+      },
+      "relationships": {
+        "SourceCustomerID": "Customer"
+      }
+    },
+    "Account": {
+      "values": {
+        "Name": "Automation Test Account",
+        "Industry": "Technology",
+        "Status": "Active"
+      }
+    },
+    "Product": {
+      "values": {
+        "Name": "Automation Test Product",
+        "Description": "Created by CDP Browser Automation"
+      }
+    }
+  }
+}

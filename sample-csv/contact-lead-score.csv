@@ -1,0 +1,3 @@
+sourceid,sourcecontactleadscoreid,mastercustomerid,sourcemastercustomerid,status,score,scorets
+UI,CLS-1001,CLS-MasterCustomerID-1001,CLS-SourceMasterCustomerID-1001,CLS-Status-1001,CLS-Score-1001,CLS-ScoreTS-1001
+UI,CLS-1002,CLS-MasterCustomerID-1002,CLS-SourceMasterCustomerID-1002,CLS-Status-1002,CLS-Score-1002,CLS-ScoreTS-1002

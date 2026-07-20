@@ -1,0 +1,3 @@
+sourceid,sourcesalesoffersid,actualprice,offerprice,discountpercent,reason
+UI,SO-1001,SO-ActualPrice-1001,SO-OfferPrice-1001,SO-DiscountPercent-1001,SO-Reason-1001
+UI,SO-1002,SO-ActualPrice-1002,SO-OfferPrice-1002,SO-DiscountPercent-1002,SO-Reason-1002

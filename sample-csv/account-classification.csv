@@ -1,0 +1,3 @@
+sourceid,sourceaccountclassificationid,accountid,sourceaccountid,classificationcategory,classificationcode,primarycategory
+UI,AC-1001,AC-AccountID-1001,AC-SourceAccountID-1001,AC-ClassificationCategory-1001,AC-ClassificationCode-1001,AC-PrimaryCategory-1001
+UI,AC-1002,AC-AccountID-1002,AC-SourceAccountID-1002,AC-ClassificationCategory-1002,AC-ClassificationCode-1002,AC-PrimaryCategory-1002

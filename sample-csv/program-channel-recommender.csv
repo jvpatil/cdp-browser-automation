@@ -1,0 +1,3 @@
+sourceid,sourceprogramchannelrecommendationid,mastercustomerid,sourcemastercustomerid,channelfirstbest,channelsecondbest,channelthirdbest,programfirstbest,programsecondbest,programthirdbest
+UI,PCR-1001,PCR-MasterCustomerID-1001,PCR-SourceMasterCustomerID-1001,PCR-ChannelFirstBest-1001,PCR-ChannelSecondBest-1001,PCR-ChannelThirdBest-1001,PCR-ProgramFirstBest-1001,PCR-ProgramSecondBest-1001,PCR-ProgramThirdBest-1001
+UI,PCR-1002,PCR-MasterCustomerID-1002,PCR-SourceMasterCustomerID-1002,PCR-ChannelFirstBest-1002,PCR-ChannelSecondBest-1002,PCR-ChannelThirdBest-1002,PCR-ProgramFirstBest-1002,PCR-ProgramSecondBest-1002,PCR-ProgramThirdBest-1002

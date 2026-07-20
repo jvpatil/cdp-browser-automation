@@ -1,0 +1,3 @@
+sourceid,sourcebuyinggroupdefinitiondetailid,criteriaid,criteriatype,criteriastatus,sourcebuyinggroupdefinitionid,buyinggroupdefinitionid,sourcebuyinggroupbuyerroleid,buyinggroupbuyerroleid,criterianame
+UI,BGDD-1001,BGDD-CriteriaID-1001,BGDD-CriteriaType-1001,BGDD-CriteriaStatus-1001,BGDD-SourceBuyingGroupDefinitionID-1001,BGDD-BuyingGroupDefinitionID-1001,BGDD-SourceBuyingGroupBuyerRoleID-1001,BGDD-BuyingGroupBuyerRoleID-1001,BGDD-CriteriaName-1001
+UI,BGDD-1002,BGDD-CriteriaID-1002,BGDD-CriteriaType-1002,BGDD-CriteriaStatus-1002,BGDD-SourceBuyingGroupDefinitionID-1002,BGDD-BuyingGroupDefinitionID-1002,BGDD-SourceBuyingGroupBuyerRoleID-1002,BGDD-BuyingGroupBuyerRoleID-1002,BGDD-CriteriaName-1002

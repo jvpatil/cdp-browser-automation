@@ -1,0 +1,3 @@
+sourceid,sourcetitlerepositoryid,contactjobtitle,cleansedjobtitle,translatedjobtitle,joblevel,joblevelconfidence,jobdepartment,jobdepartmentconfidence,jobfunction,jobfunctionconfidence,status
+UI,TR-1001,TR-ContactJobTitle-1001,TR-CleansedJobTitle-1001,TR-TranslatedJobTitle-1001,TR-JobLevel-1001,TR-JobLevelConfidence-1001,TR-JobDepartment-1001,TR-JobDepartmentConfidence-1001,TR-JobFunction-1001,TR-JobFunctionConfidence-1001,TR-Status-1001
+UI,TR-1002,TR-ContactJobTitle-1002,TR-CleansedJobTitle-1002,TR-TranslatedJobTitle-1002,TR-JobLevel-1002,TR-JobLevelConfidence-1002,TR-JobDepartment-1002,TR-JobDepartmentConfidence-1002,TR-JobFunction-1002,TR-JobFunctionConfidence-1002,TR-Status-1002

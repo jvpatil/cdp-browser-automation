@@ -1,0 +1,3 @@
+sourceid,sourcecustomerchurnid,mastercustomerid,sourcemastercustomerid,churnrisk,productid,sourceproductid,churnscore
+UI,CC-1001,CC-MasterCustomerID-1001,CC-SourceMasterCustomerID-1001,CC-ChurnRisk-1001,CC-ProductID-1001,CC-SourceProductID-1001,CC-ChurnScore-1001
+UI,CC-1002,CC-MasterCustomerID-1002,CC-SourceMasterCustomerID-1002,CC-ChurnRisk-1002,CC-ProductID-1002,CC-SourceProductID-1002,CC-ChurnScore-1002
