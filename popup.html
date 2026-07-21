@@ -12,6 +12,99 @@ main{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padd
 .inline-row .link{flex:0 0 auto}
 .clear-choice{flex:0 0 auto;min-height:33px;padding:0 9px;border:1px solid #3c5b78;border-radius:7px;color:#b9d2ec;background:#14213d;font-size:11px;font-weight:700}
 .clear-choice,.back{color:var(--bronze)}
+/* Slate + Sapphire theme */
+:root{--navy:#111827;--field:#263244;--card:#1f2937;--line:#3a4a60;--bronze:#4f8cff;--text:#f3f6fa;--muted:#aab7c7;--green:#4caf7d;--red:#e36b6b}
+html,body{background:var(--navy)}
+.context,.status-card,.scheduler-options,.back,.dry-run-option,.editor-actions button{background:var(--card)}
+.sheet-body{background:#182435}
+.tabs button{background:var(--field);color:#c6d3e2}
+.tabs button[aria-selected=true],.primary,.run,.editor-actions .apply{background:var(--bronze)}
+.card,.flow-step,.history-item{background:var(--card)}
+.choice{border-color:var(--line);color:#d9e3ef}
+.choice:has(input:checked),.scheduler-options button[aria-pressed=true]{background:rgba(79,140,255,.16)}
+.data-viewer-edit{border-color:#6fa8dc;background:#376fc6}
+.clear-choice{border-color:var(--line);background:var(--field)}
+/* Cloud + Cobalt light theme */
+:root{color-scheme:light;--navy:#f7f8fa;--field:#ffffff;--card:#ffffff;--line:#d0d5dd;--bronze:#175cd3;--text:#1d2939;--muted:#667085;--green:#027a48;--red:#b42318}
+html,body{background:var(--navy);color:var(--text)}
+.context,.status-card,.scheduler-options,.back,.dry-run-option,.editor-actions button,.card,.flow-step,.history-item{background:var(--card)}
+.sheet-body,.flow-preview{background:#f9fafb}
+.context input,.context select,input[type=search],.data-viewer-options input,.editor-row input,.editor-row textarea{background:var(--field);color:var(--text)}
+.tabs button{background:#eef2f6;color:#475467}
+.tabs button[aria-selected=true],.primary,.run,.editor-actions .apply{background:var(--bronze);color:#fff}
+.choice{border-color:var(--line);background:var(--field);color:var(--text)}
+.choice:has(input:checked),.scheduler-options button[aria-pressed=true]{background:#eaf2ff;color:#175cd3}
+.scheduler-label,.data-viewer-options label,.action,.flow-preview,#status{color:var(--text)}
+.scheduler-options button{color:#475467}
+.choice-label,.data-viewer-choice-name{color:var(--text)}
+.summary,.icon,.link,.clear-choice,.back,.flow-step small,.flow-step button{color:var(--bronze)}
+.clear-choice{background:var(--field);border-color:var(--line)}
+.data-viewer-edit{border-color:#175cd3;background:#eaf2ff;color:#175cd3}
+/* Refined Oxford Navy dark theme */
+:root{color-scheme:dark;--navy:#0d1b2a;--field:#14213d;--card:#102843;--line:#496887;--bronze:#e5ba73;--text:#ffffff;--muted:#8d99ae;--green:#9acfa5;--red:#ef938d}
+.sheet-body,.flow-preview{background:#0c1d30}
+.tabs button{background:#10243d;color:#cbd5df}
+.tabs button[aria-selected=true],.primary,.run,.editor-actions .apply{background:var(--bronze);color:var(--navy)}
+.choice{border-color:#3c5b78;background:var(--field);color:#d6dee8}
+.choice:has(input:checked),.scheduler-options button[aria-pressed=true]{background:rgba(229,186,115,.16);color:#fff}
+.scheduler-options button{color:#b8c5d2}
+.scheduler-label,.data-viewer-options label,.action,.flow-preview,#status,.choice-label,.data-viewer-choice-name{color:var(--text)}
+.summary,.icon,.link,.clear-choice,.back,.flow-step small,.flow-step button{color:var(--bronze)}
+.data-viewer-edit{border-color:#8ab4f8;background:#2f6fae;color:#fff}
+/* Bronze is text/border only; primary cards use restrained navy. */
+.tabs button[aria-selected=true]{border-color:#6388ad;background:#1b3b5a;color:#f3f7fb}
+.primary,.run,.editor-actions .apply{border-color:#6388ad;background:#285273;color:#f3f7fb}
+/* Softer bronze treatment: accent, not a bright card surface. */
+.tabs button[aria-selected=true]{background:#1a3552;color:var(--bronze)}
+.primary,.run,.editor-actions .apply{border-color:#b98b50;background:#b98b50;color:#0d1b2a}
+/* Oracle Redwood-inspired dark theme */
+:root{color-scheme:dark;--navy:#1b1b1b;--field:#2a2a2a;--card:#242424;--line:#5a5a5a;--bronze:#d44a3a;--text:#f4f1ee;--muted:#b9b2ac;--green:#7cc48d;--red:#ff8a7a}
+.sheet-body,.flow-preview{background:#1f1f1f}
+.tabs button{background:#303030;color:#d4cfca}
+.tabs button[aria-selected=true],.primary,.run,.editor-actions .apply{background:var(--bronze);color:#fff}
+.choice{border-color:#5a5a5a;background:var(--field);color:#eee9e5}
+.choice:has(input:checked),.scheduler-options button[aria-pressed=true]{background:rgba(212,74,58,.20);color:#fff}
+.scheduler-options button{color:#d0c9c3}
+.scheduler-label,.data-viewer-options label,.action,.flow-preview,#status,.choice-label,.data-viewer-choice-name{color:var(--text)}
+.summary,.icon,.link,.clear-choice,.back,.flow-step small,.flow-step button{color:#f2a093}
+.data-viewer-edit{border-color:#e87d6d;background:#442522;color:#f9beb5}
+/* Keep Redwood red for action surfaces, not text accents. */
+.section-title,.summary,.icon,.link,.clear-choice,.back,.flow-step small,.flow-step button{color:#9fc3ff}
+/* Neutral Graphite + Azure: no warm/chocolate cast. */
+:root{color-scheme:dark;--navy:#15181c;--field:#2a3037;--card:#20252b;--line:#46515e;--bronze:#55a6ff;--text:#f5f7fa;--muted:#a6b0bc;--green:#62c084;--red:#e36b6b}
+.sheet-body,.flow-preview{background:#191d22}
+.tabs button{background:#2a3037;color:#c8d0da}
+.tabs button[aria-selected=true],.primary,.run,.editor-actions .apply{background:var(--bronze);color:#0e1722}
+.choice{border-color:var(--line);background:var(--field);color:#e7ebf0}
+.choice:has(input:checked),.scheduler-options button[aria-pressed=true]{background:rgba(85,166,255,.16);color:#fff}
+.scheduler-options button{color:#c8d0da}
+.summary,.icon,.link,.clear-choice,.back,.flow-step small,.flow-step button,.section-title{color:#9fc3ff}
+.data-viewer-edit{border-color:#7abbff;background:#213d59;color:#d9ebff}
+/* Modern Redwood: graphite, warm neutrals, and coral only as an accent. */
+:root{color-scheme:dark;--navy:#181818;--field:#2b2b2b;--card:#242424;--line:#545454;--bronze:#f2705f;--text:#f5f3f0;--muted:#b7b2ad;--green:#79c591;--red:#ff7568}
+.sheet-body,.flow-preview{background:#1d1d1d}
+.tabs button{background:#2b2b2b;color:#d4d0cb}
+.tabs button[aria-selected=true]{border-color:var(--bronze);background:#383838;color:#fff}
+.primary,.run,.editor-actions .apply{border-color:#f5f0eb;background:#f5f0eb;color:#22201f}
+.choice{border-color:var(--line);background:var(--field);color:#ede9e5}
+.choice:has(input:checked),.scheduler-options button[aria-pressed=true]{border-color:var(--bronze);background:rgba(242,112,95,.14);color:#fff}
+.scheduler-options button{color:#d4d0cb}
+.summary,.icon,.link,.clear-choice,.back,.flow-step small,.flow-step button,.section-title{color:#d8d3ce}
+.data-viewer-edit{border-color:#e88b7d;background:#402724;color:#ffd8d1}
+/* Oxford Navy + Brushed Bronze */
+:root{color-scheme:dark;--navy:#0d1b2a;--field:#14213d;--card:#102843;--line:#496887;--bronze:#e5ba73;--text:#ffffff;--muted:#8d99ae;--green:#9acfa5;--red:#ef938d}
+.sheet-body,.flow-preview{background:#0c1d30}
+.tabs button{background:#10243d;color:#cbd5df}
+.tabs button[aria-selected=true],.primary,.run,.editor-actions .apply{border-color:var(--bronze);background:var(--bronze);color:#0d1b2a}
+.choice{border-color:#3c5b78;background:var(--field);color:#d6dee8}
+.choice:has(input:checked),.scheduler-options button[aria-pressed=true]{border-color:var(--bronze);background:rgba(229,186,115,.16);color:#fff}
+.scheduler-options button{color:#b8c5d2}
+.summary,.icon,.link,.clear-choice,.back,.flow-step small,.flow-step button,.section-title{color:var(--bronze)}
+.data-viewer-edit{border-color:#8ab4f8;background:#2f6fae;color:#fff}
+/* Final visual override: never use bright gold fills. */
+.tabs button[aria-selected=true]{border-color:#c59d60!important;background:linear-gradient(100deg,#d0ad70 0%,#a47b45 100%)!important;color:#0d1b2a!important}
+.primary,.run,.editor-actions .apply{border-color:#c59d60!important;background:linear-gradient(100deg,#d0ad70 0%,#a47b45 100%)!important;color:#0d1b2a!important}
+.choice:has(input:checked){border-color:#c59d60!important;background:var(--field)!important}
 </style></head><body>
 <section class="context"><div class="context-row"><select id="transferTemplate" aria-label="Transfer template"><option value="">Select transfer template</option></select><input id="connectionPurpose" class="purpose" maxlength="28" placeholder="Purpose" aria-label="Connection purpose"><button class="link" id="manageTemplatesBtn">Manage</button></div><div id="templateSummary" class="hint">Choose a template for transfer actions.</div></section>
 <nav class="tabs" aria-label="Popup views"><button type="button" data-view="run" aria-selected="true">Run</button><button type="button" data-view="flow" aria-selected="false">Flow</button><button type="button" data-view="activity" aria-selected="false">Activity</button></nav>
@@ -40,7 +133,7 @@ main{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padd
 <section class="sheet" id="sheet-responsys" hidden><div class="sheet-head"><strong>Responsys Import</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="scheduler" data-scheduler="responsys"></div><button class="run" id="runResponsysBtn">▶ Run Responsys Import</button></div></section>
 <section class="sheet" id="sheet-import" hidden><div class="sheet-head"><strong>Import Job</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="inline-row"><input id="quickImportSearch" type="search" placeholder="Search tables"><button type="button" class="clear-choice" id="clearImportBtn">Clear</button></div><div id="quickImportTables" class="choices"></div><div id="quickImportHint" class="option-hint" hidden></div><div class="scheduler" data-scheduler="quickImport"></div><button class="run" id="runQuickImportBtn">▶ Run Import Job</button></div></section>
 <section class="sheet" id="sheet-export" hidden><div class="sheet-head"><strong>Export Job</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><input id="quickExportSearch" type="search" placeholder="Search data objects"><div id="quickExportPayloads" class="choices"></div><div id="quickExportHint" class="option-hint" hidden></div><div class="scheduler" data-scheduler="quickExport"></div><button class="run" id="runQuickExportBtn">▶ Run Export Job</button></div></section>
-<section class="sheet" id="sheet-dataViewer" hidden><div class="sheet-head"><strong>Data Viewer Record</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body data-viewer-main" id="dataViewerMain"><div class="inline-row"><input id="dataViewerSearch" type="search" placeholder="Search tables"><button type="button" class="clear-choice" id="dataViewerClearBtn">Clear</button></div><div id="dataViewerTables" class="choices"></div><div id="dataViewerHint" class="option-hint" hidden></div><div class="data-viewer-options"><label>Records per table<input id="dataViewerRecordsPerTable" type="text" inputmode="numeric" placeholder="1"></label><label>Source ID<input id="dataViewerSourceId" type="text" placeholder="UI"></label><label class="dry-run-option"><input id="dataViewerDryRun" type="checkbox">Dry run — discard changes</label></div><button class="run" id="runDataViewerBtn">▶ Save Data Viewer Record</button></div><div class="sheet-body data-viewer-editor" id="dataViewerEditor" hidden><div class="sheet-head"><strong id="dataViewerEditorTitle">Record values</strong><button class="back" type="button" id="dataViewerEditorBack">Back</button></div><div id="dataViewerEditorValues"></div><button type="button" class="link" id="dataViewerAddValue">+ Add field</button><div id="dataViewerEditorRelationships"></div><button type="button" class="link" id="dataViewerAddRelationship">+ Add relationship</button><div class="editor-actions"><button type="button" id="dataViewerUseDefaults">Use Defaults</button><button type="button" class="apply" id="dataViewerApplyEditor">Apply for this run</button></div></div></section>
+<section class="sheet" id="sheet-dataViewer" hidden><div class="sheet-head"><strong>Data Viewer Record</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body data-viewer-main" id="dataViewerMain"><div class="inline-row"><input id="dataViewerSearch" type="search" placeholder="Search tables"><button type="button" class="clear-choice" id="dataViewerClearBtn">Clear</button></div><div id="dataViewerTables" class="choices"></div><div id="dataViewerHint" class="option-hint" hidden></div><div class="data-viewer-options"><label>Records per table<input id="dataViewerRecordsPerTable" type="text" inputmode="numeric" placeholder="1"></label><label>Source ID<input id="dataViewerSourceId" type="text" placeholder="UI"></label><label id="dataViewerParentCustomerLabel" hidden>Parent Source Customer ID<input id="dataViewerParentCustomerId" type="text" placeholder="Optional"></label><label class="dry-run-option"><input id="dataViewerDryRun" type="checkbox">Dry run — discard changes</label></div><button class="run" id="runDataViewerBtn">▶ Save Data Viewer Record</button></div><div class="sheet-body data-viewer-editor" id="dataViewerEditor" hidden><div class="sheet-head"><strong id="dataViewerEditorTitle">Record values</strong><button class="back" type="button" id="dataViewerEditorBack">Back</button></div><div id="dataViewerEditorValues"></div><button type="button" class="link" id="dataViewerAddValue">+ Add field</button><div id="dataViewerEditorRelationships"></div><button type="button" class="link" id="dataViewerAddRelationship">+ Add relationship</button><div class="editor-actions"><button type="button" id="dataViewerUseDefaults">Use Defaults</button><button type="button" class="apply" id="dataViewerApplyEditor">Apply for this run</button></div></div></section>
 <section class="sheet" id="sheet-flowDataViewer" hidden><div class="sheet-head"><strong>Flow: Data Viewer</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="flow-config" id="flowDataViewerConfig"><div class="inline-row"><input id="flowDataViewerSearch" type="search" placeholder="Search tables"><button type="button" class="clear-choice" id="flowDataViewerClearBtn">Clear</button></div><div id="flowDataViewerTables" class="choices"></div><div id="flowDataViewerHint" class="option-hint" hidden></div></div></div></section>
 <section class="sheet" id="sheet-flowExport" hidden><div class="sheet-head"><strong>Flow: Export</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="flow-config" id="flowExportConfig"><input id="flowExportSearch" type="search" placeholder="Search data objects"><div id="flowExportPayloads" class="choices"></div><div id="flowExportHint" class="option-hint" hidden></div><div class="scheduler" data-scheduler="flowExport"></div></div></div></section>
 <section class="sheet" id="sheet-flowImport" hidden><div class="sheet-head"><strong>Flow: Import</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="flow-config" id="flowImportConfig"><div class="inline-row"><input id="flowImportSearch" type="search" placeholder="Search tables"><button type="button" class="clear-choice" id="flowImportClearBtn">Clear</button></div><div id="flowImportTables" class="choices"></div><div id="flowImportHint" class="option-hint" hidden></div><div class="scheduler" data-scheduler="flowImport"></div></div></div></section>

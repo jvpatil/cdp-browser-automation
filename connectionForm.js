@@ -9,11 +9,27 @@
   // come from the selected connection profile/template.
   if (config.type === "Oracle Object Storage") {
     const d = document, f = config.fields || {}, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const ids = [["source-name-input|input", config.name], ["oos-path|input", f.path || ""], ["oos-storeEndpoint|input", f.endpoint || ""], ["oos-storeKey|input", f.key || ""], ["oos-storeSecret|input", f.secret || ""]];
+    const ids = [
+      ...(config.nameCommitted ? [] : [["source-name-input|input", config.name]]),
+      ["oos-path|input", f.path || ""], ["oos-storeEndpoint|input", f.endpoint || ""], ["oos-storeKey|input", f.key || ""], ["oos-storeSecret|input", f.secret || ""]
+    ];
     const missing = [];
     const set = (input, value) => { const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set; setter ? setter.call(input, value) : input.value = value; input.setAttribute("value", value); };
+    const commitJetValue = (input, value) => {
+      // `source-name-input` uses on-value-changed to call generateUniqueId.
+      // Writing only its native inner input bypasses that JET lifecycle.
+      const host = input.closest("oj-input-text, oj-text-area");
+      if (!host) return;
+      try {
+        host.rawValue = value;
+        host.value = value;
+      } catch (_) {
+        // The native input events below remain a compatibility fallback for
+        // controls that have not finished upgrading to an Oracle JET host.
+      }
+    };
     const fire = (input, type, options = {}) => { const EventType = /^(blur|focus|focusout|focusin)$/.test(type) ? FocusEvent : type === "input" && typeof InputEvent === "function" ? InputEvent : Event; input.dispatchEvent(new EventType(type, { bubbles:true, cancelable:true, composed:true, ...options })); };
-    const touch = (input, value) => { input.scrollIntoView({ block:"center" }); input.focus(); fire(input,"focus"); set(input,value); fire(input,"keydown",{key:"a",code:"KeyA",keyCode:65,which:65}); fire(input,"input",{inputType:"insertText",data:String(value).slice(-1)}); fire(input,"keyup",{key:"a",code:"KeyA",keyCode:65,which:65}); fire(input,"change"); input.blur(); fire(input,"focusout"); };
+    const touch = (input, value) => { input.scrollIntoView({ block:"center" }); input.focus(); fire(input,"focus"); set(input,value); fire(input,"input",{inputType:"insertText",data:String(value)}); commitJetValue(input,value); fire(input,"change"); input.blur(); fire(input,"focusout"); };
     const enabled = (button) => Boolean(button) && !button.disabled && button.getAttribute("aria-disabled") !== "true" && !button.closest("oj-button")?.classList.contains("oj-disabled");
     const realButton = (item) => item?.tagName?.toLowerCase() === "oj-button" ? item.querySelector("button") || item : item;
     const clickButton = (button) => { const target = realButton(button); target.scrollIntoView({ block:"center" }); target.focus(); target.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,cancelable:true,view:window,button:0})); target.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,cancelable:true,view:window,button:0})); target.click(); };
@@ -105,7 +121,38 @@
         if (compression && compression !== "none") await chooseDestinationCompression(compression);
       }
     };
-    ids.forEach(([id,value], index) => setTimeout(() => { const input = d.getElementById(id); if (!input) missing.push(id); else touch(input,value); if (index === ids.length - 1) { if (missing.length) throw new Error(`Missing OOS fields: ${missing.join(", ")}`); setTimeout(() => resolveDuplicateName().then(applyContract).then(waitSave).catch((error) => { alert(`Connection template automation failed: ${error.message || error}`); }),700); } }, 300 * index));
+    const waitForGeneratedId = async () => {
+      const id = () => d.getElementById(config.side === "destination" ? "destination-id-input|input" : "source-id-input|input");
+      const nameInput = d.getElementById("source-name-input|input");
+      // CDP derives the required ID asynchronously after it accepts Name.
+      // Do not treat an enabled Save as a substitute for this required state.
+      for (let tries = 0; tries < 40; tries += 1) {
+        if (String(id()?.value || "").trim()) return;
+        await sleep(150);
+      }
+      // A second focused commit handles the occasional JET render where the
+      // first input event lands during the form's post-type initialization.
+      if (nameInput) touch(nameInput, config.name);
+      for (let tries = 0; tries < 40; tries += 1) {
+        if (String(id()?.value || "").trim()) return;
+        await sleep(150);
+      }
+      if (nameInput?.getAttribute("aria-invalid") === "true") {
+        throw new Error("CDP rejected the connection name, so it did not generate a Source ID.");
+      }
+      throw new Error("CDP did not generate the required Source ID after entering the connection name.");
+    };
+    for (const [id, value] of ids) {
+      const input = d.getElementById(id);
+      if (!input) missing.push(id);
+      else touch(input, value);
+      await sleep(450);
+    }
+    if (missing.length) throw new Error(`Missing OOS fields: ${missing.join(", ")}`);
+    if (!config.nameCommitted) await resolveDuplicateName();
+    await waitForGeneratedId();
+    await applyContract();
+    await waitSave();
     return;
   }
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -119,9 +166,14 @@
     const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
     setter ? setter.call(element, value) : element.value = value;
-    element.dispatchEvent(new KeyboardEvent("keydown", { key:"a", code:"KeyA", keyCode:65, which:65, bubbles:true }));
-    element.dispatchEvent(new Event("input", { bubbles:true }));
-    element.dispatchEvent(new KeyboardEvent("keyup", { key:"a", code:"KeyA", keyCode:65, which:65, bubbles:true }));
+    element.dispatchEvent(new InputEvent("input", { bubbles:true, composed:true, inputType:"insertText", data:String(value) }));
+    const jetHost = element.closest("oj-input-text, oj-text-area");
+    if (jetHost) {
+      try {
+        jetHost.rawValue = value;
+        jetHost.value = value;
+      } catch (_) { /* Native events below remain the fallback. */ }
+    }
     element.dispatchEvent(new Event("change", { bubbles:true }));
     element.blur(); element.dispatchEvent(new FocusEvent("focusout", { bubbles:true }));
     await sleep(180);
@@ -228,8 +280,11 @@
     }
     throw new Error("Not available: connection name after opening the Create form.");
   };
-  const nameInput = await ensureConnectionForm(); await setValue(nameInput, config.name);
-  await resolveDuplicateName();
+  const nameInput = await ensureConnectionForm();
+  if (!config.nameCommitted) {
+    await setValue(nameInput, config.name);
+    await resolveDuplicateName();
+  }
   const authKeyPicker = () => {
     const textArea = document.getElementById("auth-key|input") || findField("authenticationKey");
     return textArea?.closest(".form-control")?.querySelector("oj-file-picker") || null;

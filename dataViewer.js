@@ -291,10 +291,11 @@
     click(discard);
   };
 
-  window.runCdpDataViewer = async ({ tables = [], recordsPerTable = 1, sourceId = "UI", saveRecords = false } = {}) => {
+  window.runCdpDataViewer = async ({ tables = [], recordsPerTable = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false } = {}) => {
     if (!Array.isArray(tables) || !tables.length || tables.some((table) => !table?.cdpTable)) throw new Error("At least one Data Viewer table is required.");
     if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
     const resolvedSourceId = String(sourceId || "").trim() || "UI";
+    const resolvedParentSourceCustomerId = String(parentSourceCustomerId || "").trim();
     const generatedObjectIds = {};
     const completed = [];
     // Keep a table selected while creating all of its records. This avoids
@@ -359,6 +360,7 @@
           let value;
           if (/^SourceID$/i.test(field)) value = resolvedSourceId;
           else if (normalize(field) === normalize(currentTableKey)) value = sourceObjectId;
+          else if (table.cdpTable === "ContactPoint" && /^SourceCustomerID$/i.test(field) && resolvedParentSourceCustomerId && !generatedObjectIds.Customer?.length) value = resolvedParentSourceCustomerId;
           else {
             const referencedTable = referencedTableFromKey(field).replace(/\s+/g, "");
             value = generatedObjectIds[referencedTable]?.[tableSequence - 1]

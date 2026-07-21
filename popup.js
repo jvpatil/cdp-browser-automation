@@ -15,7 +15,7 @@ const state = {
   // A Custom Flow includes Import by default. Keep Customer selected on a
   // first-use popup so its primary Run action is immediately actionable.
   // Users can still clear this selection or choose any catalog table.
-  importSettings: { customer: true }, exportPayloadName: "Customer", dataViewerSettings: { Customer: true }, dataViewerOptions: { recordsPerTable: "", sourceId: "", dryRun: false }, dataViewerOverrides: {}, templateId: "", connectionPurpose: "", templates: [], schedulers: {
+  importSettings: { customer: true }, exportPayloadName: "Customer", dataViewerSettings: { Customer: true, ContactPoint: true }, dataViewerOptions: { recordsPerTable: "", sourceId: "", parentSourceCustomerId: "", contactPointExplicitlyUnselected: false, dryRun: false }, dataViewerOverrides: {}, templateId: "", connectionPurpose: "", templates: [], schedulers: {
     responsys: { ...DEFAULT_SCHEDULER }, quickImport: { ...DEFAULT_SCHEDULER }, quickExport: { ...DEFAULT_SCHEDULER }, flowImport: { ...DEFAULT_SCHEDULER }, flowExport: { ...DEFAULT_SCHEDULER }
   }
 };
@@ -72,7 +72,7 @@ function dataViewerRunOptions() {
   if (rawCount && !/^[1-9]\d*$/.test(rawCount)) throw new Error("Records per table must be a positive whole number.");
   const recordsPerTable = rawCount ? Number(rawCount) : 1;
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
-  return { recordsPerTable, sourceId: state.dataViewerOptions.sourceId.trim() || "UI", saveRecords: !state.dataViewerOptions.dryRun, dataViewerOverrides: state.dataViewerOverrides };
+  return { recordsPerTable, sourceId: state.dataViewerOptions.sourceId.trim() || "UI", parentSourceCustomerId: state.dataViewerOptions.parentSourceCustomerId.trim(), saveRecords: !state.dataViewerOptions.dryRun, dataViewerOverrides: state.dataViewerOverrides };
 }
 function importSummary() { const selected = selectedTables(); return !selected.length ? "Select tables" : `${selected[0].label}${selected.length > 1 ? ` +${selected.length - 1}` : ""}`; }
 function selectedTableSummary() { const names = selectedTables().map((table) => table.label); return !names.length ? "No tables" : `${names[0]}${names.length > 1 ? ` +${names.length - 1}` : ""}`; }
@@ -205,7 +205,18 @@ function renderDataViewerChoices() {
   const choice = (table) => {
     const label = document.createElement("label"); label.className = "choice";
     const input = document.createElement("input"); input.type = "checkbox"; input.checked = Boolean(state.dataViewerSettings[table.id]);
-    input.addEventListener("change", () => { state.dataViewerSettings[table.id] = input.checked; persistDraft(); renderDataViewerChoices(); });
+    input.addEventListener("change", () => {
+      state.dataViewerSettings[table.id] = input.checked;
+      // A Customer record is normally consumed through its ContactPoint, so
+      // select that companion table for a new Customer run. ContactPoint can
+      // still be unchecked afterwards for a Customer-only run.
+      if (table.id === "Customer" && input.checked) {
+        state.dataViewerSettings.ContactPoint = true;
+        state.dataViewerOptions.contactPointExplicitlyUnselected = false;
+      }
+      if (table.id === "ContactPoint" && !input.checked && state.dataViewerSettings.Customer) state.dataViewerOptions.contactPointExplicitlyUnselected = true;
+      persistDraft(); renderDataViewerChoices();
+    });
     const name = document.createElement("span"); name.className = "data-viewer-choice-name"; name.textContent = table.label;
     const edit = document.createElement("button"); edit.type = "button"; edit.className = "data-viewer-edit"; edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.5V20h3.5L18.4 9.1l-3.5-3.5L4 16.5Zm12.7-12.7 3.5 3.5 1.1-1.1a1.25 1.25 0 0 0 0-1.8l-1.7-1.7a1.25 1.25 0 0 0-1.8 0l-1.1 1.1Z"/></svg>'; edit.title = `Edit ${table.label} values`; edit.setAttribute("aria-label", `Edit ${table.label} record values`);
     edit.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openDataViewerEditor(table.id); });
@@ -219,6 +230,8 @@ function renderDataViewerChoices() {
   renderOptionHint("flowDataViewerHint", DATA_VIEWER_TABLES.length, flowTables, flowFilter);
   document.getElementById("dataViewerValue").textContent = dataViewerSummary();
   document.getElementById("flowDataViewerValue").textContent = dataViewerSummary();
+  const parentSourceCustomerLabel = document.getElementById("dataViewerParentCustomerLabel");
+  parentSourceCustomerLabel.hidden = !(state.dataViewerSettings.ContactPoint && !state.dataViewerSettings.Customer);
 }
 function payloadChoice(name, scope) {
   const label = document.createElement("label"); label.className = "choice";
@@ -290,6 +303,7 @@ document.querySelectorAll("[data-close-sheet]").forEach((button) => button.addEv
 document.getElementById("quickImportSearch").addEventListener("input", renderTableChoices); document.getElementById("quickExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("flowImportSearch").addEventListener("input", renderTableChoices); document.getElementById("flowExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("dataViewerSearch").addEventListener("input", renderDataViewerChoices); document.getElementById("flowDataViewerSearch").addEventListener("input", renderDataViewerChoices);
 document.getElementById("dataViewerRecordsPerTable").addEventListener("input", (event) => { state.dataViewerOptions.recordsPerTable = event.target.value; persistDraft(); renderDataViewerChoices(); });
 document.getElementById("dataViewerSourceId").addEventListener("input", (event) => { state.dataViewerOptions.sourceId = event.target.value; persistDraft(); });
+document.getElementById("dataViewerParentCustomerId").addEventListener("input", (event) => { state.dataViewerOptions.parentSourceCustomerId = event.target.value; persistDraft(); });
 document.getElementById("dataViewerDryRun").addEventListener("change", (event) => { state.dataViewerOptions.dryRun = event.target.checked; document.getElementById("runDataViewerBtn").textContent = event.target.checked ? "▶ Test Data Viewer Record" : "▶ Save Data Viewer Record"; persistDraft(); });
 document.getElementById("dataViewerEditorBack").addEventListener("click", closeDataViewerEditor);
 document.getElementById("dataViewerAddValue").addEventListener("click", () => { dataViewerEditorDraft?.values.push({ field: "", value: "" }); renderDataViewerEditor(); });
@@ -303,7 +317,7 @@ document.getElementById("dataViewerApplyEditor").addEventListener("click", () =>
   persistDraft(); closeDataViewerEditor();
 });
 function clearImportSelection() { state.importSettings = {}; persistDraft(); renderAll(); }
-function clearDataViewerSelection() { state.dataViewerSettings = {}; persistDraft(); renderAll(); }
+function clearDataViewerSelection() { state.dataViewerSettings = {}; state.dataViewerOptions.contactPointExplicitlyUnselected = false; persistDraft(); renderAll(); }
 document.getElementById("clearImportBtn").addEventListener("click", clearImportSelection);
 document.getElementById("flowImportClearBtn").addEventListener("click", clearImportSelection);
 document.getElementById("dataViewerClearBtn").addEventListener("click", clearDataViewerSelection);
@@ -315,7 +329,7 @@ async function initialize() {
     const { flowDraft, e2eStatus, lastRun, runHistory, popupView, lastConnectionPurpose } = await chrome.storage.local.get({ flowDraft: null, e2eStatus: "", lastRun: null, runHistory: [], popupView: "run", lastConnectionPurpose: "" });
     state.connectionPurpose = flowDraft?.connectionPurpose ?? lastConnectionPurpose;
     connectionPurposeInput.value = state.connectionPurpose;
-    if (flowDraft) { state.importSettings = flowDraft.importSettings || {}; state.exportPayloadName = EXPORT_PAYLOAD_OPTIONS.includes(flowDraft.exportPayloadName) ? flowDraft.exportPayloadName : "Customer"; state.dataViewerSettings = flowDraft.dataViewerSettings || { Customer: true }; state.dataViewerOptions = { ...state.dataViewerOptions, ...(flowDraft.dataViewerOptions || {}) }; state.dataViewerOverrides = flowDraft.dataViewerOverrides || {}; if (state.dataViewerSettings.customer && !state.dataViewerSettings.Customer) { state.dataViewerSettings.Customer = true; delete state.dataViewerSettings.customer; } state.schedulers = { ...state.schedulers, ...(flowDraft.schedulers || {}) }; if (Array.isArray(flowDraft.flowSteps)) DEFAULT_FLOW.forEach((step) => { document.getElementById(`flow-${step}`).checked = flowDraft.flowSteps.includes(step); }); }
+    if (flowDraft) { state.importSettings = flowDraft.importSettings || {}; state.exportPayloadName = EXPORT_PAYLOAD_OPTIONS.includes(flowDraft.exportPayloadName) ? flowDraft.exportPayloadName : "Customer"; state.dataViewerSettings = flowDraft.dataViewerSettings || { Customer: true, ContactPoint: true }; state.dataViewerOptions = { ...state.dataViewerOptions, ...(flowDraft.dataViewerOptions || {}) }; state.dataViewerOverrides = flowDraft.dataViewerOverrides || {}; if (state.dataViewerSettings.customer && !state.dataViewerSettings.Customer) { state.dataViewerSettings.Customer = true; delete state.dataViewerSettings.customer; } if (state.dataViewerSettings.Customer && !state.dataViewerSettings.ContactPoint && !state.dataViewerOptions.contactPointExplicitlyUnselected) state.dataViewerSettings.ContactPoint = true; state.schedulers = { ...state.schedulers, ...(flowDraft.schedulers || {}) }; if (Array.isArray(flowDraft.flowSteps)) DEFAULT_FLOW.forEach((step) => { document.getElementById(`flow-${step}`).checked = flowDraft.flowSteps.includes(step); }); }
     // Drafts saved before the Custom Flow picker had a first-use selection
     // contain an empty import map. Migrate those drafts so the default flow
     // can be launched rather than presenting a permanently disabled button.
@@ -323,9 +337,10 @@ async function initialize() {
     // The same first-use default applies to the independent Data Viewer step.
     // Older drafts did not contain its selection state, which made the Custom
     // Flow handler stop before it sent the automation message.
-    if (!flowDraft?.dataViewerSettings && document.getElementById("flow-dataViewer").checked && !selectedDataViewerTables().length) state.dataViewerSettings = { Customer: true };
+    if (!flowDraft?.dataViewerSettings && document.getElementById("flow-dataViewer").checked && !selectedDataViewerTables().length) state.dataViewerSettings = { Customer: true, ContactPoint: true };
     document.getElementById("dataViewerRecordsPerTable").value = state.dataViewerOptions.recordsPerTable;
     document.getElementById("dataViewerSourceId").value = state.dataViewerOptions.sourceId;
+    document.getElementById("dataViewerParentCustomerId").value = state.dataViewerOptions.parentSourceCustomerId;
     document.getElementById("dataViewerDryRun").checked = state.dataViewerOptions.dryRun;
     document.getElementById("runDataViewerBtn").textContent = state.dataViewerOptions.dryRun ? "▶ Test Data Viewer Record" : "▶ Save Data Viewer Record";
     await chrome.storage.local.remove("popupAccordionState");

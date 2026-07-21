@@ -511,6 +511,85 @@ async function prepareConnectionForm(tabId, { createLabel, typeDropdownId, formI
   });
 }
 
+async function connectionNameState(tabId, side) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [side],
+    func: (connectionSide) => {
+      const input = document.getElementById("source-name-input|input");
+      const host = document.getElementById("source-name-input");
+      const id = document.getElementById(connectionSide === "destination" ? "destination-id-input|input" : "source-id-input|input");
+      const messages = [...document.querySelectorAll("[role=alert], [role=tooltip], .oj-message, .oj-message-detail, .oj-messages, .oj-popup-content")]
+        .filter((element) => element.getClientRects().length)
+        .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .join(" ");
+      return { name: input?.value || "", jetValue: host?.value || "", invalid: input?.getAttribute("aria-invalid") === "true", id: id?.value || "", messages };
+    }
+  });
+  return result || {};
+}
+
+async function typeJetConnectionName(tabId, value) {
+  await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN",
+    func: () => {
+      const input = document.getElementById("source-name-input|input");
+      if (!input || input.disabled || input.readOnly) throw new Error("Connection Name input is unavailable.");
+      input.scrollIntoView({ block: "center" });
+      input.focus();
+      input.select();
+    }
+  });
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    // Oracle JET's generated-ID listener requires keyboard transition events,
+    // not only the trusted `input` event emitted by Input.insertText.
+    for (const character of String(value)) {
+      const upper = character.toUpperCase();
+      const isLetter = /^[A-Z]$/.test(upper);
+      const isDigit = /^\d$/.test(character);
+      const isUnderscore = character === "_";
+      const code = isLetter ? `Key${upper}` : isDigit ? `Digit${character}` : isUnderscore ? "Minus" : "Unidentified";
+      const keyCode = isLetter ? upper.charCodeAt(0) : isDigit ? character.charCodeAt(0) : isUnderscore ? 189 : 0;
+      const modifiers = isUnderscore ? 8 : 0; // Shift for `_` on the Minus key.
+      const event = { key: character, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers };
+      await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...event });
+      await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "char", ...event, text: character, unmodifiedText: character });
+      await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...event });
+    }
+    // Oracle JET commits this particular field on focus traversal. A synthetic
+    // blur is not equivalent; a real Tab key causes valueChanged and runs the
+    // form's generateUniqueId handler.
+    const tabEvent = { key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: 0 };
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...tabEvent });
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...tabEvent });
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => undefined);
+  }
+}
+
+async function commitJetConnectionName(tabId, connectionConfig) {
+  const baseName = String(connectionConfig.name || "").replace(/_\d{2}$/, "");
+  for (let index = 1; index <= 99; index += 1) {
+    const candidate = index === 1 ? baseName : `${baseName}_${String(index).padStart(2, "0")}`;
+    await typeJetConnectionName(tabId, candidate);
+    for (let attempt = 0; attempt < 28; attempt += 1) {
+      const state = await connectionNameState(tabId, connectionConfig.side);
+      if (String(state.id || "").trim()) return { ...connectionConfig, name: candidate, nameCommitted: true };
+      const duplicate = state.invalid && /(?:source|destination|connection)?\s*(?:with\s+this\s+)?name\s+already\s+exists|name\s+must\s+be\s+unique|try\s+another/i.test(state.messages || "");
+      if (duplicate) break;
+      await new Promise((resolve) => setTimeout(resolve, 180));
+    }
+    const finalState = await connectionNameState(tabId, connectionConfig.side);
+    const duplicate = finalState.invalid && /(?:source|destination|connection)?\s*(?:with\s+this\s+)?name\s+already\s+exists|name\s+must\s+be\s+unique|try\s+another/i.test(finalState.messages || "");
+    if (!duplicate) throw new Error(`CDP did not generate the required ${connectionConfig.side === "destination" ? "Destination" : "Source"} ID after typing the connection name.`);
+  }
+  throw new Error(`No available connection name suffix was found for ${baseName}.`);
+}
+
 async function installStepMonitor(tabId, { runId, stepId, saveSelector }) {
   await chrome.scripting.executeScript({
     target: { tabId },
@@ -647,8 +726,10 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
 
   await navigateAndWait(tabId, navigationUrl(tab.url, task.path, task.root));
   await activatePageAutomationRun(tabId, monitor?.runId || schedule?.runId || "");
+  let runtimeConnectionConfig = connectionConfig;
   if (task.createLabel) {
     await prepareConnectionForm(tabId, task, connectionConfig?.type);
+    if (connectionConfig?.name) runtimeConnectionConfig = await commitJetConnectionName(tabId, connectionConfig);
   }
   if (task.readySelector) await waitForPageElement(tabId, task.readySelector);
 
@@ -691,9 +772,9 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
       await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["scheduleOverride.js"] });
     }
 
-    if (connectionConfig) {
+    if (runtimeConnectionConfig) {
       await chrome.scripting.executeScript({
-        target: { tabId }, world: "MAIN", args: [connectionConfig],
+        target: { tabId }, world: "MAIN", args: [runtimeConnectionConfig],
         func: (config) => { window.__cdpConnectionConfig = config; }
       });
     }
@@ -906,8 +987,10 @@ async function runDataViewerStep(tabId, flow, runId) {
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
   const sourceId = String(flow.sourceId || "").trim() || "UI";
   const [catalog, recordConfig] = await Promise.all([loadTableCatalog(), loadDataViewerRecordConfig()]);
-  const tables = [...new Set(flow.dataViewerTableIds || ["Customer"])].map((tableName) => catalog.dataViewerTables.includes(tableName)
-    ? { id: tableName, label: tableName, cdpTable: tableName, recordConfig: dataViewerRecordConfigFor(tableName, recordConfig, flow.dataViewerOverrides) }
+  const tableIds = [...new Set(flow.dataViewerTableIds || ["Customer"])];
+  const inheritCustomerValues = tableIds.includes("Customer") && tableIds.includes("ContactPoint");
+  const tables = tableIds.map((tableName) => catalog.dataViewerTables.includes(tableName)
+    ? { id: tableName, label: tableName, cdpTable: tableName, recordConfig: dataViewerRecordConfigFor(tableName, recordConfig, flow.dataViewerOverrides, inheritCustomerValues) }
     : null);
   if (!tables.length || tables.some((table) => !table)) throw new Error("Select valid Data Viewer tables.");
   const tab = await chrome.tabs.get(tabId);
@@ -1134,23 +1217,28 @@ async function runPublishAll(tabId) {
   }
 }
 
-function dataViewerRecordConfigFor(tableName, defaults, overrides) {
+function dataViewerRecordConfigFor(tableName, defaults, overrides, inheritCustomerValues = false) {
   const base = defaults.tables?.[tableName] || {};
   const override = overrides && typeof overrides === "object" ? overrides[tableName] : null;
+  const customerValues = inheritCustomerValues && tableName === "ContactPoint"
+    ? { ...(defaults.tables?.Customer?.values || {}), ...(overrides?.Customer?.values || {}) }
+    : {};
   return {
     ...base,
-    values: { ...(base.values || {}), ...(override?.values || {}) },
+    values: { ...(base.values || {}), ...customerValues, ...(override?.values || {}) },
     relationships: { ...(base.relationships || {}), ...(override?.relationships || {}) }
   };
 }
 
-async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = "UI", saveRecords = false, dataViewerOverrides = {} } = {}) {
+async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false, dataViewerOverrides = {} } = {}) {
   if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
   const resolvedSourceId = String(sourceId || "").trim() || "UI";
   const [catalog, recordConfig] = await Promise.all([loadTableCatalog(), loadDataViewerRecordConfig()]);
-  const tables = [...new Set(tableIds || [])].map((tableName) => catalog.dataViewerTables.includes(tableName)
-    ? { id: tableName, label: tableName, cdpTable: tableName, recordConfig: dataViewerRecordConfigFor(tableName, recordConfig, dataViewerOverrides) }
+  const selectedTableIds = [...new Set(tableIds || [])];
+  const inheritCustomerValues = selectedTableIds.includes("Customer") && selectedTableIds.includes("ContactPoint");
+  const tables = selectedTableIds.map((tableName) => catalog.dataViewerTables.includes(tableName)
+    ? { id: tableName, label: tableName, cdpTable: tableName, recordConfig: dataViewerRecordConfigFor(tableName, recordConfig, dataViewerOverrides, inheritCustomerValues) }
     : null);
   if (!tables.length || tables.some((table) => !table)) throw new Error("Select valid tables from config/tables.json.");
   const runId = crypto.randomUUID();
@@ -1167,7 +1255,7 @@ async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = 
     await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
-      args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, recordConfig: table.recordConfig })), { recordsPerTable, sourceId: resolvedSourceId, saveRecords: Boolean(saveRecords) }],
+      args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, recordConfig: table.recordConfig })), { recordsPerTable, sourceId: resolvedSourceId, parentSourceCustomerId: String(parentSourceCustomerId || "").trim(), saveRecords: Boolean(saveRecords) }],
       func: async (dataViewerTables, options) => {
         if (typeof window.runCdpDataViewer !== "function") throw new Error("Data Viewer automation did not load.");
         return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
@@ -1250,17 +1338,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = message.tabId ?? sender.tab?.id;
   const activeSequence = activeSequences.get(tabId);
   if (activeSequence) activeSequence.cancelled = true;
-  const cancelPublish = activeSequence
-    ? chrome.scripting.executeScript({
-      target: { tabId },
-      world: "MAIN",
-      func: () => {
-        window.__cdpPublishCancelled = true;
-        window.__cdpAutomationStopped = true;
-        document.documentElement.dataset.cdpAutomationRunId = "";
-      }
-    }).catch(() => undefined)
-    : Promise.resolve();
   if (activeSequence && activeSequences.get(tabId)?.runId === activeSequence.runId) {
     activeSequences.delete(tabId);
   }
@@ -1269,10 +1346,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // the CDP SPA, and those stale scripts can leave the form unusable. Reload
   // the current route after Stop so the old automation is actually terminated
   // and the user can immediately start another run without a manual refresh.
-  Promise.all([setE2EStatus("", tabId), cancelPublish])
+  // Start reloading first. A long-running MAIN-world automation can prevent a
+  // follow-up executeScript from being scheduled, which used to leave Stop
+  // waiting indefinitely on the disabled form.
+  const reload = chrome.tabs.reload(tabId).catch(() => undefined);
+  Promise.all([setE2EStatus("", tabId), reload])
     .then(() => finalizeRunHistory("stopped"))
     .then(clearFlowDraft)
-    .then(() => chrome.tabs.reload(tabId).catch(() => undefined))
     .finally(() => sendResponse({ ok: true, stopped: Boolean(activeSequence) }));
   return true;
 });
@@ -1309,7 +1389,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "run-data-viewer") {
-    runDataViewer(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, sourceId: message.sourceId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
+    runDataViewer(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, sourceId: message.sourceId, parentSourceCustomerId: message.parentSourceCustomerId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
       .then(() => sendResponse({ ok: true }))
       .catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
     return true;
