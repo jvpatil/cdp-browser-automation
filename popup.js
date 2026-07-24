@@ -8,6 +8,9 @@ let catalogReady = false;
 let activeView = "run";
 let attributeEditorForCreationGroup = "";
 let dataModelConfigurationContext = "standalone";
+// A Flow Configure action is an explicit choice to include that step.  Keep
+// the pending step while its sheet is open and select it only on Save & Return.
+let pendingFlowConfigurationStep = "";
 const QUICK_VISIBLE_LIMIT = 6;
 const DEFAULT_FLOW = ["dataModel", "dataModelAttributes", "dataViewer", "source", "destination", "export", "import", "publish", "verify"];
 const LEGACY_SCHEDULER = { schedulerUi: "legacy", mode: "scheduled", frequency: "Daily", startTime: "immediate" };
@@ -15,6 +18,7 @@ function newSchedulerDefaults(kind = "import") {
   const isExport = /export/i.test(kind);
   return {
     schedulerUi: "new",
+    mode: "scheduled",
     frequency: "Daily",
     timeMode: "specific",
     specificPreset: isExport ? "in15" : "in30",
@@ -38,6 +42,105 @@ const state = {
     responsys: defaultScheduler("responsys"), quickImport: defaultScheduler("quickImport"), quickExport: defaultScheduler("quickExport"), flowImport: defaultScheduler("flowImport"), flowExport: defaultScheduler("flowExport")
   }
 };
+let jobPresets = [];
+let flowPresets = [];
+
+function cloneConfig(value) { return JSON.parse(JSON.stringify(value)); }
+function jobPresetConfig(kind) {
+  const common = { templateId: state.templateId, purpose: state.connectionPurpose.trim() };
+  if (kind === "responsys") return { ...common, kind, schedule: cloneConfig(schedulerConfig("responsys")) };
+  if (kind === "import") return { ...common, kind, tableIds: selectedTableIds(), schedule: cloneConfig(schedulerConfig("quickImport")) };
+  return { ...common, kind: "export", payloadName: state.exportPayloadName, schedule: cloneConfig(schedulerConfig("quickExport")) };
+}
+function flowPresetConfig() {
+  return {
+    templateId: state.templateId,
+    purpose: state.connectionPurpose.trim(),
+    steps: selectedFlowSteps(),
+    importTableIds: selectedTableIds(),
+    exportPayloadName: state.exportPayloadName,
+    exportSchedule: cloneConfig(schedulerConfig("flowExport")),
+    importSchedule: cloneConfig(schedulerConfig("flowImport")),
+    staggerJobs: flowHasBothJobs(),
+    dataViewerTableIds: selectedDataViewerTables().map((table) => table.id),
+    dataModelGroups: selectedDataModelGroups(),
+    dataModelAttributeGroups: selectedDataModelAttributeGroups(),
+    dataModelParents: cloneConfig(state.dataModelParents),
+    dataModelAttributeGroup: state.dataModelAttributeGroup,
+    dataModelAttributeObjectName: state.dataModelAttributeObjectName.trim(),
+    dataModelColumnOverrides: cloneConfig(state.dataModelAttributeColumns),
+    saveDataModelObjects: !state.dataModelOptions.dryRun
+  };
+}
+function applyPresetConfig(config) {
+  if (!config) return;
+  if (state.templates.some((template) => template.id === config.templateId)) state.templateId = config.templateId;
+  state.connectionPurpose = config.purpose || "";
+  connectionPurposeInput.value = state.connectionPurpose;
+  if (config.kind === "responsys") state.schedulers.responsys = normalizeScheduler("responsys", config.schedule);
+  if (config.kind === "import") {
+    state.importSettings = Object.fromEntries((config.tableIds || []).map((id) => [id, true]));
+    state.schedulers.quickImport = normalizeScheduler("quickImport", config.schedule);
+  }
+  if (config.kind === "export") {
+    if (EXPORT_PAYLOAD_OPTIONS.includes(config.payloadName)) state.exportPayloadName = config.payloadName;
+    state.schedulers.quickExport = normalizeScheduler("quickExport", config.schedule);
+  }
+  if (!config.kind && Array.isArray(config.steps)) {
+    DEFAULT_FLOW.forEach((step) => { document.getElementById(`flow-${step}`).checked = config.steps.includes(step); });
+    state.importSettings = Object.fromEntries((config.importTableIds || []).map((id) => [id, true]));
+    if (EXPORT_PAYLOAD_OPTIONS.includes(config.exportPayloadName)) state.exportPayloadName = config.exportPayloadName;
+    state.schedulers.flowExport = normalizeScheduler("flowExport", config.exportSchedule);
+    state.schedulers.flowImport = normalizeScheduler("flowImport", config.importSchedule);
+    state.dataViewerSettings = Object.fromEntries((config.dataViewerTableIds || []).map((id) => [id, true]));
+    state.dataModelSettings = Object.fromEntries((config.dataModelGroups || []).map((group) => [group, true]));
+    state.dataModelAttributeEnabled = Object.fromEntries((config.dataModelAttributeGroups || []).map((group) => [group, true]));
+    state.dataModelParents = config.dataModelParents || state.dataModelParents;
+    state.dataModelAttributeGroup = DATA_MODEL_GROUPS.includes(config.dataModelAttributeGroup) ? config.dataModelAttributeGroup : state.dataModelAttributeGroup;
+    state.dataModelAttributeObjectName = config.dataModelAttributeObjectName || "";
+    state.dataModelAttributeColumns = config.dataModelColumnOverrides || {};
+  }
+  renderTemplates(); renderAll(); persistDraft();
+}
+async function persistPresets() { await chrome.storage.local.set({ jobPresets, flowPresets }); }
+async function loadPresets() {
+  const stored = await chrome.storage.local.get({ jobPresets: [], flowPresets: [] });
+  jobPresets = Array.isArray(stored.jobPresets) ? stored.jobPresets : [];
+  flowPresets = Array.isArray(stored.flowPresets) ? stored.flowPresets : [];
+}
+function renderPresetRows() {
+  document.querySelectorAll("[data-preset-row]").forEach((row) => {
+    const kind = row.dataset.presetRow;
+    const list = kind === "flow" ? flowPresets : jobPresets.filter((preset) => preset?.config?.kind === kind);
+    const select = document.createElement("select");
+    select.append(new Option("Load preset…", ""), ...list.map((preset) => new Option(preset.name, preset.id)));
+    const name = document.createElement("input"); name.type = "text"; name.placeholder = "Preset name";
+    const save = document.createElement("button"); save.type = "button"; save.textContent = "Save";
+    const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Delete";
+    select.addEventListener("change", () => {
+      const preset = list.find((item) => item.id === select.value);
+      if (preset) applyPresetConfig(preset.config);
+    });
+    save.addEventListener("click", async () => {
+      const presetName = name.value.trim();
+      if (!presetName) return setStatus("Enter a preset name before saving.");
+      const config = kind === "flow" ? flowPresetConfig() : jobPresetConfig(kind);
+      const collection = kind === "flow" ? flowPresets : jobPresets;
+      const existing = collection.find((item) => item.name.toLowerCase() === presetName.toLowerCase() && (kind === "flow" || item?.config?.kind === kind));
+      const preset = { id: existing?.id || crypto.randomUUID(), name: presetName, savedAt: Date.now(), config };
+      if (existing) Object.assign(existing, preset); else collection.unshift(preset);
+      if (kind === "flow") flowPresets = collection.slice(0, 20); else jobPresets = collection.slice(0, 40);
+      await persistPresets(); renderPresetRows(); setStatus(`Saved preset: ${presetName}`);
+    });
+    remove.addEventListener("click", async () => {
+      if (!select.value) return setStatus("Choose a preset to delete.");
+      if (kind === "flow") flowPresets = flowPresets.filter((item) => item.id !== select.value);
+      else jobPresets = jobPresets.filter((item) => item.id !== select.value);
+      await persistPresets(); renderPresetRows();
+    });
+    row.replaceChildren(select, name, save, remove);
+  });
+}
 const statusEl = document.getElementById("status");
 const statusDot = document.getElementById("statusDot");
 const stopButton = document.getElementById("stopE2EBtn");
@@ -152,21 +255,33 @@ function importSummary() { const selected = selectedTables(); return !selected.l
 function selectedTableSummary() { const names = selectedTables().map((table) => table.label); return !names.length ? "No tables" : `${names[0]}${names.length > 1 ? ` +${names.length - 1}` : ""}`; }
 function scheduleSummary(config) {
   if (config.schedulerUi === "new") {
+    if (config.mode === "onDemand") return "New / On-demand";
     const timing = config.timeMode === "interval" ? `Interval / ${config.intervalHours || 1}h` : `Specific / ${specificPresetLabel(config.specificPreset)}`;
     return `New / ${config.frequency} / ${timing}`;
   }
   return config.mode === "onDemand" ? "Legacy / On-demand" : `Legacy / ${config.frequency} / ${config.startTime === "plusOneHour" ? "+1 Hour" : "Immediate"}`;
 }
+function snapshotSummary(snapshot) {
+  if (!snapshot) return "";
+  const jobs = (snapshot.jobs || []).map((job) => {
+    const selection = job.kind === "export" ? job.payloadName : (job.tableIds || []).join(", ");
+    return [job.name, selection, job.scheduler ? scheduleSummary(job.scheduler) : ""].filter(Boolean).join(" · ");
+  });
+  const template = snapshot.template?.name || snapshot.templateId || "";
+  const connections = Object.entries(snapshot.connections || {}).map(([kind, name]) => `${kind}: ${name}`);
+  return [snapshot.origin, template ? `Template: ${template}` : "", snapshot.purpose ? `Purpose: ${snapshot.purpose}` : "", ...connections, ...jobs].filter(Boolean).join(" · ");
+}
 function renderRunHistory(history = []) {
   const entries = Array.isArray(history) ? history.slice(0, 5) : [];
   if (!entries.length) { runHistoryEl.textContent = "No completed runs yet."; renderActivityLogs(); return; }
   runHistoryEl.replaceChildren(...entries.map((entry) => {
-    const item = document.createElement("div"); item.className = "history-item"; item.title = entry.details || entry.detail || entry.summary || "";
+    const audit = snapshotSummary(entry.snapshot);
+    const item = document.createElement("div"); item.className = "history-item"; item.title = [entry.details || entry.detail || entry.summary || "", audit].filter(Boolean).join("\n");
     const top = document.createElement("div"); top.className = "history-top";
     const summary = document.createElement("span"); summary.textContent = entry.summary || "Automation run";
     const outcomeValue = entry.outcome || "completed";
     const outcome = document.createElement("span"); outcome.className = `outcome ${outcomeValue}`; outcome.textContent = outcomeValue.charAt(0).toUpperCase() + outcomeValue.slice(1);
-    const detail = document.createElement("div"); detail.className = "detail"; detail.textContent = `${new Date(entry.finishedAt || entry.startedAt || Date.now()).toLocaleString()} · ${entry.detail || entry.details || ""}`;
+    const detail = document.createElement("div"); detail.className = "detail"; detail.textContent = `${new Date(entry.finishedAt || entry.startedAt || Date.now()).toLocaleString()} · ${entry.detail || entry.details || ""}${audit ? ` · ${audit}` : ""}`;
     const logButton = document.createElement("button"); logButton.type = "button"; logButton.className = "history-log-toggle"; logButton.textContent = "View log";
     logButton.addEventListener("click", () => { selectedLogRun = entry; showActivitySection("logs"); });
     top.append(summary, outcome); item.append(top, detail, logButton); return item;
@@ -289,6 +404,10 @@ function renderSchedulers() {
       container.append(advanced);
       return;
     }
+    if (schedulerKind(key) === "import") {
+      container.append(schedulerRow("Run", [{ value: "onDemand", label: "On-demand" }, { value: "scheduled", label: "Recurring" }], config.mode || "scheduled", (mode) => { config.mode = mode; persistDraft(); renderAll(); }));
+      if (config.mode === "onDemand") return;
+    }
     const newSchedule = document.createElement("div"); newSchedule.className = "scheduler-advanced";
     const frequency = document.createElement("label"); frequency.className = "scheduler-select-row"; frequency.textContent = "Frequency";
     const select = document.createElement("select");
@@ -371,6 +490,14 @@ function closeDataViewerEditor() {
   dataViewerEditorDraft = null;
   document.getElementById("dataViewerEditor").hidden = true;
   document.getElementById("dataViewerMain").hidden = false;
+}
+function saveDataViewerEditor() {
+  if (!dataViewerEditorDraft) return;
+  const values = Object.fromEntries(dataViewerEditorDraft.values.filter((row) => row.field.trim()).map((row) => [row.field.trim(), { value: row.value }]));
+  const relationships = Object.fromEntries(dataViewerEditorDraft.relationships.filter((row) => row.field.trim() && row.table.trim()).map((row) => [row.field.trim(), row.table.trim()]));
+  state.dataViewerOverrides[dataViewerEditorDraft.tableName] = { values, relationships };
+  persistDraft();
+  closeDataViewerEditor();
 }
 function renderDataViewerChoices() {
   const filter = document.getElementById("dataViewerSearch").value.trim().toLowerCase();
@@ -559,6 +686,13 @@ function renderFlow() {
   document.getElementById("flowHint").textContent = legacyStagger ? "Legacy start times are locked: Export next hour, Import one hour later." : "Steps always run in dependency-safe order.";
   const run = document.getElementById("runCustomFlowBtn"); run.textContent = `▶ Run ${steps.length}-step flow`; run.disabled = !steps.length || (steps.includes("import") && !selectedTableIds().length) || (steps.includes("dataModel") && !selectedDataModelGroups().length);
 }
+function commitFlowConfiguration() {
+  if (!pendingFlowConfigurationStep) return;
+  const checkbox = document.getElementById(`flow-${pendingFlowConfigurationStep}`);
+  if (checkbox && !checkbox.disabled) checkbox.checked = true;
+  pendingFlowConfigurationStep = "";
+  renderFlow();
+}
 function renderAll() { renderTableChoices(); renderPayloadChoices(); renderDataViewerChoices(); renderDataModelChoices(); renderDataModelAttributeChoices(); renderFlow(); renderSchedulers(); }
 async function persistDraft() { await chrome.storage.local.set({ flowDraft: { importSettings: state.importSettings, exportPayloadName: state.exportPayloadName, dataViewerSettings: state.dataViewerSettings, dataViewerOptions: state.dataViewerOptions, dataViewerOverrides: state.dataViewerOverrides, dataModelSettings: state.dataModelSettings, dataModelOptions: state.dataModelOptions, dataModelAttributeEnabled: state.dataModelAttributeEnabled, dataModelParents: state.dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeObjectName: state.dataModelAttributeObjectName, dataModelAttributeColumns: state.dataModelAttributeColumns, connectionPurpose: state.connectionPurpose, schedulers: state.schedulers, flowSteps: selectedFlowSteps() } }); }
 function setStatus(status) { const running = /^Running:/.test(status || ""); statusEl.textContent = status || "No automation running"; statusDot.classList.toggle("idle", !running); stopButton.hidden = !running; }
@@ -598,7 +732,7 @@ document.getElementById("runResponsysBtn").addEventListener("click", () => { con
 document.getElementById("runQuickImportBtn").addEventListener("click", () => { if (!catalogReady) return setStatus("Table catalog is still loading."); const tableIds = selectedTableIds(); if (!tableIds.length) return setStatus("Select at least one import table."); const schedule = schedulerConfig("quickImport"); const tables = selectedTableSummary(); send({ type: "run-import-job", tableIds, schedule }, "Import Job", { summary: `Import — ${tables} — ${scheduleSummary(schedule)}`, details: `Import — ${selectedTables().map((table) => table.label).join(", ")} — ${scheduleSummary(schedule)}` }); });
 document.getElementById("runQuickExportBtn").addEventListener("click", () => { if (!catalogReady) return setStatus("Table catalog is still loading."); const schedule = schedulerConfig("quickExport"); send({ type: "run-task", filename: "exportJob.js", schedule, exportPayloadName: state.exportPayloadName }, "Export Job", { summary: `Export — ${state.exportPayloadName} — ${scheduleSummary(schedule)}`, details: `Export — ${state.exportPayloadName} — ${scheduleSummary(schedule)}` }); });
 document.getElementById("runDataViewerBtn").addEventListener("click", () => { try { if (!catalogReady) return setStatus("Table catalog is still loading."); const tables = selectedDataViewerTables(); if (!tables.length) return setStatus("Select at least one table."); const options = dataViewerRunOptions(); const mode = options.saveRecords ? "Save records" : "Dry run"; send({ type: "run-data-viewer", tableIds: tables.map((table) => table.id), ...options }, "Data Viewer Records", { summary: `Data Viewer — ${dataViewerSummary()}`, details: `Data Viewer ${mode.toLowerCase()}: ${tables.map((table) => table.label).join(", ")} · ${options.recordsPerTable} per table · Source ID: ${options.sourceId}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
-document.getElementById("runDataModelBtn").addEventListener("click", () => { try { const groups = selectedDataModelGroups(); if (!groups.length) return setStatus("Select at least one Data Model object group."); if (dataModelConfigurationContext === "flow") { persistDraft(); closeSheets(); showView("flow"); return; } const dryRun = state.dataModelOptions.dryRun; const attributeGroups = dryRun ? [] : selectedDataModelAttributeGroups(); const columnOverrides = attributeGroups.length ? dataModelColumnOverridesForRun(attributeGroups) : {}; const parentByGroup = dryRun ? {} : dataModelParentsForRun(groups); send({ type: "run-data-model", groups, saveObjects: !dryRun, attributeGroups, columnOverrides, parentByGroup }, dryRun ? "Data Model Dry Run" : "Create Data Model Objects", { summary: `Data Model — ${dataModelSummary()}${attributeGroups.length ? ` + ${attributeGroups.length} attribute set${attributeGroups.length === 1 ? "" : "s"}` : ""}`, details: `${dryRun ? "Dry run" : "Live create"}: ${groups.join(", ")}${attributeGroups.length ? ` · attributes: ${attributeGroups.join(", ")}` : ""}${Object.keys(parentByGroup).length ? ` · parents: ${Object.entries(parentByGroup).map(([group, parent]) => `${group} → ${parent}`).join(", ")}` : ""}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
+document.getElementById("runDataModelBtn").addEventListener("click", () => { try { const groups = selectedDataModelGroups(); if (!groups.length) return setStatus("Select at least one Data Model object group."); if (dataModelConfigurationContext === "flow") { commitFlowConfiguration(); persistDraft(); closeSheets(); showView("flow"); return; } const dryRun = state.dataModelOptions.dryRun; const attributeGroups = dryRun ? [] : selectedDataModelAttributeGroups(); const columnOverrides = attributeGroups.length ? dataModelColumnOverridesForRun(attributeGroups) : {}; const parentByGroup = dryRun ? {} : dataModelParentsForRun(groups); send({ type: "run-data-model", groups, saveObjects: !dryRun, attributeGroups, columnOverrides, parentByGroup }, dryRun ? "Data Model Dry Run" : "Create Data Model Objects", { summary: `Data Model — ${dataModelSummary()}${attributeGroups.length ? ` + ${attributeGroups.length} attribute set${attributeGroups.length === 1 ? "" : "s"}` : ""}`, details: `${dryRun ? "Dry run" : "Live create"}: ${groups.join(", ")}${attributeGroups.length ? ` · attributes: ${attributeGroups.join(", ")}` : ""}${Object.keys(parentByGroup).length ? ` · parents: ${Object.entries(parentByGroup).map(([group, parent]) => `${group} → ${parent}`).join(", ")}` : ""}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
 document.getElementById("runDataModelAttributesBtn").addEventListener("click", () => { try { const objectName = state.dataModelAttributeObjectName.trim(); if (!objectName) return setStatus("Enter the existing Data Model object name."); const group = state.dataModelAttributeGroup; const columnOverrides = dataModelColumnOverridesForRun([group]); send({ type: "run-data-model-attributes", group, objectName, columnOverrides }, "Add New Attributes", { summary: `Add New Attributes — ${group} · ${objectName}`, details: `Add ${dataModelColumnCount(group)} new attributes to ${objectName}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
 document.getElementById("runCustomFlowBtn").addEventListener("click", () => { try { const steps = selectedFlowSteps(); if (!catalogReady && (steps.includes("import") || steps.includes("export") || steps.includes("dataViewer"))) return setStatus("Table catalog is still loading."); const dataViewerTableIds = selectedDataViewerTables().map((table) => table.id); const dataModelGroups = selectedDataModelGroups(); if (steps.includes("dataViewer") && !dataViewerTableIds.length) return setStatus("Select at least one Data Viewer table."); if (steps.includes("dataModel") && !dataModelGroups.length) return setStatus("Select at least one Data Model object group."); const canUseCreatedDataModelObject = steps.includes("dataModel") && dataModelGroups.includes(state.dataModelAttributeGroup) && !state.dataModelOptions.dryRun; if (steps.includes("dataModelAttributes") && !state.dataModelAttributeObjectName.trim() && !canUseCreatedDataModelObject) return setStatus("Enter the Data Model object name, or create that same type in this live flow."); const staggerJobs = flowHasBothJobs(); const customDataViewer = { recordsPerTable: 1, sourceId: "UI", saveRecords: true, dataViewerOverrides: state.dataViewerOverrides }; const dataModelAttributeGroups = steps.includes("dataModel") && !state.dataModelOptions.dryRun ? selectedDataModelAttributeGroups() : []; const columnGroups = [...new Set([...(steps.includes("dataModelAttributes") ? [state.dataModelAttributeGroup] : []), ...dataModelAttributeGroups])]; const dataModelParents = steps.includes("dataModel") && !state.dataModelOptions.dryRun ? dataModelParentsForRun(dataModelGroups) : {}; send({ type: "run-custom-flow", flow: { steps, importTableIds: selectedTableIds(), exportPayloadName: state.exportPayloadName, exportSchedule: schedulerConfig("flowExport"), importSchedule: schedulerConfig("flowImport"), staggerJobs, dataViewerTableIds, dataModelGroups, dataModelAttributeGroups, dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeObjectName: state.dataModelAttributeObjectName.trim(), dataModelColumnOverrides: dataModelColumnOverridesForRun(columnGroups), saveDataModelObjects: !state.dataModelOptions.dryRun, ...customDataViewer } }, "Custom Flow", { summary: `Custom Flow — ${steps.length} steps`, details: `Custom Flow — ${steps.join(" → ")}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
 templateSelect.addEventListener("change", async () => { state.templateId = templateSelect.value; await chrome.storage.local.set({ lastTemplateId: state.templateId }); renderTemplates(); });
@@ -614,8 +748,9 @@ document.getElementById("manageTemplatesBtn").addEventListener("click", async ()
 document.getElementById("stopE2EBtn").addEventListener("click", async () => { try { await chrome.runtime.sendMessage({ type: "stop-current-flow", tabId: await activeTab() }); setStatus(""); } catch (error) { setStatus(`Stop failed: ${error.message || error}`); } });
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => { closeSheets(); showView(button.dataset.view); }));
 document.querySelectorAll("[data-activity-section]").forEach((button) => button.addEventListener("click", () => showActivitySection(button.dataset.activitySection)));
-document.querySelectorAll("[data-open-sheet]").forEach((button) => button.addEventListener("click", () => { attributeEditorForCreationGroup = ""; if (button.dataset.openSheet === "dataModel") dataModelConfigurationContext = button.dataset.flowConfig === "dataModel" ? "flow" : "standalone"; if (button.dataset.openSheet === "dataModelAttributes") dataModelConfigurationContext = "standalone"; openSheet(button.dataset.openSheet); renderAll(); }));
-document.querySelectorAll("[data-close-sheet]").forEach((button) => button.addEventListener("click", closeSheets));
+document.querySelectorAll("[data-open-sheet]").forEach((button) => button.addEventListener("click", () => { attributeEditorForCreationGroup = ""; pendingFlowConfigurationStep = button.dataset.flowConfig || ""; if (button.dataset.openSheet === "dataModel") dataModelConfigurationContext = button.dataset.flowConfig === "dataModel" ? "flow" : "standalone"; if (button.dataset.openSheet === "dataModelAttributes") dataModelConfigurationContext = button.dataset.flowConfig ? "flow" : "standalone"; openSheet(button.dataset.openSheet); renderAll(); }));
+document.querySelectorAll(".sheet-head .back").forEach((button) => { button.textContent = "Save & Return"; });
+document.querySelectorAll("[data-close-sheet]").forEach((button) => button.addEventListener("click", async () => { commitFlowConfiguration(); await persistDraft(); closeSheets(); }));
 document.getElementById("quickImportSearch").addEventListener("input", renderTableChoices); document.getElementById("quickExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("flowImportSearch").addEventListener("input", renderTableChoices); document.getElementById("flowExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("dataViewerSearch").addEventListener("input", renderDataViewerChoices); document.getElementById("flowDataViewerSearch").addEventListener("input", renderDataViewerChoices);
 document.getElementById("dataViewerRecordsPerTable").addEventListener("input", (event) => { state.dataViewerOptions.recordsPerTable = event.target.value; persistDraft(); renderDataViewerChoices(); });
 document.getElementById("dataViewerSourceId").addEventListener("input", (event) => { state.dataViewerOptions.sourceId = event.target.value; persistDraft(); });
@@ -624,20 +759,14 @@ document.getElementById("dataViewerDryRun").addEventListener("change", (event) =
 document.getElementById("dataModelDryRun").addEventListener("change", (event) => { state.dataModelOptions.dryRun = event.target.checked; persistDraft(); renderDataModelChoices(); renderFlow(); });
 document.getElementById("removeDataModelCreationAttributesBtn").addEventListener("click", () => { if (!attributeEditorForCreationGroup) return; delete state.dataModelAttributeEnabled[attributeEditorForCreationGroup]; attributeEditorForCreationGroup = ""; persistDraft(); openSheet("dataModel"); renderAll(); });
 document.getElementById("applyDataModelCreationAttributesBtn").addEventListener("click", async () => { if (!attributeEditorForCreationGroup) return; await persistDraft(); attributeEditorForCreationGroup = ""; openSheet("dataModel"); renderAll(); });
-document.getElementById("dataModelAttributeBack").addEventListener("click", () => { const returnToDataModel = Boolean(attributeEditorForCreationGroup); attributeEditorForCreationGroup = ""; if (returnToDataModel) { openSheet("dataModel"); renderAll(); } else closeSheets(); });
+document.getElementById("dataModelAttributeBack").addEventListener("click", async () => { const returnToDataModel = Boolean(attributeEditorForCreationGroup); if (!returnToDataModel) commitFlowConfiguration(); await persistDraft(); attributeEditorForCreationGroup = ""; if (returnToDataModel) { openSheet("dataModel"); renderAll(); } else closeSheets(); });
 document.getElementById("dataModelAttributeGroup").addEventListener("change", (event) => { state.dataModelAttributeGroup = event.target.value; chrome.storage.local.set({ lastDataModelAttributeGroup: state.dataModelAttributeGroup }); persistDraft(); renderDataModelAttributeChoices(); renderFlow(); });
 document.getElementById("dataModelAttributeObjectName").addEventListener("input", (event) => { state.dataModelAttributeObjectName = event.target.value; chrome.storage.local.set({ lastDataModelAttributeObjectName: state.dataModelAttributeObjectName }); persistDraft(); renderDataModelAttributeChoices(); renderFlow(); });
-document.getElementById("dataViewerEditorBack").addEventListener("click", closeDataViewerEditor);
+document.getElementById("dataViewerEditorBack").addEventListener("click", saveDataViewerEditor);
 document.getElementById("dataViewerAddValue").addEventListener("click", () => { dataViewerEditorDraft?.values.push({ field: "", value: "" }); renderDataViewerEditor(); });
 document.getElementById("dataViewerAddRelationship").addEventListener("click", () => { dataViewerEditorDraft?.relationships.push({ field: "", table: "" }); renderDataViewerEditor(); });
 document.getElementById("dataViewerUseDefaults").addEventListener("click", () => { if (!dataViewerEditorDraft) return; delete state.dataViewerOverrides[dataViewerEditorDraft.tableName]; persistDraft(); closeDataViewerEditor(); });
-document.getElementById("dataViewerApplyEditor").addEventListener("click", () => {
-  if (!dataViewerEditorDraft) return;
-  const values = Object.fromEntries(dataViewerEditorDraft.values.filter((row) => row.field.trim()).map((row) => [row.field.trim(), { value: row.value }]));
-  const relationships = Object.fromEntries(dataViewerEditorDraft.relationships.filter((row) => row.field.trim() && row.table.trim()).map((row) => [row.field.trim(), row.table.trim()]));
-  state.dataViewerOverrides[dataViewerEditorDraft.tableName] = { values, relationships };
-  persistDraft(); closeDataViewerEditor();
-});
+document.getElementById("dataViewerApplyEditor").addEventListener("click", saveDataViewerEditor);
 function clearImportSelection() { state.importSettings = {}; persistDraft(); renderAll(); }
 function clearDataViewerSelection() { state.dataViewerSettings = {}; state.dataViewerOptions.contactPointExplicitlyUnselected = false; persistDraft(); renderAll(); }
 document.getElementById("clearImportBtn").addEventListener("click", clearImportSelection);
@@ -647,7 +776,7 @@ document.getElementById("flowDataViewerClearBtn").addEventListener("click", clea
 DEFAULT_FLOW.forEach((step) => document.getElementById(`flow-${step}`).addEventListener("change", () => { persistDraft(); renderAll(); }));
 async function initialize() {
   try {
-    await Promise.all([loadCatalog(), loadTemplates(), loadDataViewerRecordDefaults(), loadDataModelColumnDefaults()]);
+    await Promise.all([loadCatalog(), loadTemplates(), loadDataViewerRecordDefaults(), loadDataModelColumnDefaults(), loadPresets()]);
     const { flowDraft, e2eStatus, lastRun, runHistory, pendingRun, popupView, lastConnectionPurpose, lastDataModelAttributeGroup, lastDataModelAttributeObjectName } = await chrome.storage.local.get({ flowDraft: null, e2eStatus: "", lastRun: null, runHistory: [], pendingRun: null, popupView: "run", lastConnectionPurpose: "", lastDataModelAttributeGroup: "Profile", lastDataModelAttributeObjectName: "" });
     activeLogRun = pendingRun;
     state.connectionPurpose = flowDraft?.connectionPurpose ?? lastConnectionPurpose;
@@ -669,6 +798,12 @@ async function initialize() {
       state.dataModelSettings = { Profile: true };
       state.dataModelAttributeEnabled = { Profile: true };
     }
+    // One-time, non-destructive migration: retain a user's current draft as
+    // an explicitly named starting point for the new reusable preset system.
+    if (flowDraft && !jobPresets.some((preset) => preset?.config?.kind === "import")) jobPresets.unshift({ id: crypto.randomUUID(), name: "Imported Import draft", savedAt: Date.now(), config: jobPresetConfig("import") });
+    if (flowDraft && !jobPresets.some((preset) => preset?.config?.kind === "export")) jobPresets.unshift({ id: crypto.randomUUID(), name: "Imported Export draft", savedAt: Date.now(), config: jobPresetConfig("export") });
+    if (flowDraft && !flowPresets.length) flowPresets.unshift({ id: crypto.randomUUID(), name: "Imported Flow draft", savedAt: Date.now(), config: flowPresetConfig() });
+    if (flowDraft) await persistPresets();
     document.getElementById("dataViewerRecordsPerTable").value = state.dataViewerOptions.recordsPerTable;
     document.getElementById("dataViewerSourceId").value = state.dataViewerOptions.sourceId;
     document.getElementById("dataViewerParentCustomerId").value = state.dataViewerOptions.parentSourceCustomerId;
@@ -677,7 +812,7 @@ async function initialize() {
     await chrome.storage.local.remove("popupAccordionState");
     const history = Array.isArray(runHistory) && runHistory.length ? runHistory : (lastRun ? [{ ...lastRun, outcome: lastRun.outcome || "completed" }] : []);
     if (!runHistory?.length && history.length) await chrome.storage.local.set({ runHistory: history.slice(0, 5) });
-    setStatus(e2eStatus); renderRunHistory(history); showActivitySection("runs"); showView(["run", "flow", "activity"].includes(popupView) ? popupView : "run", false); renderAll();
+    setStatus(e2eStatus); renderRunHistory(history); showActivitySection("runs"); showView(["run", "flow", "activity"].includes(popupView) ? popupView : "run", false); renderAll(); renderPresetRows();
   } catch (error) {
     setStatus(`Catalog error: ${error.message || error}`);
   }

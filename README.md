@@ -17,6 +17,8 @@ The extension derives the tenant host key from the active CDP tab. Every extensi
 3. Optionally enter a short purpose. It is used in the created connection and job names.
 4. Use a quick action, **Run Sanity Flow**, or **Customize flow**.
 
+Import, Responsys Import, and Export configuration sheets also support named presets. A preset stores the selected transfer template, purpose, table/payload choices, and scheduler settings; it never stores profile credentials. Use **Load preset…**, enter a name, then **Save**. Deleting a preset removes only that reusable configuration.
+
 Use **Manage templates** to maintain connection profiles and paired transfer templates. Profiles hold reusable provider values; templates pair one source profile and one destination profile with file settings. The extension creates new CDP connections from the selected template for each run.
 
 Starter profiles/templates are bundled in `config/transfer-catalog.json`. They are added to Chrome local storage only when missing; browser-edited profiles and templates are not overwritten on extension reload.
@@ -37,6 +39,12 @@ Starter profiles/templates are bundled in `config/transfer-catalog.json`. They a
 | Publish all Data feeds | Publishes every selectable feed on the Publish Changes page. |
 
 The popup and browser status pill display the active stage. Either Stop action cancels the active flow and reloads the current CDP route to remove stale automation.
+
+## Shared job runners and Activity snapshots
+
+All Import and Export launches use the same normalized job request and shared runner, regardless of whether they started from an independent action, Custom Flow, or Run Sanity Flow. The request resolves the chosen template, purpose, connection name, job selection, scheduler, and any generated job name before the page automation begins. The runner then uses the established page-specific script, configures scheduling once at Save, and waits for CDP's save confirmation before a flow continues.
+
+The extension retains the five most recent immutable run snapshots alongside the existing Activity history. A snapshot records the originating mode, selected template and purpose, actual Source/Destination names, created job names, selected tables/payload, and effective scheduler values. This remains available after ephemeral popup drafts have been cleared.
 
 ## Tables and sample CSVs
 
@@ -81,6 +89,12 @@ Supported types are `string`, `int`, `bigint`, `decimal`, `date`, `timestamp`, a
 Every Import, Export, and Responsys job scheduler has a **New / Legacy** selector. New is the default: it uses CDP’s current schedule UI with Daily, Weekly (selected days), Monthly (selected days), or Monthly (selected dates), followed by **Specific** or **Interval** timing.
 
 New Specific timing defaults to **now +15 minutes** for Export and **now +30 minutes** for Import/Responsys; choose another preset or a custom time to change it. New Interval timing accepts an hourly interval, start time, and end time. The current weekday/date is selected automatically for the non-Daily frequencies.
+
+The selected New Scheduler is applied by the shared job bridge from the page script immediately before the existing CDP save action. Independent jobs and flow jobs use the same bridge; there is no background Save-click interception for New Scheduler.
+
+Export filter records default to **Updated**. Exporting **Updated** or **Created** records uses CDP's recurring schedule controls; exporting **All** records leaves CDP's on-demand default untouched. The normalized Export request accepts `filterRecords` (or `filterRec`) for future UI configuration.
+
+Export also accepts `payloadType: "segment"` as a future configuration placeholder. Segment payloads retain CDP's **Recurring / On-demand** choice: Recurring is the default, while a Legacy on-demand request selects On-demand. Data-object payloads instead derive their mode from Filter records as described above.
 
 Legacy preserves the previous On-demand/Scheduled controls: Hourly, Daily, or Weekly with Immediate (next exact hour) or +1 Hour. A flow containing both jobs retains the one-hour stagger only when both flow schedulers use Legacy. New schedules retain their explicit Export +15 minute / Import +30 minute defaults.
 

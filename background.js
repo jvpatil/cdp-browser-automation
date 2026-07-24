@@ -347,7 +347,7 @@ async function appendDataViewerRunLog(result, tables, { recordsPerTable, sourceI
 }
 
 async function finalizeRunHistory(outcome, detail = "") {
-  const { pendingRun = null, runHistory = [] } = await chrome.storage.local.get({ pendingRun: null, runHistory: [] });
+  const { pendingRun = null, runHistory = [], runSnapshots = [], activeRunSnapshotId = "" } = await chrome.storage.local.get({ pendingRun: null, runHistory: [], runSnapshots: [], activeRunSnapshotId: "" });
   if (!pendingRun) return;
   const terminalMessage = outcome === "completed" ? "Run completed." : outcome === "stopped" ? "Run stopped." : `Run failed: ${detail || pendingRun.details || "Unknown error"}`;
   const logs = Array.isArray(pendingRun.logs) ? pendingRun.logs : [];
@@ -358,8 +358,10 @@ async function finalizeRunHistory(outcome, detail = "") {
     finishedAt: Date.now(),
     logs: [...logs, { at: Date.now(), level: outcome === "failed" ? "error" : outcome, message: terminalMessage }].slice(-500)
   };
+  const snapshot = Array.isArray(runSnapshots) ? runSnapshots.find((item) => item?.runId === activeRunSnapshotId) : null;
+  if (snapshot) entry.snapshot = { ...snapshot, outcome, finishedAt: entry.finishedAt };
   await chrome.storage.local.set({ runHistory: [entry, ...(Array.isArray(runHistory) ? runHistory : [])].slice(0, 5), lastRun: entry });
-  await chrome.storage.local.remove("pendingRun");
+  await chrome.storage.local.remove(["pendingRun", "activeRunSnapshotId"]);
 }
 
 async function installStopGuard(tabId) {
@@ -410,7 +412,8 @@ async function captureCreatedEntity(tabId, runMetadata, filename) {
     "source.js": { section: "sources", label: "Source", inputId: "source-name-input|input" },
     "destination.js": { section: "destinations", label: "Destination", inputId: "source-name-input|input" },
     "exportJob.js": { section: "jobs", role: "export", label: "Export Job", inputId: "job-name-input|input" },
-    "importContacts.js": { section: "jobs", role: "import", label: "Import Job", inputId: "job-name-input|input" }
+    "importContacts.js": { section: "jobs", role: "import", label: "Import Job", inputId: "job-name-input|input" },
+    "importJob.js": { section: "jobs", role: "import", label: "Responsys Import", inputId: "job-name-input|input" }
   }[filename];
   if (!creation) return;
 
@@ -662,6 +665,7 @@ function normalizeNewSchedulerConfig(schedule = {}, kind = "import") {
   // retain an explicitly selected Legacy scheduler unchanged.
   if (schedule?.schedulerUi === "legacy") return schedule;
   const isExport = kind === "export";
+  const mode = !isExport && schedule?.mode === "onDemand" ? "onDemand" : "scheduled";
   return {
     schedulerUi: "new",
     mode: "scheduled",
@@ -672,9 +676,21 @@ function normalizeNewSchedulerConfig(schedule = {}, kind = "import") {
     intervalStartPreset: isExport ? "in15" : "in30",
     intervalEndTime: "23:59",
     ...schedule,
-    // New Scheduler never uses the old Manual/On-demand job mode.
-    mode: "scheduled"
+    // Import's new schedule page retains the existing On-demand choice.
+    // Export's recurrence is determined by its payload/filter behavior.
+    mode
   };
+}
+
+function normalizeExportFilter(value) {
+  const normalized = String(value || "UPDATED").trim().toUpperCase();
+  return ["UPDATED", "CREATED", "ALL"].includes(normalized) ? normalized : "UPDATED";
+}
+
+function normalizeExportPayloadType(value) {
+  return String(value || "data-object").trim().toLowerCase() === "segment"
+    ? "segment"
+    : "data-object";
 }
 
 async function readNewSchedulerState(tabId, probe) {
@@ -693,31 +709,77 @@ async function readNewSchedulerState(tabId, probe) {
         // controls until the user selects Recurring.
         return Boolean(document.querySelector("oj-cx-unity-job-schedule-settings") || document.querySelector("oj-cx-unity-job-schedule-recurring"));
       }
-      if (requestedProbe.type === "frequency-input") return rectangle(document.getElementById("requency|input"));
+      if (requestedProbe.type === "frequency-input") {
+        const input = [...document.querySelectorAll("input[aria-controls='lovDropdown_requency']")]
+          .find((element) => visible(element) || visible(element.closest("oj-select-single")));
+        return rectangle(input?.closest("oj-select-single, .oj-text-field-container") || input);
+      }
+      if (requestedProbe.type === "import-frequency-input") {
+        const input = document.getElementById("requency|input")
+          || [...document.querySelectorAll("input[aria-controls='lovDropdown_requency']")].find(visible);
+        return rectangle(input);
+      }
       if (requestedProbe.type === "frequency-option") {
         const wanted = String(requestedProbe.value || "").replace(/\s+/g, " ").trim().toLowerCase();
-        const option = [...document.querySelectorAll("[role='gridcell']")]
-          .find((element) => visible(element) && (element.textContent || "").replace(/\s+/g, " ").trim().toLowerCase() === wanted);
-        return rectangle(option);
+        const list = [...document.querySelectorAll("#lovDropdown_requency, #oj-listbox-results-requency")]
+          .find(visible);
+        const options = [...(list?.querySelectorAll("[role='option'], [role='gridcell'], li, oj-option") || [])]
+          .filter(visible);
+        const option = options.find((element) => (element.textContent || "").replace(/\s+/g, " ").trim().toLowerCase() === wanted)
+          || options.find((element) => (element.textContent || "").replace(/\s+/g, " ").trim().toLowerCase().startsWith(wanted));
+        return rectangle(option?.closest("[role='option'], [role='gridcell'], li, oj-option") || option);
       }
-      if (requestedProbe.type === "frequency-value") return document.getElementById("requency|input")?.value || "";
+      if (requestedProbe.type === "frequency-value") {
+        const input = [...document.querySelectorAll("input[aria-controls='lovDropdown_requency']")]
+          .find((element) => visible(element) || visible(element.closest("oj-select-single")));
+        return input?.value || "";
+      }
       if (requestedProbe.type === "recurring-run") {
-        // Confirmed on the live Import page. CDP/JET uses a lowercase value
-        // and generates only the ui-id portion of the radio id dynamically.
-        const runType = document.querySelector("oj-cx-unity-job-schedule-settings oj-radioset#recurring-or-manual, oj-radioset#recurring-or-manual");
-        const input = runType?.querySelector("input[name='recurring-or-manual'][value='recurring']") || null;
-        const manual = runType?.querySelector("input[name='recurring-or-manual'][value='onDemand']") || null;
+        // CDP/JET generates the radio id dynamically and can reflect its
+        // selected state on the visible choice wrapper before it mirrors the
+        // native input's checked property. Read both representations.
+        const runType = [...document.querySelectorAll("oj-cx-unity-job-schedule-settings oj-radioset#recurring-or-manual, oj-radioset#recurring-or-manual")]
+          .find(visible)
+          || [...document.querySelectorAll("oj-radioset")].find((element) => visible(element) && [...element.querySelectorAll("input")].some((input) => /recurr/i.test(input.value || input.name || "")))
+          || [...document.querySelectorAll("oj-cx-unity-job-schedule-settings")].find(visible);
+        const inputs = [...(runType?.querySelectorAll("input") || [])];
+        const input = inputs.find((candidate) => /recurr/i.test(candidate.value || candidate.name || "")) || null;
+        const manual = inputs.find((candidate) => /ondemand|manual/i.test(candidate.value || "")) || null;
         const labelFor = (control) => [...document.querySelectorAll("label")].find((label) => label.htmlFor === control?.id) || control?.closest(".oj-choice-item, label") || control;
         const manualExists = Boolean(manual);
-        if (!input) return { exists: false, manualExists, checked: false, rect: null };
-        return { exists: true, manualExists, checked: Boolean(input.checked), rect: rectangle(labelFor(input)) };
+        if (!input) {
+          const recurringLabel = [...(runType?.querySelectorAll("label,span,.option-recurring") || [])]
+            .find((element) => visible(element) && /^recurring$/i.test((element.textContent || "").replace(/\s+/g, " ").trim()));
+          return {
+            exists: Boolean(recurringLabel),
+            manualExists,
+            checked: Boolean(recurringLabel),
+            rect: rectangle(recurringLabel?.closest(".oj-choice-item") || recurringLabel)
+          };
+        }
+        const choice = input.closest(".oj-choice-item") || labelFor(input);
+        // The icon is the interactive hit target in JET. The native input is
+        // visually hidden and the wider wrapper can be covered by layout
+        // elements on the Import schedule page.
+        const target = choice?.querySelector(".oj-radiocheckbox-icon") || choice;
+        const checked = Boolean(input.checked) || [input, choice, labelFor(input), choice?.parentElement]
+          .some((element) => element?.getAttribute?.("aria-checked") === "true" || element?.classList?.contains("oj-selected"));
+        return { exists: true, manualExists, checked, rect: rectangle(target) };
       }
       if (requestedProbe.type === "time-mode") {
-        const input = document.querySelector(`input[name="specific_or_interval"][value="${requestedProbe.value}"]`);
-        return { checked: Boolean(input?.checked), rect: rectangle(document.querySelector(`label[for="${input?.id || ""}"]`) || input?.closest(".oj-choice-item") || input) };
+        const input = [...document.querySelectorAll(`#specific_or_interval input[value="${requestedProbe.value}"], input[name="specific_or_interval"][value="${requestedProbe.value}"]`)]
+          .find((element) => visible(element) || visible(element.closest("oj-radioset, .oj-choice-item")));
+        const choice = input?.closest(".oj-choice-item");
+        const checked = Boolean(input?.checked)
+          || choice?.classList.contains("oj-selected")
+          || choice?.getAttribute("aria-checked") === "true";
+        return {
+          checked,
+          rect: rectangle(choice?.querySelector(".oj-radiocheckbox-icon") || document.querySelector(`label[for="${input?.id || ""}"]`) || choice || input)
+        };
       }
       if (requestedProbe.type === "time-input") {
-        const input = [...document.querySelectorAll("#times oj-input-time input")]
+        const input = [...document.querySelectorAll("#times oj-input-time.specific-time-length input, #times .specific-time-length input")]
           .find((element) => visible(element) && !element.id.startsWith("interval_"));
         return input?.id || "";
       }
@@ -760,22 +822,142 @@ async function trustedSchedulerClick(tabId, point, label) {
   }
 }
 
+async function trustedSelectRecurring(tabId, point) {
+  if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) throw new Error("New scheduler: Recurring run option is not available.");
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    const x = Math.round(point.x); const y = Math.round(point.y);
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", buttons: 0 });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 });
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => undefined);
+  }
+}
+
+// Import's New Scheduler is a JET radioset.  Its stable native radio is the
+// only control we need to activate; do not set the component value or infer
+// selection from dynamic ui-id values.
+async function clickImportRecurringRadio(tabId) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: () => {
+      const visible = (element) => Boolean(element?.getClientRects?.().length);
+      const group = [...document.querySelectorAll("oj-radioset#recurring-or-manual")]
+        .find(visible)
+        || document.querySelector("oj-radioset#recurring-or-manual");
+      const recurring = group?.querySelector("input[name='recurring-or-manual'][value='recurring']");
+      if (!recurring) return { found: false, checked: false };
+      if (!recurring.checked) recurring.click();
+      return { found: true, checked: Boolean(recurring.checked) };
+    }
+  });
+  if (!result?.found) throw new Error("New scheduler: Recurring run option is not available.");
+  return Boolean(result.checked);
+}
+
+async function trustedSchedulerSpace(tabId) {
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    const space = { key: " ", code: "Space", windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 };
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...space });
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...space });
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => undefined);
+  }
+}
+
+async function activateRecurringMode(tabId) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: () => {
+      const visible = (element) => Boolean(element?.getClientRects?.().length);
+      const root = [...document.querySelectorAll("oj-cx-unity-job-schedule-settings oj-radioset#recurring-or-manual, oj-radioset#recurring-or-manual")]
+        .find(visible)
+        || [...document.querySelectorAll("oj-radioset")].find((element) => visible(element) && [...element.querySelectorAll("input")].some((input) => /recurr/i.test(input.value || input.name || "")));
+      if (!root) return { found: false, activated: false };
+      const input = [...root.querySelectorAll("input")].find((candidate) => /recurr/i.test(candidate.value || candidate.name || ""));
+      const current = () => Boolean(input?.checked) || /recurr/i.test(String(root.value || ""));
+      if (current()) return { found: true, activated: true };
+      // JET exposes the radioset value as a component property. Setting it
+      // first lets its own valueChanged handler render the recurring panel;
+      // the native event path below covers older CDP builds.
+      for (const value of [["recurring"], "recurring"]) {
+        try { root.setProperty?.("value", value); } catch (_) {}
+        try { root.value = value; } catch (_) {}
+        if (current()) break;
+      }
+      if (!current() && input) {
+        input.checked = true;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      return { found: true, activated: current() };
+    }
+  });
+  return Boolean(result?.activated);
+}
+
 async function applyTrustedNewScheduler(tabId, schedule = {}) {
   const normalized = { frequency: "Daily", timeMode: "specific", specificPreset: "in15", intervalHours: "1", intervalStartPreset: "in15", intervalEndTime: "23:59", ...schedule };
+  const isImportJob = normalized.jobKind === "import";
   await waitForNewSchedulerState(tabId, { type: "ready" }, "schedule controls", Boolean, 120000);
 
   // Import jobs can open with Manual selected; Export has Recurring fixed. In
   // both cases, a New Scheduler configuration must explicitly be recurring.
-  const recurring = await readNewSchedulerState(tabId, { type: "recurring-run" });
+  const recurring = await waitForNewSchedulerState(
+    tabId,
+    { type: "recurring-run" },
+    "Run selection",
+    (state) => Boolean(state?.exists || state?.manualExists || state?.rect),
+    120000
+  );
   if (recurring?.manualExists && !recurring.exists) {
-    throw new Error("New scheduler: CDP exposed Manual but not the Recurring run option.");
+    let activated = false;
+    if (isImportJob) activated = await clickImportRecurringRadio(tabId);
+    if (!isImportJob) activated = await activateRecurringMode(tabId);
+    if (!activated && !isImportJob && recurring.rect) {
+      await trustedSelectRecurring(tabId, recurring.rect);
+      activated = true;
+    }
+    if (!activated) throw new Error("New scheduler: CDP exposed On-demand but not an activatable Recurring option.");
+    await waitForNewSchedulerState(tabId, { type: "frequency-input" }, "Recurring schedule controls", Boolean);
   }
   if (recurring?.exists && !recurring.checked) {
-    await trustedSchedulerClick(tabId, recurring.rect, "Recurring run option");
-    await waitForNewSchedulerState(tabId, { type: "recurring-run" }, "Recurring run selection", (state) => state?.checked);
+    if (isImportJob) {
+      await clickImportRecurringRadio(tabId);
+    } else {
+      const activated = await activateRecurringMode(tabId);
+      if (!activated) await trustedSelectRecurring(tabId, recurring.rect);
+    }
+    // The recurrence controls are the authoritative signal. JET can delay
+    // rendering them just after the radio's click handler runs.
+    try {
+      await waitForNewSchedulerState(tabId, { type: "frequency-input" }, "Recurring schedule controls", Boolean, 2500);
+    } catch (_) {
+      if (isImportJob) {
+        await waitForNewSchedulerState(tabId, { type: "frequency-input" }, "Recurring schedule controls", Boolean);
+      } else {
+        // The visible radio icon receives focus after the mouse action. Some
+        // JET builds need its standard keyboard activation to commit the value.
+        await trustedSchedulerSpace(tabId);
+        await waitForNewSchedulerState(tabId, { type: "frequency-input" }, "Recurring schedule controls", Boolean);
+      }
+    }
   }
 
-  await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, { type: "frequency-input" }, "frequency selector"), "frequency selector");
+  // Export's host click works on its layout. Import needs the actual focusable
+  // combobox input, whose bounds differ from the full JET host.
+  const frequencyProbe = isImportJob ? { type: "import-frequency-input" } : { type: "frequency-input" };
+  await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, frequencyProbe, "frequency selector"), "frequency selector");
   await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, { type: "frequency-option", value: normalized.frequency }, `${normalized.frequency} option`), "frequency option");
   await waitForNewSchedulerState(tabId, { type: "frequency-value" }, `${normalized.frequency} selection`, (value) => String(value).trim().toLowerCase() === String(normalized.frequency).trim().toLowerCase());
 
@@ -824,85 +1006,44 @@ async function installNewSchedulerRelay(tabId) {
           window.dispatchEvent(new CustomEvent("cdp-new-scheduler-result", { detail: JSON.stringify({ ok: false, error: error.message || String(error) }) }));
         }
       });
+      window.addEventListener("message", async (event) => {
+        const message = event.data;
+        if (event.source !== window || message?.source !== "cdp-import-scheduler" || message?.type !== "apply") return;
+        let result;
+        try {
+          result = await chrome.runtime.sendMessage({ type: "apply-new-scheduler", schedule: message.schedule || {} });
+        } catch (error) {
+          result = { ok: false, error: error.message || String(error) };
+        }
+        window.postMessage({
+          source: "cdp-import-scheduler",
+          type: "result",
+          requestId: message.requestId,
+          result: result || { ok: false, error: "New scheduler did not return a result." }
+        }, "*");
+      });
     }
   });
 }
 
-function startTrustedNewSchedulerWatcher(tabId, schedule) {
-  // Run independently of the bookmark's old schedule code. It starts before
-  // the form reaches Schedule, waits for the real controls, and reports the
-  // verified state back into the page for the Save gate below.
-  void applyTrustedNewScheduler(tabId, schedule)
-    .then((result) => chrome.scripting.executeScript({
-      target: { tabId }, world: "MAIN", args: [result],
-      func: (schedulerResult) => {
-        window.__cdpScheduledRunAt = schedulerResult.scheduledAt || null;
-        window.__cdpNewScheduleApplied = true;
-        window.__cdpNewScheduleError = null;
-      }
-    }))
-    .catch((error) => chrome.scripting.executeScript({
-      target: { tabId }, world: "MAIN", args: [error.message || String(error)],
-      func: (message) => {
-        window.__cdpNewScheduleError = new Error(message);
-        window.__cdpNewScheduleApplied = false;
-      }
-    }).catch(() => undefined));
-}
-
-async function installNewSchedulerSaveGate(tabId) {
+async function installImportScheduleTimeRelay(tabId) {
   await chrome.scripting.executeScript({
-    target: { tabId }, world: "MAIN",
+    target: { tabId }, world: "ISOLATED",
     func: () => {
-      if (window.__cdpNewSchedulerSaveGateInstalled) return;
-      window.__cdpNewSchedulerSaveGateInstalled = true;
-      const visible = (element) => Boolean(element?.getClientRects?.().length);
-      const plainSaveButton = () => [...document.querySelectorAll("button, oj-button")]
-        .find((element) => {
-          const button = element.matches("button") ? element : element.querySelector("button");
-          return button && visible(element) && !button.disabled && (element.textContent || "").replace(/\s+/g, " ").trim() === "Save";
-        });
-      const requestScheduler = () => {
-        if (window.__cdpNewScheduleRequestStarted) return;
-        window.__cdpNewScheduleRequestStarted = true;
-        window.addEventListener("cdp-new-scheduler-result", (event) => {
-          try {
-            const result = JSON.parse(String(event.detail || "{}"));
-            if (!result?.ok) throw new Error(result?.error || "CDP did not accept the selected schedule.");
-            window.__cdpScheduledRunAt = result.scheduledAt || null;
-            window.__cdpNewScheduleApplied = true;
-            window.__cdpNewScheduleError = null;
-          } catch (error) {
-            window.__cdpNewScheduleError = error;
-            window.__cdpNewScheduleApplied = false;
-          }
-        }, { once: true });
-        window.dispatchEvent(new CustomEvent("cdp-new-scheduler-request", {
-          detail: JSON.stringify(window.__cdpSchedule || {})
+      if (window.__cdpImportScheduleTimeRelayInstalled) return;
+      window.__cdpImportScheduleTimeRelayInstalled = true;
+      window.addEventListener("cdp-import-schedule-time-request", async (event) => {
+        let result;
+        try {
+          const payload = JSON.parse(String(event.detail || "{}"));
+          result = await chrome.runtime.sendMessage({ type: "set-import-schedule-time", ...payload });
+        } catch (error) {
+          result = { ok: false, error: error.message || String(error) };
+        }
+        window.dispatchEvent(new CustomEvent("cdp-import-schedule-time-result", {
+          detail: JSON.stringify(result || { ok: false, error: "Import schedule time did not return a result." })
         }));
-      };
-      document.addEventListener("click", (event) => {
-        const target = event.target instanceof Element ? event.target : null;
-        if (!target || window.__cdpNewScheduleSaved || !target.closest("oj-button#saveNclose-create-job, #saveNclose-create-job")) return;
-        if (window.__cdpNewScheduleApplied) return;
-        event.preventDefault(); event.stopImmediatePropagation();
-        requestScheduler();
-        const deadline = Date.now() + 125000;
-        const waitForScheduler = () => {
-          if (window.__cdpNewScheduleApplied) {
-            window.__cdpNewScheduleSaved = true;
-            const save = plainSaveButton()?.querySelector("button") || plainSaveButton() || target;
-            save.click();
-            return;
-          }
-          if (window.__cdpNewScheduleError || Date.now() >= deadline) {
-            alert(window.__cdpNewScheduleError?.message || "New scheduler did not finish before Save.");
-            return;
-          }
-          setTimeout(waitForScheduler, 150);
-        };
-        waitForScheduler();
-      }, true);
+      });
     }
   });
 }
@@ -1168,10 +1309,17 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
     }
 
     if (["exportJob.js", "importJob.js", "importContacts.js"].includes(filename)) {
+      // The worker scheduler needs to distinguish Import's JET radio group
+      // (which must receive a real click) from Export's schedule controls.
+      // Keep this explicit rather than inferring it from DOM labels.
+      const jobSchedule = {
+        ...(schedule || { mode: "scheduled", frequency: "Daily", startTime: "immediate" }),
+        jobKind: filename === "exportJob.js" ? "export" : "import"
+      };
       await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
-        args: [schedule || { mode: "scheduled", frequency: "Daily", startTime: "immediate" }],
+        args: [jobSchedule],
         func: (scheduleConfig) => {
           window.__cdpSchedule = scheduleConfig;
           window.__cdpScheduledRunAt = null;
@@ -1180,22 +1328,28 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
           window.__cdpFrequencySaveDeferred = false;
           window.__cdpFrequencyOverrideSaved = false;
           window.__cdpFrequencyOverrideApplying = false;
-          window.__cdpNewScheduleOverrideInstalled = false;
-          window.__cdpNewScheduleApplying = false;
-          window.__cdpNewScheduleSaved = false;
           window.__cdpNewScheduleApplied = false;
-          window.__cdpNewScheduleError = null;
           window.__cdpUseWorkerScheduler = scheduleConfig?.schedulerUi === "new";
           document.documentElement.dataset.cdpNewScheduler = scheduleConfig?.schedulerUi === "new" ? "true" : "false";
-          window.__cdpNewSchedulerSaveGateInstalled = false;
-          window.__cdpNewScheduleRequestStarted = false;
         }
       });
-      await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["scheduleOverride.js"] });
-      if (schedule?.schedulerUi === "new") {
+      if (schedule?.schedulerUi === "legacy") {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: "MAIN",
+          files: ["scheduleOverride.js"]
+        });
+      }
+      // Generic Import applies the new scheduler in its own MAIN-world script,
+      // matching the original direct page flow. Export and Responsys retain the
+      // existing worker bridge.
+      if (schedule?.schedulerUi === "new" && filename !== "importContacts.js") {
         await installNewSchedulerRelay(tabId);
-        await installNewSchedulerSaveGate(tabId);
-        await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["newScheduleOverride.js"] });
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: "MAIN",
+          files: ["jobSchedulerBridge.js"]
+        });
       }
     }
 
@@ -1236,6 +1390,7 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
     }
 
     if (filename === "importContacts.js") {
+      await installImportScheduleTimeRelay(tabId);
       if (!importConfig?.csvContent || !Array.isArray(importConfig.targetTables) || !importConfig.fieldToTable) importConfig = E2E_IMPORT_FALLBACK;
       await chrome.scripting.executeScript({
         target: { tabId },
@@ -1343,6 +1498,108 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
     world: "MAIN",
     files: [task.script || filename]
   });
+}
+
+// Every job entry point builds one of these requests. The page scripts remain
+// provider-specific, while scheduling, save confirmation and flow handoff live
+// in these two runners only.
+function normalizeJobRunRequest(request = {}) {
+  const kind = request.kind === "export" ? "export" : "import";
+  const variant = kind === "import" && request.variant === "responsys" ? "responsys" : "generic";
+  if (!request.runId) throw new Error("A job run requires a run ID.");
+  if (!request.template) throw new Error("A job run requires a transfer template.");
+  if (kind === "export" && !String(request.payloadName || "").trim()) throw new Error("Select an Export payload.");
+  if (kind === "import" && variant === "generic" && (!Array.isArray(request.tableIds) || !request.tableIds.length)) throw new Error("Select at least one Import table.");
+  return {
+    origin: request.origin || "independent",
+    kind,
+    variant,
+    runId: request.runId,
+    template: request.template,
+    connectionSequence: request.connectionSequence,
+    connection: request.connection,
+    schedule: kind === "export"
+      ? normalizeNewSchedulerConfig(request.schedule, "export")
+      : normalizeNewSchedulerConfig(request.schedule, "import"),
+    filterRecords: kind === "export" ? normalizeExportFilter(request.filterRecords || request.filter) : "UPDATED",
+    payloadType: kind === "export" ? normalizeExportPayloadType(request.payloadType) : "data-object",
+    payloadName: request.payloadName || "Customer",
+    tableIds: Array.isArray(request.tableIds) ? [...request.tableIds] : [],
+    jobName: request.jobName || "",
+    description: request.description || "",
+    notification: request.notification || "",
+    monitor: request.monitor || null,
+    runMetadata: request.runMetadata || null,
+    allowImportFallback: Boolean(request.allowImportFallback)
+  };
+}
+
+function buildJobRuntimeConfig(request) {
+  const isExport = request.kind === "export";
+  const connection = request.connection;
+  const operation = isExport ? "Export" : "Import";
+  return isExport ? {
+    name: request.jobName || transferJobName(request.template, connection, operation, request.connectionSequence),
+    description: request.description || request.template.description || `${request.template.name} export`,
+    destinationName: connection.name,
+    fileName: "",
+    compression: request.template.fileContract?.compression || "none",
+    fileContract: request.template.fileContract || {},
+    filterRecords: request.filterRecords,
+    payloadType: request.payloadType,
+    notification: request.notification || ""
+  } : {
+    name: request.jobName || transferJobName(request.template, connection, operation, request.connectionSequence),
+    description: request.description || request.template.description || `${request.template.name} import`,
+    sourceName: connection.name,
+    sourceObjectName: "",
+    notification: request.notification || "",
+    filePattern: request.template.fileContract?.filePattern || "",
+    fileContract: request.template.fileContract || {}
+  };
+}
+
+async function runImportJobRequest(tabId, rawRequest) {
+  const request = normalizeJobRunRequest({ ...rawRequest, kind: "import" });
+  const filename = request.variant === "responsys" ? "importJob.js" : "importContacts.js";
+  const task = TASKS[filename];
+  let importConfig;
+  if (request.variant === "generic") {
+    try {
+      importConfig = await buildImportConfig(request.tableIds, request.template.fileContract?.delimiter);
+    } catch (error) {
+      if (!request.allowImportFallback) throw error;
+      console.warn("Could not load editable Import CSV files; using bundled fallback.", error);
+      importConfig = importFallbackConfig(request.template.fileContract?.delimiter);
+    }
+  }
+  const jobConfig = buildJobRuntimeConfig(request);
+  await appendRunLog(`Import runner: ${request.variant} · ${request.tableIds.join(", ") || "Responsys Profile"}.`, "info", "Import", "Configure");
+  await appendRunLog(`Import scheduler: ${request.schedule.schedulerUi === "new" ? `New · ${request.schedule.frequency} · ${request.schedule.timeMode}` : `Legacy · ${request.schedule.mode} · ${request.schedule.frequency}`}.`, "info", "Scheduler · Import", "Configure");
+  await runTask(tabId, filename, request.monitor, request.schedule, importConfig, undefined, request.tableIds, undefined, jobConfig);
+  await waitForStep(tabId, request.variant === "responsys" ? "Responsys Import" : "Import Job", task.saveSelector, request.runId, request.monitor?.stepId || filename);
+  const saved = request.runMetadata ? await captureCreatedEntity(tabId, request.runMetadata, filename) : null;
+  return { request: { ...request, jobName: jobConfig.name }, saved };
+}
+
+async function runExportJobRequest(tabId, rawRequest) {
+  const request = normalizeJobRunRequest({ ...rawRequest, kind: "export" });
+  const task = TASKS["exportJob.js"];
+  const catalog = await loadTableCatalog();
+  if (!catalog.exportPayloads.includes(request.payloadName)) throw new Error(`Unsupported export payload: ${request.payloadName}.`);
+  const jobConfig = buildJobRuntimeConfig(request);
+  await appendRunLog(`Export runner: ${request.payloadName}.`, "info", "Export", "Configure");
+  await appendRunLog(`Export scheduler: ${request.schedule.schedulerUi === "new" ? `New · ${request.schedule.frequency} · ${request.schedule.timeMode}` : `Legacy · ${request.schedule.mode} · ${request.schedule.frequency}`}.`, "info", "Scheduler · Export", "Configure");
+  await runTask(tabId, "exportJob.js", request.monitor, request.schedule, undefined, request.payloadName, undefined, undefined, jobConfig);
+  await waitForStep(tabId, "Export Job", task.saveSelector, request.runId, request.monitor?.stepId || "exportJob.js");
+  const saved = request.runMetadata ? await captureCreatedEntity(tabId, request.runMetadata, "exportJob.js") : null;
+  return { request: { ...request, jobName: jobConfig.name }, saved };
+}
+
+async function saveRunSnapshot(snapshot) {
+  const { runSnapshots = [] } = await chrome.storage.local.get({ runSnapshots: [] });
+  const next = [snapshot, ...runSnapshots.filter((item) => item?.runId !== snapshot.runId)].slice(0, 5);
+  await chrome.storage.local.set({ runSnapshots: next });
 }
 
 function assertSequenceActive(tabId, runId, label) {
@@ -1730,6 +1987,18 @@ async function runConfiguredFlow(tabId, flow = {}) {
   sequenceStepState.set(runId, new Set());
   activeSequences.set(tabId, { runId, cancelled: false });
   await chrome.storage.local.set({ e2eRun: runMetadata });
+  const runSnapshot = {
+    runId,
+    startedAt: runMetadata.startedAt,
+    origin: flow.origin || "custom-flow",
+    template: template ? { id: template.id, name: template.name, sourceType: template.sourceType, destinationType: template.destinationType, fileContract: template.fileContract || {} } : null,
+    purpose: flow.connectionPurpose || "",
+    steps: [...selectedSteps],
+    connections: {},
+    jobs: []
+  };
+  await saveRunSnapshot(runSnapshot);
+  await chrome.storage.local.set({ activeRunSnapshotId: runId });
   let completed = false;
   let failure;
   const createdDataModelObjects = {};
@@ -1762,41 +2031,59 @@ async function runConfiguredFlow(tabId, flow = {}) {
       if (step.id === "export" || step.id === "import") {
         await appendRunLog(`${step.label} scheduler: ${schedule.schedulerUi === "new" ? `New · ${schedule.frequency} · ${schedule.timeMode} · ${schedule.specificPreset || schedule.intervalStartPreset}` : `Legacy · ${schedule.mode} · ${schedule.frequency}`}.`, "info", `Scheduler · ${step.label}`, "Configure");
       }
-      let importConfig;
-      if (step.id === "import") {
-        try {
-          importConfig = await buildImportConfig(flow.importTableIds || ["customer", "contactPoint"], template.fileContract?.delimiter);
-        } catch (error) {
-          if (!flow.allowImportFallback) throw error;
-          console.warn("Could not load editable E2E import CSV files; using the bundled fallback.", error);
-          importConfig = importFallbackConfig(template.fileContract?.delimiter);
-        }
+      if (step.id === "export" || step.id === "import") {
+        const monitor = { runId, stepId: step.filename, saveSelector: step.saveSelector };
+        const result = step.id === "export"
+          ? await runExportJobRequest(tabId, {
+            origin: flow.origin || "custom-flow",
+            runId,
+            template,
+            connectionSequence,
+            connection: destinationConfig,
+            schedule,
+            filterRecords: flow.exportFilterRecords,
+            payloadType: flow.exportPayloadType,
+            payloadName: flow.exportPayloadName || "Customer",
+            jobName: flow.exportJobName,
+            description: flow.exportDescription,
+            notification: flow.notification,
+            monitor,
+            runMetadata
+          })
+          : await runImportJobRequest(tabId, {
+            origin: flow.origin || "custom-flow",
+            runId,
+            template,
+            connectionSequence,
+            connection: sourceConfig,
+            schedule,
+            variant: flow.importVariant || "generic",
+            tableIds: flow.importTableIds || ["customer", "contactPoint"],
+            jobName: flow.importJobName,
+            description: flow.importDescription,
+            notification: flow.notification,
+            monitor,
+            runMetadata,
+            allowImportFallback: flow.allowImportFallback
+          });
+        runSnapshot.jobs.push({
+          kind: step.id,
+          variant: result.request.variant || "generic",
+          name: result.saved?.name || result.request.jobName,
+          connectionName: result.request.connection?.name || "",
+          payloadName: result.request.payloadName || "",
+          tableIds: result.request.tableIds || [],
+          scheduler: result.request.schedule
+        });
+        await saveRunSnapshot({ ...runSnapshot, jobs: [...runSnapshot.jobs] });
+        continue;
       }
-      const jobConfig = step.id === "export" ? {
-        name: flow.exportJobName || transferJobName(template, destinationConfig, "Export", connectionSequence),
-        description: flow.exportDescription || template.description || `${template.name} export`,
-        destinationName: destinationConfig.name,
-        // Keep the established file name on both job types: PROFILE_<hostKey>.
-        // exportJob.js supplies it directly when no runtime override is sent.
-        fileName: "",
-        compression: template.fileContract?.compression || "none",
-        fileContract: template.fileContract || {},
-        notification: flow.notification || ""
-      } : step.id === "import" ? {
-        name: flow.importJobName || transferJobName(template, sourceConfig, "Import", connectionSequence),
-        description: flow.importDescription || template.description || `${template.name} import`,
-        sourceName: sourceConfig.name,
-        sourceObjectName: "",
-        notification: flow.notification || "",
-        filePattern: template.fileContract?.filePattern || "",
-        fileContract: template.fileContract || {}
-      } : undefined;
       const connectionConfig = step.id === "source" ? sourceConfig : step.id === "destination" ? destinationConfig : undefined;
       await runTask(tabId, step.filename, {
         runId,
         stepId: step.filename,
         saveSelector: step.saveSelector
-      }, schedule, importConfig, flow.exportPayloadName, flow.importTableIds, connectionConfig, jobConfig);
+      }, undefined, undefined, undefined, undefined, connectionConfig);
       await waitForStep(tabId, step.label, step.saveSelector, runId, step.filename);
       if (step.id === "source" || step.id === "destination") {
         await rememberConnectionSequence(template.id, connectionSequence);
@@ -1807,6 +2094,10 @@ async function runConfiguredFlow(tabId, flow = {}) {
       // source/destination selector.
       if (step.id === "source" && savedEntity?.name) sourceConfig.name = savedEntity.name;
       if (step.id === "destination" && savedEntity?.name) destinationConfig.name = savedEntity.name;
+      if (step.id === "source" || step.id === "destination") {
+        runSnapshot.connections[step.id] = savedEntity?.name || connectionConfig?.name || "";
+        await saveRunSnapshot({ ...runSnapshot, connections: { ...runSnapshot.connections } });
+      }
     }
     if (selectedSteps.has("publish")) {
       if (!selectedJobSteps.length || !runMetadata.jobNames.length) throw new Error("Publish requires an Export or Import job in the flow.");
@@ -1842,6 +2133,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
 
 async function runFullSequence(tabId, templateId, connectionPurpose) {
   return runConfiguredFlow(tabId, {
+    origin: "sanity",
     templateId,
     connectionPurpose,
     steps: ["dataModel", "dataViewer", "source", "destination", "export", "import", "publish", "verify"],
@@ -1859,32 +2151,6 @@ async function runFullSequence(tabId, templateId, connectionPurpose) {
     staggerJobs: true,
     allowImportFallback: true
   });
-}
-
-async function runImportJob(tabId, tableIds, schedule) {
-  if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
-  const runId = crypto.randomUUID();
-  activeSequences.set(tabId, { runId, cancelled: false });
-  let failed = false;
-  try {
-    // Keep standalone Import Job dependent on the selected editable CSVs.
-    // Unlike E2E, it must never silently substitute a different table set.
-    const importConfig = await buildImportConfig(tableIds);
-    const task = TASKS["importContacts.js"];
-    await setE2EStatus("Running: Import Job", tabId);
-    await runTask(tabId, "importContacts.js", { runId, stepId: "import-job", saveSelector: task.saveSelector }, schedule, importConfig);
-    await waitForStep(tabId, "Import Job", task.saveSelector, runId, "import-job");
-  } catch (error) {
-    if (!/stopped by the user/i.test(error.message || "")) {
-      failed = true;
-      await setE2EStatus(`Failed: Import Job — ${error.message || error}`, tabId);
-    }
-    throw error;
-  } finally {
-    if (activeSequences.get(tabId)?.runId === runId) activeSequences.delete(tabId);
-    if (!failed) await setE2EStatus("", tabId);
-    await clearFlowDraft();
-  }
 }
 
 async function runPublishAll(tabId) {
@@ -2010,6 +2276,18 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "set-import-schedule-time") {
+    const tabId = sender.tab?.id;
+    const inputId = String(message.inputId || "");
+    if (!tabId || !inputId) {
+      sendResponse({ ok: false, error: "Import schedule time is missing its CDP input." });
+      return undefined;
+    }
+    typeJetInput(tabId, inputId, String(message.value || ""), "Import schedule time")
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
   if (message?.type === "apply-new-scheduler") {
     const tabId = sender.tab?.id;
     if (!tabId) {
@@ -2122,6 +2400,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === "run-import-job") {
     runConfiguredFlow(message.tabId, {
+      origin: "independent",
       templateId: message.templateId,
       connectionPurpose: message.connectionPurpose,
       steps: ["import"],
@@ -2143,13 +2422,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const isExport = message.filename === "exportJob.js";
     const isResponsys = message.filename === "importJob.js";
     const flow = {
+      origin: "independent",
       templateId: message.templateId,
       connectionPurpose: message.connectionPurpose,
       steps: [isExport ? "export" : "import"],
       exportPayloadName: message.exportPayloadName || "Customer",
+      exportFilterRecords: message.filterRecords || message.filterRec || "UPDATED",
+      exportPayloadType: message.exportPayloadType || message.payloadType || "data-object",
       importTableIds: isResponsys ? ["customer"] : (message.tableIds || ["customer"]),
       exportSchedule: message.schedule,
       importSchedule: message.schedule,
+      importVariant: isResponsys ? "responsys" : "generic",
       staggerJobs: false
     };
     runConfiguredFlow(message.tabId, flow).then(() => sendResponse({ ok: true })).catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
@@ -2193,7 +2476,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "run-custom-flow") {
-    runConfiguredFlow(message.tabId, { ...message.flow, templateId: message.templateId, connectionPurpose: message.connectionPurpose })
+    runConfiguredFlow(message.tabId, { ...message.flow, origin: "custom-flow", templateId: message.templateId, connectionPurpose: message.connectionPurpose })
       .then(() => sendResponse({ ok: true }))
       .catch((error) => {
         console.error("CDP custom flow failed", error);
