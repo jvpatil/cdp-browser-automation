@@ -25,13 +25,15 @@ Starter profiles/templates are bundled in `config/transfer-catalog.json`. They a
 
 | Action | Purpose |
 | --- | --- |
-| Run Sanity Flow | Runs Data Viewer (Customer + ContactPoint), Source, Destination, Export, Import, Publish, and Verify in the safe order. |
+| Run Sanity Flow | Creates a Profile Data Model with its default attributes, then runs Data Viewer (Customer + ContactPoint), Source, Destination, Export, Import, Publish, and Verify in the safe order. |
 | Customize flow | Runs a selected safe subset of Data Viewer, Source, Destination, Export, Import, Publish, and Verify. |
 | Create Source / Destination | Creates that side of the selected transfer template. |
 | Import Job | Creates one ingest job for one or more selected tables. |
 | Export Job | Creates one export job for the selected payload. |
 | Import Responsys Profile | Runs the separate Responsys ingest automation. |
 | Data Viewer Record | Creates or dry-runs records for selected CDP tables. |
+| Data Models | Creates selected custom data objects, or dry-runs the object setup. |
+| Add New Attributes | Adds deliberately chosen new attributes to an existing custom object. |
 | Publish all Data feeds | Publishes every selectable feed on the Publish Changes page. |
 
 The popup and browser status pill display the active stage. Either Stop action cancels the active flow and reloads the current CDP route to remove stale automation.
@@ -51,11 +53,36 @@ Import preserves CSV headers exactly as authored:
 
 To add a table, add its catalog entry and CSV fragment, then reload the extension. Do not edit generated browser storage directly.
 
+## Data Model test columns
+
+`config/data-model-columns.json` defines the default attributes created for each Data Model object group. Each entry has a `name` and CDP `dataType`; the initial Profile defaults are Email, FirstName, LastName, Age, and BirthDate.
+
+When creating an object, its **Parent** selector can be left as **None**, set to **Customer** or **Account**, or set to **Other** and given an exact custom object name. After the object and its configured attributes are saved, the automation creates the CDP relationship with the new object as the child. CDP may add the compatible parent ID fields to that child automatically.
+
+In **Add New Attributes**, choose the object group and enter the exact existing object name. Provide only the new attributes to add: rename them, change their type, remove them, or add more. **Load JSON** can populate the extension list for the selected group.
+
+Use **Load JSON** to replace the selected group’s form rows for the current run. The file must be a JSON object whose keys are attribute names and values are CDP data types:
+
+```json
+{
+  "Email": "string",
+  "FirstName": "string",
+  "Age": "int",
+  "BirthDate": "date"
+}
+```
+
+Supported types are `string`, `int`, `bigint`, `decimal`, `date`, `timestamp`, and `boolean`. Uploaded and edited rows are cleared after success, failure, or Stop; edit `config/data-model-columns.json` to change reusable defaults.
+
+**Data Models** and **Add New Attributes** are intentionally separate. This lets you add new attributes to a known existing object without creating another table, and avoids accidentally reapplying defaults to an older object while an object-creation test is running.
+
 ## Scheduling and file limitations
 
-Import and Export support **On-demand** or **Scheduled** mode. Scheduled mode offers Hourly, Daily, or Weekly frequency and Immediate (next exact hour) or +1 Hour start time.
+Every Import, Export, and Responsys job scheduler has a **New / Legacy** selector. New is the default: it uses CDP’s current schedule UI with Daily, Weekly (selected days), Monthly (selected days), or Monthly (selected dates), followed by **Specific** or **Interval** timing.
 
-When a flow contains both Export and Import, Export is scheduled at the next exact hour and Import one hour later. This stagger overrides individual flow start-time controls.
+New Specific timing defaults to **now +15 minutes** for Export and **now +30 minutes** for Import/Responsys; choose another preset or a custom time to change it. New Interval timing accepts an hourly interval, start time, and end time. The current weekday/date is selected automatically for the non-Daily frequencies.
+
+Legacy preserves the previous On-demand/Scheduled controls: Hourly, Daily, or Weekly with Immediate (next exact hour) or +1 Hour. A flow containing both jobs retains the one-hour stagger only when both flow schedulers use Legacy. New schedules retain their explicit Export +15 minute / Import +30 minute defaults.
 
 Current Import/Source support is limited to CSV or JSON. gzip and PGP import processing are not supported. Destination/export compression settings are separate from Import and are applied only where the relevant CDP destination/job control exists. For a Destination template value of `None`, the extension leaves CDP's default destination compression selection unchanged.
 

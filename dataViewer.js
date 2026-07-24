@@ -290,6 +290,11 @@
       .find((button) => visible(button) && /^discard changes$/i.test(text(button)) && !button.disabled), "Discard changes confirmation", 10000);
     click(discard);
   };
+  const auditValue = (field, value) => {
+    if (/(password|secret|token|private.?key|auth.*key)/i.test(field)) return "[redacted]";
+    const textValue = String(value ?? "").replace(/\s+/g, " ").trim();
+    return textValue.length > 120 ? `${textValue.slice(0, 117)}...` : textValue;
+  };
 
   window.runCdpDataViewer = async ({ tables = [], recordsPerTable = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false } = {}) => {
     if (!Array.isArray(tables) || !tables.length || tables.some((table) => !table?.cdpTable)) throw new Error("At least one Data Viewer table is required.");
@@ -306,6 +311,8 @@
       await selectDataObject(table.cdpTable);
       generatedObjectIds[table.cdpTable] = [];
       for (let tableSequence = 1; tableSequence <= recordsPerTable; tableSequence += 1) {
+        const audit = { table: table.cdpTable, sequence: tableSequence, fields: [], keys: [], actions: [] };
+        if (tableSequence === 1) audit.actions.push({ action: "Select", target: "Data object", value: table.cdpTable });
         setProgress(`${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
         const add = await wait(() => {
           const host = document.getElementById("add");
@@ -313,6 +320,7 @@
           return visible(button) && !button.disabled && button.getAttribute("aria-disabled") !== "true" ? button : null;
         }, "the Add record button", 15000);
         click(add);
+        audit.actions.push({ action: "Click", target: "Add record" });
         // CDP can take substantially longer than the visible page shell to
         // resolve a table's metadata and create the Add record drawer.
         const drawer = await wait(currentDrawer, "the record drawer", 60000);
@@ -328,16 +336,27 @@
         setProgress(`Filling ${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
         const skippedFields = [];
         for (const field of fields) {
+          // Primary Email is the meaningful contact value for Customer and
+          // ContactPoint. Do not invent an alternate address unless the user
+          // explicitly configured one in the per-table editor/JSON.
+          if (/^alternateemails?$/i.test(field) && !Object.hasOwn(configuredValues, field)) {
+            audit.actions.push({ action: "Skip", target: field, value: "not configured" });
+            continue;
+          }
           const configuredValue = Object.hasOwn(configuredValues, field)
             ? configuredValues[field]
             : defaultFieldValue(field, context);
           const value = configuredValueFor(configuredValue, field, table.cdpTable, drawer, context, recordsPerTable);
           try {
             await chooseValue(drawer, field, value);
+            audit.fields.push({ field, value: auditValue(field, value) });
+            audit.actions.push({ action: "Type", target: field, value: auditValue(field, value) });
           } catch (error) {
             // First-page attributes are optional. Some masked/JET-only controls
             // cannot be written through the DOM, but must not block Next.
             skippedFields.push(field);
+            audit.fields.push({ field, value: auditValue(field, value), skipped: true });
+            audit.actions.push({ action: "Skip", target: field, value: auditValue(field, value) });
             console.warn(`Data Viewer skipped optional ${field}`, error);
           }
         }
@@ -349,6 +368,7 @@
         await sleep(1000);
         setProgress(`Clicking Next for ${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
         await clickDrawerAction("Next");
+        audit.actions.push({ action: "Click", target: "Next" });
         setProgress(`Filling ${table.cdpTable} key fields`);
         await wait(() => findField(drawer, "SourceID"), "the source ID fields", 60000);
         const keyFields = sourceKeyFieldNames(drawer);
@@ -367,24 +387,31 @@
               || sourceObjectIdFor(referencedTable, context, tableSequence);
           }
           await chooseValue(drawer, field, value);
+          audit.keys.push({ field, value: auditValue(field, value) });
+          audit.actions.push({ action: "Type", target: field, value: auditValue(field, value) });
         }
         for (const [field, referencedTable] of Object.entries(table.recordConfig?.relationships || {})) {
           const referencedId = generatedObjectIds[referencedTable]?.[tableSequence - 1];
-          if (referencedId) await chooseValue(drawer, field, referencedId);
+          if (referencedId) {
+            await chooseValue(drawer, field, referencedId);
+            audit.actions.push({ action: "Type", target: field, value: auditValue(field, referencedId) });
+          }
         }
         await sleep(1000);
         if (saveRecords) {
           setProgress(`Saving ${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
           await clickDrawerAction("Save");
+          audit.actions.push({ action: "Click", target: "Save" });
         } else {
           setProgress(`Discarding test ${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
           await discardDrawerChanges();
+          audit.actions.push({ action: "Click", target: "Discard changes" });
         }
         await wait(() => drawerClosed() ? true : null, "the saved record drawer to close", 30000);
         generatedObjectIds[table.cdpTable][tableSequence - 1] = sourceObjectId;
-        completed.push(`${table.cdpTable} #${tableSequence}`);
+        completed.push({ ...audit, objectId: sourceObjectId, outcome: saveRecords ? "Saved" : "Dry run discarded" });
       }
     }
-    return { tables: completed, recordsPerTable, sourceId: resolvedSourceId, saved: true };
+    return { records: completed, recordsPerTable, sourceId: resolvedSourceId, saved: Boolean(saveRecords) };
   };
 })();

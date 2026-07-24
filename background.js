@@ -36,12 +36,31 @@ const TASKS = {
   // The Oracle JET input ID contains `|`, which must be escaped when queried
   // as CSS by waitForPageElement.
   "dataViewer.js": { path: "/data/", root: "dataViewer", readySelector: "#data-object-dropdown\\|input" },
+  // Handles both object creation and attribute creation on the Data Model page.
+  "dataModel.js": { path: "/data/", root: "dataModel", readySelector: ".oj-cxu-side-nav .data-obj-list" },
   "publish.js": { path: "/data/", root: "publishChanges" },
   "integrationStatus.js": { path: "/data/", root: "integrations" }
 };
 
 let tableCatalogPromise;
 let dataViewerRecordConfigPromise;
+let dataModelColumnConfigPromise;
+
+async function loadDataModelColumnConfig() {
+  if (!dataModelColumnConfigPromise) {
+    dataModelColumnConfigPromise = fetch(chrome.runtime.getURL("config/data-model-columns.json"))
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Could not read config/data-model-columns.json.");
+        return response.json();
+      })
+      .then((config) => {
+        const groups = config?.groups && typeof config.groups === "object" && !Array.isArray(config.groups) ? config.groups : null;
+        if (!groups) throw new Error("config/data-model-columns.json must contain a groups object.");
+        return { groups };
+      });
+  }
+  return dataModelColumnConfigPromise;
+}
 
 async function loadDataViewerRecordConfig() {
   if (!dataViewerRecordConfigPromise) {
@@ -201,8 +220,7 @@ async function selectedTransferTemplate(templateId) {
 }
 
 async function nextConnectionSequence(templateId) {
-  const now = new Date();
-  const dateTag = `${String(now.getDate()).padStart(2, "0")}${now.toLocaleString("en-US", { month: "short" })}${String(now.getFullYear()).slice(-2)}`;
+  const dateTag = dateTagForName();
   // CDP is the authority for collisions. A local counter can be advanced by
   // an interrupted attempt, so always begin with the unsuffixed base name.
   return { dateTag, ordinal: 1 };
@@ -229,7 +247,8 @@ function connectionProviderCode(type) {
 }
 
 function dateTagForName(date = new Date()) {
-  return `${String(date.getDate()).padStart(2, "0")}${date.toLocaleString("en-US", { month: "short" })}${String(date.getFullYear()).slice(-2)}`;
+  const part = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${part(date.getMonth() + 1)}${part(date.getDate())}_${part(date.getHours())}${part(date.getMinutes())}${part(date.getSeconds())}`;
 }
 
 function templateShortName(template, providerCode) {
@@ -255,9 +274,7 @@ function connectionRuntime(template, side, sequence = null) {
   const connection = template[side];
   const purpose = String(template.connectionPurpose || "")
     .replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 28);
-  const now = new Date();
-  const fallbackDate = `${String(now.getDate()).padStart(2, "0")}${now.toLocaleString("en-US", { month: "short" })}${String(now.getFullYear()).slice(-2)}`;
-  const dateTag = sequence?.dateTag || fallbackDate;
+  const dateTag = sequence?.dateTag || dateTagForName();
   const ordinal = Number(sequence?.ordinal || 1);
   const name = [connectionProviderCode(connection.type), purpose, `${dateTag}${ordinal > 1 ? `_${String(ordinal).padStart(2, "0")}` : ""}`].filter(Boolean).join("_");
   return {
@@ -298,16 +315,49 @@ async function setE2EStatus(status = "", tabId) {
   const activeRun = activeSequences.get(tabId);
   if (activeRun) activeRun.status = status;
   await chrome.storage.local.set({ e2eStatus: status });
+  if (status) await appendRunLog(status, status.startsWith("Failed:") ? "error" : "info");
 }
 
 async function clearFlowDraft() {
   await chrome.storage.local.remove("flowDraft");
 }
 
+async function appendRunLog(message, level = "info", group = "", action = "") {
+  const { pendingRun = null } = await chrome.storage.local.get({ pendingRun: null });
+  if (!pendingRun || !message) return;
+  const logs = Array.isArray(pendingRun.logs) ? pendingRun.logs : [];
+  const previous = logs.at(-1);
+  if (previous?.message === message && previous?.group === group && previous?.action === action) return;
+  await chrome.storage.local.set({
+    pendingRun: { ...pendingRun, logs: [...logs, { at: Date.now(), level, group, action, message: String(message) }].slice(-500) }
+  });
+}
+
+async function appendDataViewerRunLog(result, tables, { recordsPerTable, sourceId, saveRecords }) {
+  const names = tables.map((table) => table.cdpTable).join(", ");
+  await appendRunLog(`Data Viewer selection: ${names} · ${recordsPerTable} record${recordsPerTable === 1 ? "" : "s"} per table · Source ID: ${sourceId}.`);
+  for (const record of result?.records || []) {
+    const group = `${record.table} · Record ${record.sequence}`;
+    await appendRunLog(`${record.outcome || "Completed"} · Object ID: ${record.objectId || "—"}.`, "info", group);
+    for (const item of record.actions || []) {
+      const detail = [item.target, item.value ? `= ${item.value}` : ""].filter(Boolean).join(" ");
+      await appendRunLog(detail, item.action === "Skip" ? "warning" : "info", group, item.action || "Action");
+    }
+  }
+}
+
 async function finalizeRunHistory(outcome, detail = "") {
   const { pendingRun = null, runHistory = [] } = await chrome.storage.local.get({ pendingRun: null, runHistory: [] });
   if (!pendingRun) return;
-  const entry = { ...pendingRun, outcome, detail: detail || pendingRun.details || "", finishedAt: Date.now() };
+  const terminalMessage = outcome === "completed" ? "Run completed." : outcome === "stopped" ? "Run stopped." : `Run failed: ${detail || pendingRun.details || "Unknown error"}`;
+  const logs = Array.isArray(pendingRun.logs) ? pendingRun.logs : [];
+  const entry = {
+    ...pendingRun,
+    outcome,
+    detail: detail || pendingRun.details || "",
+    finishedAt: Date.now(),
+    logs: [...logs, { at: Date.now(), level: outcome === "failed" ? "error" : outcome, message: terminalMessage }].slice(-500)
+  };
   await chrome.storage.local.set({ runHistory: [entry, ...(Array.isArray(runHistory) ? runHistory : [])].slice(0, 5), lastRun: entry });
   await chrome.storage.local.remove("pendingRun");
 }
@@ -530,11 +580,15 @@ async function connectionNameState(tabId, side) {
 }
 
 async function typeJetConnectionName(tabId, value) {
+  return typeJetInput(tabId, "source-name-input|input", value, "Connection Name");
+}
+
+async function typeJetInput(tabId, inputId, value, label = "input", commitKey = "Tab") {
   await chrome.scripting.executeScript({
-    target: { tabId }, world: "MAIN",
-    func: () => {
-      const input = document.getElementById("source-name-input|input");
-      if (!input || input.disabled || input.readOnly) throw new Error("Connection Name input is unavailable.");
+    target: { tabId }, world: "MAIN", args: [inputId, label],
+    func: (targetId, inputLabel) => {
+      const input = document.getElementById(targetId);
+      if (!input || input.disabled || input.readOnly) throw new Error(`${inputLabel} input is unavailable.`);
       input.scrollIntoView({ block: "center" });
       input.focus();
       input.select();
@@ -560,15 +614,370 @@ async function typeJetConnectionName(tabId, value) {
       await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "char", ...event, text: character, unmodifiedText: character });
       await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...event });
     }
-    // Oracle JET commits this particular field on focus traversal. A synthetic
-    // blur is not equivalent; a real Tab key causes valueChanged and runs the
-    // form's generateUniqueId handler.
-    const tabEvent = { key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: 0 };
-    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...tabEvent });
-    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...tabEvent });
+    // JET requires a trusted completion key. Most form inputs commit on Tab;
+    // the Data Model object search intentionally filters only on Enter.
+    const completion = commitKey === "Enter"
+      ? { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 0 }
+      : { key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: 0 };
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...completion });
+    // JET's valueChanged handler is attached to the DOM keydown/focus
+    // transition. rawKeyDown alone types correctly but can leave Object ID
+    // blank on the Data Model drawer; include the normal trusted keydown so
+    // the browser performs the same Tab transition as a user.
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyDown", ...completion });
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...completion });
   } finally {
     if (attached) await chrome.debugger.detach(target).catch(() => undefined);
   }
+}
+
+const schedulerSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function newSchedulerRunAt(schedule, presetKey, customTimeKey) {
+  const preset = presetKey === "custom" ? "custom" : schedule[presetKey];
+  const customTime = schedule[customTimeKey];
+  const result = new Date();
+  if (preset === "custom") {
+    if (!/^\d{2}:\d{2}$/.test(String(customTime || ""))) throw new Error("Enter a custom schedule time.");
+    const [hours, minutes] = customTime.split(":").map(Number);
+    result.setHours(hours, minutes, 0, 0);
+    if (result <= new Date()) result.setDate(result.getDate() + 1);
+    return result;
+  }
+  if (preset === "nextHour" || preset === "plusOneHour") {
+    result.setHours(result.getHours() + (preset === "plusOneHour" ? 2 : 1), 0, 0, 0);
+  } else {
+    result.setMinutes(result.getMinutes() + (preset === "in30" ? 30 : 15), 0, 0);
+  }
+  return result;
+}
+
+function newSchedulerTimeText(date) {
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+}
+
+function normalizeNewSchedulerConfig(schedule = {}, kind = "import") {
+  // A Custom Flow saved before the New Scheduler UI existed can omit its
+  // per-step schedule. Treat a missing schedule as the new safe default;
+  // retain an explicitly selected Legacy scheduler unchanged.
+  if (schedule?.schedulerUi === "legacy") return schedule;
+  const isExport = kind === "export";
+  return {
+    schedulerUi: "new",
+    mode: "scheduled",
+    frequency: "Daily",
+    timeMode: "specific",
+    specificPreset: isExport ? "in15" : "in30",
+    intervalHours: "1",
+    intervalStartPreset: isExport ? "in15" : "in30",
+    intervalEndTime: "23:59",
+    ...schedule,
+    // New Scheduler never uses the old Manual/On-demand job mode.
+    mode: "scheduled"
+  };
+}
+
+async function readNewSchedulerState(tabId, probe) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [probe],
+    func: (requestedProbe) => {
+      const visible = (element) => Boolean(element?.getClientRects?.().length);
+      const rectangle = (element) => {
+        if (!element || !visible(element)) return null;
+        const box = element.getBoundingClientRect();
+        return { x: box.left + (box.width / 2), y: box.top + (box.height / 2) };
+      };
+      if (requestedProbe.type === "ready") {
+        // Import starts with On demand, which renders the outer settings
+        // component but deliberately withholds #times and the recurring
+        // controls until the user selects Recurring.
+        return Boolean(document.querySelector("oj-cx-unity-job-schedule-settings") || document.querySelector("oj-cx-unity-job-schedule-recurring"));
+      }
+      if (requestedProbe.type === "frequency-input") return rectangle(document.getElementById("requency|input"));
+      if (requestedProbe.type === "frequency-option") {
+        const wanted = String(requestedProbe.value || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const option = [...document.querySelectorAll("[role='gridcell']")]
+          .find((element) => visible(element) && (element.textContent || "").replace(/\s+/g, " ").trim().toLowerCase() === wanted);
+        return rectangle(option);
+      }
+      if (requestedProbe.type === "frequency-value") return document.getElementById("requency|input")?.value || "";
+      if (requestedProbe.type === "recurring-run") {
+        // Confirmed on the live Import page. CDP/JET uses a lowercase value
+        // and generates only the ui-id portion of the radio id dynamically.
+        const runType = document.querySelector("oj-cx-unity-job-schedule-settings oj-radioset#recurring-or-manual, oj-radioset#recurring-or-manual");
+        const input = runType?.querySelector("input[name='recurring-or-manual'][value='recurring']") || null;
+        const manual = runType?.querySelector("input[name='recurring-or-manual'][value='onDemand']") || null;
+        const labelFor = (control) => [...document.querySelectorAll("label")].find((label) => label.htmlFor === control?.id) || control?.closest(".oj-choice-item, label") || control;
+        const manualExists = Boolean(manual);
+        if (!input) return { exists: false, manualExists, checked: false, rect: null };
+        return { exists: true, manualExists, checked: Boolean(input.checked), rect: rectangle(labelFor(input)) };
+      }
+      if (requestedProbe.type === "time-mode") {
+        const input = document.querySelector(`input[name="specific_or_interval"][value="${requestedProbe.value}"]`);
+        return { checked: Boolean(input?.checked), rect: rectangle(document.querySelector(`label[for="${input?.id || ""}"]`) || input?.closest(".oj-choice-item") || input) };
+      }
+      if (requestedProbe.type === "time-input") {
+        const input = [...document.querySelectorAll("#times oj-input-time input")]
+          .find((element) => visible(element) && !element.id.startsWith("interval_"));
+        return input?.id || "";
+      }
+      if (requestedProbe.type === "interval-input") return document.getElementById(`${requestedProbe.id}|input`)?.id || "";
+      if (requestedProbe.type === "calendar-choice") {
+        const root = document.querySelector("oj-cx-unity-job-schedule-recurring, oj-cx-unity-job-schedule-settings");
+        const input = [...(root?.querySelectorAll(`input[value="${requestedProbe.value}"]`) || [])]
+          .find((element) => visible(element) || visible(element.closest("oj-buttonset-many, .oj-choice-item")));
+        return { checked: Boolean(input?.checked), rect: rectangle(root?.querySelector(`label[for="${input?.id || ""}"]`) || input?.closest(".oj-button-toggle,.oj-choice-item") || input) };
+      }
+      return null;
+    }
+  });
+  return result;
+}
+
+async function waitForNewSchedulerState(tabId, probe, label, predicate = Boolean, timeout = 30000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const state = await readNewSchedulerState(tabId, probe);
+    if (predicate(state)) return state;
+    await schedulerSleep(150);
+  }
+  throw new Error(`New scheduler: timed out waiting for ${label}.`);
+}
+
+async function trustedSchedulerClick(tabId, point, label) {
+  if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) throw new Error(`New scheduler: ${label} is not available.`);
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    const x = Math.round(point.x); const y = Math.round(point.y);
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", buttons: 0 });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 });
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => undefined);
+  }
+}
+
+async function applyTrustedNewScheduler(tabId, schedule = {}) {
+  const normalized = { frequency: "Daily", timeMode: "specific", specificPreset: "in15", intervalHours: "1", intervalStartPreset: "in15", intervalEndTime: "23:59", ...schedule };
+  await waitForNewSchedulerState(tabId, { type: "ready" }, "schedule controls", Boolean, 120000);
+
+  // Import jobs can open with Manual selected; Export has Recurring fixed. In
+  // both cases, a New Scheduler configuration must explicitly be recurring.
+  const recurring = await readNewSchedulerState(tabId, { type: "recurring-run" });
+  if (recurring?.manualExists && !recurring.exists) {
+    throw new Error("New scheduler: CDP exposed Manual but not the Recurring run option.");
+  }
+  if (recurring?.exists && !recurring.checked) {
+    await trustedSchedulerClick(tabId, recurring.rect, "Recurring run option");
+    await waitForNewSchedulerState(tabId, { type: "recurring-run" }, "Recurring run selection", (state) => state?.checked);
+  }
+
+  await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, { type: "frequency-input" }, "frequency selector"), "frequency selector");
+  await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, { type: "frequency-option", value: normalized.frequency }, `${normalized.frequency} option`), "frequency option");
+  await waitForNewSchedulerState(tabId, { type: "frequency-value" }, `${normalized.frequency} selection`, (value) => String(value).trim().toLowerCase() === String(normalized.frequency).trim().toLowerCase());
+
+  if (normalized.frequency !== "Daily") {
+    const now = new Date();
+    const value = normalized.frequency === "Weekly, on selected Days" ? String(now.getDay() + 1) : String(now.getDate());
+    const calendar = await waitForNewSchedulerState(tabId, { type: "calendar-choice", value }, "calendar choice", (state) => state?.rect);
+    if (!calendar.checked) await trustedSchedulerClick(tabId, calendar.rect, "calendar choice");
+    await waitForNewSchedulerState(tabId, { type: "calendar-choice", value }, "calendar selection", (state) => state?.checked);
+  }
+
+  const timeMode = await waitForNewSchedulerState(tabId, { type: "time-mode", value: normalized.timeMode }, `${normalized.timeMode} option`, (state) => state?.rect);
+  if (!timeMode.checked) await trustedSchedulerClick(tabId, timeMode.rect, `${normalized.timeMode} option`);
+  await waitForNewSchedulerState(tabId, { type: "time-mode", value: normalized.timeMode }, `${normalized.timeMode} selection`, (state) => state?.checked);
+
+  if (normalized.timeMode === "interval") {
+    const hours = Number.parseInt(normalized.intervalHours, 10);
+    if (!Number.isInteger(hours) || hours < 1 || hours > 24) throw new Error("Interval must be a whole number from 1 to 24 hours.");
+    const intervalId = await waitForNewSchedulerState(tabId, { type: "interval-input", id: "interval" }, "interval input", Boolean);
+    await typeJetInput(tabId, intervalId, String(hours), "Interval");
+    const startId = await waitForNewSchedulerState(tabId, { type: "interval-input", id: "interval_start_time" }, "interval start time", Boolean);
+    await typeJetInput(tabId, startId, newSchedulerTimeText(newSchedulerRunAt(normalized, "intervalStartPreset", "intervalStartTime")), "Interval start time");
+    const endId = await waitForNewSchedulerState(tabId, { type: "interval-input", id: "interval_end_time" }, "interval end time", Boolean);
+    await typeJetInput(tabId, endId, newSchedulerTimeText(newSchedulerRunAt({ ...normalized, customTime: normalized.intervalEndTime || "23:59" }, "custom", "customTime")), "Interval end time");
+  } else {
+    const timeInputId = await waitForNewSchedulerState(tabId, { type: "time-input" }, "specific time", Boolean);
+    const runAt = newSchedulerRunAt(normalized, "specificPreset", "customTime");
+    await typeJetInput(tabId, timeInputId, newSchedulerTimeText(runAt), "Specific time");
+    return { ok: true, scheduledAt: runAt.getTime() };
+  }
+  return { ok: true };
+}
+
+async function installNewSchedulerRelay(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId }, world: "ISOLATED",
+    func: () => {
+      if (window.__cdpNewSchedulerRelayInstalled) return;
+      window.__cdpNewSchedulerRelayInstalled = true;
+      window.addEventListener("cdp-new-scheduler-request", async (event) => {
+        try {
+          const schedule = JSON.parse(String(event.detail || "{}"));
+          const result = await chrome.runtime.sendMessage({ type: "apply-new-scheduler", schedule });
+          window.dispatchEvent(new CustomEvent("cdp-new-scheduler-result", { detail: JSON.stringify(result || {}) }));
+        } catch (error) {
+          window.dispatchEvent(new CustomEvent("cdp-new-scheduler-result", { detail: JSON.stringify({ ok: false, error: error.message || String(error) }) }));
+        }
+      });
+    }
+  });
+}
+
+function startTrustedNewSchedulerWatcher(tabId, schedule) {
+  // Run independently of the bookmark's old schedule code. It starts before
+  // the form reaches Schedule, waits for the real controls, and reports the
+  // verified state back into the page for the Save gate below.
+  void applyTrustedNewScheduler(tabId, schedule)
+    .then((result) => chrome.scripting.executeScript({
+      target: { tabId }, world: "MAIN", args: [result],
+      func: (schedulerResult) => {
+        window.__cdpScheduledRunAt = schedulerResult.scheduledAt || null;
+        window.__cdpNewScheduleApplied = true;
+        window.__cdpNewScheduleError = null;
+      }
+    }))
+    .catch((error) => chrome.scripting.executeScript({
+      target: { tabId }, world: "MAIN", args: [error.message || String(error)],
+      func: (message) => {
+        window.__cdpNewScheduleError = new Error(message);
+        window.__cdpNewScheduleApplied = false;
+      }
+    }).catch(() => undefined));
+}
+
+async function installNewSchedulerSaveGate(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN",
+    func: () => {
+      if (window.__cdpNewSchedulerSaveGateInstalled) return;
+      window.__cdpNewSchedulerSaveGateInstalled = true;
+      const visible = (element) => Boolean(element?.getClientRects?.().length);
+      const plainSaveButton = () => [...document.querySelectorAll("button, oj-button")]
+        .find((element) => {
+          const button = element.matches("button") ? element : element.querySelector("button");
+          return button && visible(element) && !button.disabled && (element.textContent || "").replace(/\s+/g, " ").trim() === "Save";
+        });
+      const requestScheduler = () => {
+        if (window.__cdpNewScheduleRequestStarted) return;
+        window.__cdpNewScheduleRequestStarted = true;
+        window.addEventListener("cdp-new-scheduler-result", (event) => {
+          try {
+            const result = JSON.parse(String(event.detail || "{}"));
+            if (!result?.ok) throw new Error(result?.error || "CDP did not accept the selected schedule.");
+            window.__cdpScheduledRunAt = result.scheduledAt || null;
+            window.__cdpNewScheduleApplied = true;
+            window.__cdpNewScheduleError = null;
+          } catch (error) {
+            window.__cdpNewScheduleError = error;
+            window.__cdpNewScheduleApplied = false;
+          }
+        }, { once: true });
+        window.dispatchEvent(new CustomEvent("cdp-new-scheduler-request", {
+          detail: JSON.stringify(window.__cdpSchedule || {})
+        }));
+      };
+      document.addEventListener("click", (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target || window.__cdpNewScheduleSaved || !target.closest("oj-button#saveNclose-create-job, #saveNclose-create-job")) return;
+        if (window.__cdpNewScheduleApplied) return;
+        event.preventDefault(); event.stopImmediatePropagation();
+        requestScheduler();
+        const deadline = Date.now() + 125000;
+        const waitForScheduler = () => {
+          if (window.__cdpNewScheduleApplied) {
+            window.__cdpNewScheduleSaved = true;
+            const save = plainSaveButton()?.querySelector("button") || plainSaveButton() || target;
+            save.click();
+            return;
+          }
+          if (window.__cdpNewScheduleError || Date.now() >= deadline) {
+            alert(window.__cdpNewScheduleError?.message || "New scheduler did not finish before Save.");
+            return;
+          }
+          setTimeout(waitForScheduler, 150);
+        };
+        waitForScheduler();
+      }, true);
+    }
+  });
+}
+
+async function dataModelObjectState(tabId) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN",
+    func: () => {
+      const name = document.getElementById("objNameInput|input");
+      const objectId = document.getElementById("objIdInput|input");
+      const messages = [...document.querySelectorAll("[role=alert], [role=tooltip], .oj-message, .oj-message-detail, .oj-messages, .oj-popup-content")]
+        .filter((element) => element.getClientRects().length)
+        .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .join(" ");
+      return { name: name?.value || "", objectId: objectId?.value || "", invalid: name?.getAttribute("aria-invalid") === "true", messages };
+    }
+  });
+  return result || {};
+}
+
+async function commitJetDataModelObjectName(tabId, objectName) {
+  const candidate = String(objectName || "").replace(/_\d{2}$/, "");
+  await typeJetInput(tabId, "objNameInput|input", candidate, "Object name");
+  for (let attempt = 0; attempt < 28; attempt += 1) {
+    const state = await dataModelObjectState(tabId);
+    if (String(state.objectId || "").trim() && !state.invalid) return { ...state, name: candidate };
+    if (state.invalid) return { ...state, name: candidate, skipped: true, reason: state.messages || "CDP rejected this Data Model object name." };
+    await new Promise((resolve) => setTimeout(resolve, 180));
+  }
+  const state = await dataModelObjectState(tabId);
+  if (state.invalid) return { ...state, name: candidate, skipped: true, reason: state.messages || "CDP rejected this Data Model object name." };
+  throw new Error(`CDP did not generate an Object ID for ${candidate}${state.messages ? `: ${state.messages}` : ""}`);
+}
+
+async function dataModelAttributeState(tabId) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN",
+    func: () => {
+      const name = document.getElementById("attrNameInput|input");
+      const attributeId = document.getElementById("attrIdInput|input");
+      const messages = [...document.querySelectorAll("[role=alert], [role=tooltip], .oj-message, .oj-message-detail, .oj-messages, .oj-popup-content")]
+        .filter((element) => element.getClientRects().length)
+        .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .join(" ");
+      return { name: name?.value || "", attributeId: attributeId?.value || "", invalid: name?.getAttribute("aria-invalid") === "true", messages };
+    }
+  });
+  return result || {};
+}
+
+async function commitJetDataModelAttributeName(tabId, attributeName) {
+  await typeJetInput(tabId, "attrNameInput|input", attributeName, "Attribute name");
+  const expectedName = String(attributeName || "").trim().toLowerCase();
+  for (let attempt = 0; attempt < 84; attempt += 1) {
+    const state = await dataModelAttributeState(tabId);
+    const actualName = String(state.name || "").trim().toLowerCase();
+    if (
+      actualName === expectedName &&
+      String(state.attributeId || "").trim() &&
+      !state.invalid
+    ) {
+      return { ...state, name: attributeName };
+    }
+    if (state.invalid) {
+      return { ...state, name: attributeName, skipped: true, reason: "Attribute name is already unavailable in CDP." };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 180));
+  }
+  const state = await dataModelAttributeState(tabId);
+  if (state.invalid) {
+    return { ...state, name: attributeName, skipped: true, reason: state.messages || "Attribute name is already unavailable in CDP." };
+  }
+  throw new Error(`CDP did not generate an Attribute ID for ${attributeName}${state.messages ? `: ${state.messages}` : ""}`);
 }
 
 async function commitJetConnectionName(tabId, connectionConfig) {
@@ -603,6 +1012,10 @@ async function installStepMonitor(tabId, { runId, stepId, saveSelector }) {
       document.addEventListener("click", (event) => {
         if (document.documentElement.dataset.cdpAutomationRunId !== activeRunId) return;
         if (!(event.target instanceof Element) || !event.target.closest(selector)) return;
+
+        // New Scheduler jobs configure the actual CDP controls from their
+        // Save gate. Do not redirect their Save and close click around it.
+        if (document.documentElement.dataset.cdpNewScheduler === "true") return;
 
         const saveButton = plainSaveButton();
         if (saveButton) {
@@ -692,11 +1105,11 @@ async function waitForStep(tabId, label, _saveSelector, runId, stepId, timeout =
           };
         }
       });
-      const saveWasTriggered = sequenceStepState.get(runId)?.has(stepId);
-      if (result?.success || saveWasTriggered) {
-        // Oracle has received the explicit Save action. Give the page a moment
-        // to persist before navigating to the next E2E stage.
-        if (saveWasTriggered && !result?.success) await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (result?.success) {
+        // Do not treat a Save click as completion. CDP can still be validating
+        // or persisting the source/destination while the next navigation would
+        // cancel the request. Advance only after its visible success message.
+        await appendRunLog(`${label} saved.`);
         return;
       }
       if (!result?.monitor) {
@@ -707,7 +1120,7 @@ async function waitForStep(tabId, label, _saveSelector, runId, stepId, timeout =
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error(`${label} timed out before Save and Close.`);
+  throw new Error(`${label} timed out waiting for CDP's save confirmation.`);
 }
 
 async function runTask(tabId, filename, monitor, schedule, importConfig, exportPayloadName, importTableIds, connectionConfig, jobConfig) {
@@ -767,9 +1180,23 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
           window.__cdpFrequencySaveDeferred = false;
           window.__cdpFrequencyOverrideSaved = false;
           window.__cdpFrequencyOverrideApplying = false;
+          window.__cdpNewScheduleOverrideInstalled = false;
+          window.__cdpNewScheduleApplying = false;
+          window.__cdpNewScheduleSaved = false;
+          window.__cdpNewScheduleApplied = false;
+          window.__cdpNewScheduleError = null;
+          window.__cdpUseWorkerScheduler = scheduleConfig?.schedulerUi === "new";
+          document.documentElement.dataset.cdpNewScheduler = scheduleConfig?.schedulerUi === "new" ? "true" : "false";
+          window.__cdpNewSchedulerSaveGateInstalled = false;
+          window.__cdpNewScheduleRequestStarted = false;
         }
       });
       await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["scheduleOverride.js"] });
+      if (schedule?.schedulerUi === "new") {
+        await installNewSchedulerRelay(tabId);
+        await installNewSchedulerSaveGate(tabId);
+        await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["newScheduleOverride.js"] });
+      }
     }
 
     if (runtimeConnectionConfig) {
@@ -999,7 +1426,7 @@ async function runDataViewerStep(tabId, flow, runId) {
   await waitForPageElement(tabId, TASKS["dataViewer.js"].readySelector, 60000);
   await chrome.scripting.executeScript({ target: { tabId }, world: "ISOLATED", files: ["dataViewerClickBridge.js"] });
   await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["dataViewer.js"] });
-  await chrome.scripting.executeScript({
+  const [{ result: dataViewerResult }] = await chrome.scripting.executeScript({
     target: { tabId }, world: "MAIN",
     args: [tables, { recordsPerTable, sourceId, saveRecords: Boolean(flow.saveRecords) }],
     func: async (dataViewerTables, options) => {
@@ -1007,6 +1434,252 @@ async function runDataViewerStep(tabId, flow, runId) {
       return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
     }
   });
+  await appendDataViewerRunLog(dataViewerResult, tables, { recordsPerTable, sourceId, saveRecords: Boolean(flow.saveRecords) });
+}
+
+const DATA_MODEL_GROUPS = ["Profile", "Behavioral", "Transactional", "Product", "Other"];
+const DATA_MODEL_ATTRIBUTE_TYPES = new Set(["string", "int", "bigint", "decimal", "date", "timestamp", "boolean"]);
+
+function dataModelDryRunName(group, purpose = "") {
+  // This is never saved. Keep the visible name aligned with jobs/connections
+  // so the drawer is easy to identify while a test is running.
+  const cleanPurpose = String(purpose || "").replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 28);
+  return [group, cleanPurpose, dateTagForName()].filter(Boolean).join("_").slice(0, 50);
+}
+
+function normalizedDataModelColumnName(value) {
+  return String(value || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function validateDataModelColumns(columns, group) {
+  if (!Array.isArray(columns) || !columns.length) throw new Error(`${group} requires at least one configured column.`);
+  const usedNames = new Set();
+  return columns.map((column, index) => {
+    const name = String(column?.name || "").trim();
+    const dataType = String(column?.dataType || "string").trim().toLowerCase();
+    if (!name || name.length > 50) throw new Error(`${group} column ${index + 1} must have a name of 1–50 characters.`);
+    if (!/^[a-z][a-z0-9 ]*$/i.test(name)) throw new Error(`${group} column ${name} has unsupported characters.`);
+    if (!DATA_MODEL_ATTRIBUTE_TYPES.has(dataType)) throw new Error(`${group} column ${name} uses unsupported data type ${dataType}.`);
+    const key = normalizedDataModelColumnName(name);
+    if (!key || usedNames.has(key)) throw new Error(`${group} has duplicate column ${name}.`);
+    usedNames.add(key);
+    return { name, dataType };
+  });
+}
+
+async function dataModelColumnsForGroup(group, columnOverrides = {}) {
+  const config = await loadDataModelColumnConfig();
+  const defaults = config.groups[group];
+  if (!Array.isArray(defaults)) throw new Error(`No default columns are configured for ${group}.`);
+  // The popup sends the complete, reviewed list for a group. This lets users
+  // edit or remove JSON defaults without the runner silently adding them back.
+  const configured = Array.isArray(columnOverrides?.[group]) ? columnOverrides[group] : defaults;
+  return validateDataModelColumns(configured, group);
+}
+
+async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {} } = {}) {
+  const tab = await chrome.tabs.get(tabId);
+  const task = TASKS["dataModel.js"];
+  await navigateAndWait(tabId, navigationUrl(tab.url, task.path, task.root));
+  await activatePageAutomationRun(tabId, runId);
+  await waitForPageElement(tabId, task.readySelector, 60000);
+  await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["dataModel.js"] });
+
+  const selectedGroups = [...new Set(groups)].filter((group) => DATA_MODEL_GROUPS.includes(group));
+  if (!selectedGroups.length) throw new Error("Select at least one Data Model object group.");
+  const createdObjects = {};
+  for (const group of selectedGroups) {
+    assertSequenceActive(tabId, runId, "Data Model dry run");
+    await appendRunLog(`${group}: opening Create data object.`, "info", `Data Model · ${group}`, "Click");
+    let saved = false;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN", args: [group],
+        func: async (selectedGroup) => window.cdpDataModelOpenGroup(selectedGroup)
+      });
+      const name = dataModelDryRunName(group, purpose);
+      const generated = await commitJetDataModelObjectName(tabId, name);
+      if (generated.skipped) {
+        await appendRunLog(`Skipped: ${generated.name}. ${generated.reason}`, "warn", `Data Model · ${group}`, "Skip");
+        continue;
+      }
+      await appendRunLog(`Object name = ${generated.name}; Object ID = ${generated.objectId}.`, "info", `Data Model · ${group}`, "Type");
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN", args: [group],
+        func: async (selectedGroup) => window.cdpDataModelValidateAndAdvance(selectedGroup)
+      });
+      await appendRunLog(`Object group = ${result.group}; settings page opened.`, "info", `Data Model · ${group}`, "Validate");
+      if (saveObjects) {
+        const [{ result: prepared }] = await chrome.scripting.executeScript({
+          target: { tabId }, world: "MAIN",
+          func: async () => window.cdpDataModelPrepareForSave()
+        });
+        await appendRunLog(`Expected number of records = ${prepared.expectedRecords} million; Save enabled.`, "info", `Data Model · ${group}`, "Click");
+        await chrome.scripting.executeScript({
+          target: { tabId }, world: "MAIN",
+          func: async () => window.cdpDataModelSave()
+        });
+        saved = true;
+        createdObjects[group] = generated.name;
+        await appendRunLog("Object saved successfully.", "info", `Data Model · ${group}`, "Save");
+      }
+    } finally {
+      if (!saved) {
+        await chrome.scripting.executeScript({
+          target: { tabId }, world: "MAIN",
+          func: async () => window.cdpDataModelCancel?.()
+        }).catch(() => undefined);
+      }
+    }
+  }
+  const configuredAttributeGroups = new Set((attributeGroups.length ? attributeGroups : (addAttributes ? selectedGroups : [])).filter((group) => DATA_MODEL_GROUPS.includes(group)));
+  if (saveObjects && configuredAttributeGroups.size) {
+    for (const [group, objectName] of Object.entries(createdObjects)) {
+      if (!configuredAttributeGroups.has(group)) continue;
+      assertSequenceActive(tabId, runId, "Data Model attribute creation");
+      await appendRunLog(`Adding configured ${group} attributes to ${objectName}.`, "info", `Data Model · ${group}`, "Attributes");
+      await runDataModelAttributesStep(tabId, runId, { group, objectName, columnOverrides });
+    }
+  }
+  if (saveObjects) {
+    for (const [group, objectName] of Object.entries(createdObjects)) {
+      const parentName = String(parentByGroup?.[group] || "").trim();
+      if (!parentName) continue;
+      if (parentName.toLowerCase() === objectName.toLowerCase()) {
+        throw new Error(`${group} cannot be its own parent object.`);
+      }
+      assertSequenceActive(tabId, runId, "Data Model relationship creation");
+      await appendRunLog(`Creating relationship: ${objectName} → ${parentName}.`, "info", `Relationship · ${group}`, "Plan");
+      await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN", args: [objectName, parentName],
+        func: async (childObjectName, relationshipParentName) => window.cdpDataModelCreateRelationship(childObjectName, relationshipParentName)
+      });
+      await appendRunLog(`Relationship saved: ${objectName} → ${parentName}.`, "info", `Relationship · ${group}`, "Save");
+    }
+  }
+  await appendRunLog(saveObjects ? "Selected Data Model objects were saved." : "Selected Data Model groups validated without saving objects.");
+  return { createdObjects };
+}
+
+async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {} } = {}) {
+  if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
+  const runId = crypto.randomUUID();
+  let failed = false;
+  let failureDetail = "";
+  const runLabel = saveObjects ? "Create Data Model Objects" : "Data Model Dry Run";
+  activeSequences.set(tabId, { runId, cancelled: false, status: `Running: ${runLabel}` });
+  await setE2EStatus(`Running: ${runLabel}`, tabId);
+  try {
+    await runDataModelStep(tabId, runId, { purpose, groups, saveObjects, attributeGroups, addAttributes, columnOverrides, parentByGroup });
+  } catch (error) {
+    failed = true;
+    failureDetail = error.message || String(error);
+    if (!/stopped by the user/i.test(error.message || "")) await setE2EStatus(`Failed: ${runLabel} — ${error.message || error}`, tabId);
+    throw error;
+  } finally {
+    const cancelled = activeSequences.get(tabId)?.runId === runId && activeSequences.get(tabId)?.cancelled;
+    if (activeSequences.get(tabId)?.runId === runId) activeSequences.delete(tabId);
+    if (!failed) await setE2EStatus("", tabId);
+    if (failed) await finalizeRunHistory("failed", failureDetail);
+    else if (cancelled) await finalizeRunHistory("stopped");
+    else await finalizeRunHistory("completed");
+    await clearFlowDraft();
+  }
+}
+
+async function runDataModelAttributesStep(tabId, runId, { group, objectName, columnOverrides = {} } = {}) {
+  if (!DATA_MODEL_GROUPS.includes(group)) throw new Error("Select a valid Data Model object group.");
+  const targetObjectName = String(objectName || "").trim();
+  if (!targetObjectName) throw new Error("Enter the existing Data Model object name.");
+  const columns = await dataModelColumnsForGroup(group, columnOverrides);
+  const tab = await chrome.tabs.get(tabId);
+  const task = TASKS["dataModel.js"];
+  await navigateAndWait(tabId, navigationUrl(tab.url, task.path, task.root));
+  await activatePageAutomationRun(tabId, runId);
+  await waitForPageElement(tabId, task.readySelector, 60000);
+  await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["dataModel.js"] });
+  const [{ result: objectSearch }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [group],
+    func: async (selectedGroup) => window.cdpDataModelPrepareObjectSearch(selectedGroup)
+  });
+  await typeJetInput(tabId, objectSearch?.inputId || "search-input-text|input", targetObjectName,
+    "Data Model object search", "Enter");
+  await appendRunLog(`Target object = ${targetObjectName}; ${columns.length} attributes configured.`, "info", `Attributes · ${group}`, "Plan");
+  for (const column of columns) {
+    assertSequenceActive(tabId, runId, "Data Model attribute creation");
+    let attributeSaved = false;
+    let attributeDrawerOpened = false;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN", args: [group, targetObjectName],
+        func: async (selectedGroup, selectedObjectName) => window.cdpDataModelOpenAttribute(selectedGroup, selectedObjectName, true)
+      });
+      attributeDrawerOpened = true;
+      const attribute = await commitJetDataModelAttributeName(tabId, column.name);
+      if (attribute.skipped) {
+        await appendRunLog(
+          `Skipped: an attribute named ${column.name} already exists or CDP rejected the duplicate name.`,
+          "warn",
+          `Attributes · ${targetObjectName} · ${column.name}`,
+          "Skip"
+        );
+        await chrome.scripting.executeScript({
+          target: { tabId }, world: "MAIN",
+          func: async () => window.cdpDataModelCancelAttribute?.()
+        });
+        attributeSaved = true; // drawer is intentionally closed; continue to the next configured attribute.
+        continue;
+      }
+      await appendRunLog(`${column.name}: Attribute ID = ${attribute.attributeId}.`, "info", `Attributes · ${targetObjectName} · ${column.name}`, "Type");
+      await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN", args: [column.dataType],
+        func: async (dataType) => window.cdpDataModelSelectAttributeDataType(dataType)
+      });
+      await appendRunLog(`Data type = ${column.dataType}.`, "info", `Attributes · ${targetObjectName} · ${column.name}`, "Select");
+      await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN",
+        func: async () => window.cdpDataModelSaveAttribute()
+      });
+      attributeSaved = true;
+      await appendRunLog("Attribute saved successfully.", "info", `Attributes · ${targetObjectName} · ${column.name}`, "Save");
+    } finally {
+      // Leave a failed attribute drawer open so its CDP validation message is
+      // visible to the user. Closing it used to make a validation timeout look
+      // like an ordinary successful completion and obscured the root cause.
+      if (!attributeSaved && !attributeDrawerOpened) {
+        await chrome.scripting.executeScript({
+          target: { tabId }, world: "MAIN",
+          func: async () => window.cdpDataModelCancelAttribute?.()
+        }).catch(() => undefined);
+      }
+    }
+  }
+  await appendRunLog(`Attributes saved for ${targetObjectName}.`, "info", `Attributes · ${group}`, "Complete");
+}
+
+async function runDataModelAttributes(tabId, options = {}) {
+  if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
+  const runId = crypto.randomUUID();
+  let failed = false;
+  let failureDetail = "";
+  activeSequences.set(tabId, { runId, cancelled: false, status: "Running: Add New Attributes" });
+  await setE2EStatus("Running: Add New Attributes", tabId);
+  try {
+    await runDataModelAttributesStep(tabId, runId, options);
+  } catch (error) {
+    failed = true;
+    failureDetail = error.message || String(error);
+    if (!/stopped by the user/i.test(error.message || "")) await setE2EStatus(`Failed: Add New Attributes — ${error.message || error}`, tabId);
+    throw error;
+  } finally {
+    const cancelled = activeSequences.get(tabId)?.runId === runId && activeSequences.get(tabId)?.cancelled;
+    if (activeSequences.get(tabId)?.runId === runId) activeSequences.delete(tabId);
+    if (!failed) await setE2EStatus("", tabId);
+    if (failed) await finalizeRunHistory("failed", failureDetail);
+    else if (cancelled) await finalizeRunHistory("stopped");
+    else await finalizeRunHistory("completed");
+    await clearFlowDraft();
+  }
 }
 
 async function runConfiguredFlow(tabId, flow = {}) {
@@ -1023,6 +1696,8 @@ async function runConfiguredFlow(tabId, flow = {}) {
   if (selectedSteps.has("import")) selectedSteps.add("source");
   if (selectedSteps.has("export")) selectedSteps.add("destination");
   const stepDefinitions = [
+    { id: "dataModel", label: "Data Models" },
+    { id: "dataModelAttributes", label: "Add New Attributes" },
     { id: "dataViewer", label: "Data Viewer" },
     { id: "source", filename: "source.js", label: "Create Source", saveSelector: "#create-source-saveClose" },
     { id: "destination", filename: "destination.js", label: "Create Destination", saveSelector: "#dst-saveClose-btn" },
@@ -1051,28 +1726,42 @@ async function runConfiguredFlow(tabId, flow = {}) {
       }
     }
   };
+  const useLegacyStagger = Boolean(flow.staggerJobs && flow.exportSchedule?.schedulerUi === "legacy" && flow.importSchedule?.schedulerUi === "legacy");
   sequenceStepState.set(runId, new Set());
   activeSequences.set(tabId, { runId, cancelled: false });
   await chrome.storage.local.set({ e2eRun: runMetadata });
   let completed = false;
   let failure;
+  const createdDataModelObjects = {};
   try {
     for (const step of stepDefinitions) {
       await setE2EStatus(`Running: ${step.label}`, tabId);
+      if (step.id === "dataModel") {
+        const result = await runDataModelStep(tabId, runId, { purpose: flow.connectionPurpose || "", groups: flow.dataModelGroups, saveObjects: Boolean(flow.saveDataModelObjects), attributeGroups: flow.dataModelAttributeGroups || [], addAttributes: Boolean(flow.addDataModelAttributes), columnOverrides: flow.dataModelColumnOverrides || {}, parentByGroup: flow.dataModelParents || {} });
+        Object.assign(createdDataModelObjects, result.createdObjects || {});
+        continue;
+      }
+      if (step.id === "dataModelAttributes") {
+        await runDataModelAttributesStep(tabId, runId, { group: flow.dataModelAttributeGroup, objectName: flow.dataModelAttributeObjectName || createdDataModelObjects[flow.dataModelAttributeGroup], columnOverrides: flow.dataModelColumnOverrides || {} });
+        continue;
+      }
       if (step.id === "dataViewer") {
         await runDataViewerStep(tabId, flow, runId);
         continue;
       }
-      if (step.id === "export" && flow.staggerJobs && !runMetadata.exportScheduledAt) {
+      if (step.id === "export" && useLegacyStagger && !runMetadata.exportScheduledAt) {
         const exportHour = new Date();
         exportHour.setHours(exportHour.getHours() + 1, 0, 0, 0);
         runMetadata.exportScheduledAt = exportHour.getTime();
       }
       const schedule = step.id === "export"
-        ? (flow.staggerJobs ? { ...flow.exportSchedule, scheduledAt: runMetadata.exportScheduledAt } : flow.exportSchedule)
+        ? (useLegacyStagger ? { ...flow.exportSchedule, scheduledAt: runMetadata.exportScheduledAt } : normalizeNewSchedulerConfig(flow.exportSchedule, "export"))
         : step.id === "import"
-          ? (flow.staggerJobs ? { ...flow.importSchedule, scheduledAt: runMetadata.exportScheduledAt + 3600000 } : flow.importSchedule)
+          ? (useLegacyStagger ? { ...flow.importSchedule, scheduledAt: runMetadata.exportScheduledAt + 3600000 } : normalizeNewSchedulerConfig(flow.importSchedule, "import"))
           : undefined;
+      if (step.id === "export" || step.id === "import") {
+        await appendRunLog(`${step.label} scheduler: ${schedule.schedulerUi === "new" ? `New · ${schedule.frequency} · ${schedule.timeMode} · ${schedule.specificPreset || schedule.intervalStartPreset}` : `Legacy · ${schedule.mode} · ${schedule.frequency}`}.`, "info", `Scheduler · ${step.label}`, "Configure");
+      }
       let importConfig;
       if (step.id === "import") {
         try {
@@ -1155,13 +1844,18 @@ async function runFullSequence(tabId, templateId, connectionPurpose) {
   return runConfiguredFlow(tabId, {
     templateId,
     connectionPurpose,
-    steps: ["dataViewer", "source", "destination", "export", "import", "publish", "verify"],
+    steps: ["dataModel", "dataViewer", "source", "destination", "export", "import", "publish", "verify"],
+    dataModelGroups: ["Profile"],
+    dataModelAttributeGroups: ["Profile"],
+    saveDataModelObjects: true,
     dataViewerTableIds: ["Customer", "ContactPoint"],
     recordsPerTable: 1,
     sourceId: "UI",
     saveRecords: true,
     importTableIds: ["customer", "contactPoint"],
     exportPayloadName: "Customer",
+    exportSchedule: { schedulerUi: "new", frequency: "Daily", timeMode: "specific", specificPreset: "in15" },
+    importSchedule: { schedulerUi: "new", frequency: "Daily", timeMode: "specific", specificPreset: "in30" },
     staggerJobs: true,
     allowImportFallback: true
   });
@@ -1220,12 +1914,20 @@ async function runPublishAll(tabId) {
 function dataViewerRecordConfigFor(tableName, defaults, overrides, inheritCustomerValues = false) {
   const base = defaults.tables?.[tableName] || {};
   const override = overrides && typeof overrides === "object" ? overrides[tableName] : null;
+  const customerOverrideValues = { ...(overrides?.Customer?.values || {}) };
   const customerValues = inheritCustomerValues && tableName === "ContactPoint"
-    ? { ...(defaults.tables?.Customer?.values || {}), ...(overrides?.Customer?.values || {}) }
+    ? { ...(defaults.tables?.Customer?.values || {}), ...customerOverrideValues }
     : {};
+  const contactPointValues = { ...(override?.values || {}) };
+  const inheritedCustomerEmail = customerValues.Email;
+  if (inheritCustomerValues && tableName === "ContactPoint" && inheritedCustomerEmail) {
+    // A Customer + ContactPoint run represents one related person. Reuse the
+    // corresponding primary Customer Email for ContactPoint, including lists.
+    contactPointValues.Email = inheritedCustomerEmail;
+  }
   return {
     ...base,
-    values: { ...(base.values || {}), ...customerValues, ...(override?.values || {}) },
+    values: { ...(base.values || {}), ...customerValues, ...contactPointValues, ...(tableName === "Customer" ? customerOverrideValues : {}) },
     relationships: { ...(base.relationships || {}), ...(override?.relationships || {}) }
   };
 }
@@ -1252,7 +1954,7 @@ async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = 
     await waitForPageElement(tabId, TASKS["dataViewer.js"].readySelector, 60000);
     await chrome.scripting.executeScript({ target: { tabId }, world: "ISOLATED", files: ["dataViewerClickBridge.js"] });
     await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["dataViewer.js"] });
-    await chrome.scripting.executeScript({
+    const [{ result: dataViewerResult }] = await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
       args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, recordConfig: table.recordConfig })), { recordsPerTable, sourceId: resolvedSourceId, parentSourceCustomerId: String(parentSourceCustomerId || "").trim(), saveRecords: Boolean(saveRecords) }],
@@ -1261,6 +1963,7 @@ async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = 
         return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
       }
     });
+    await appendDataViewerRunLog(dataViewerResult, tables, { recordsPerTable, sourceId: resolvedSourceId, saveRecords: Boolean(saveRecords) });
   } catch (error) {
     failed = true;
     if (!/stopped by the user/i.test(error.message || "")) await setE2EStatus(`Failed: Data Viewer Record — ${error.message || error}`, tabId);
@@ -1307,6 +2010,17 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "apply-new-scheduler") {
+    const tabId = sender.tab?.id;
+    if (!tabId) {
+      sendResponse({ ok: false, error: "New scheduler could not determine the CDP tab." });
+      return undefined;
+    }
+    applyTrustedNewScheduler(tabId, message.schedule || {})
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
   if (message?.type === "trusted-data-viewer-next") {
     const tabId = sender.tab?.id;
     const rect = message.rect;
@@ -1388,6 +2102,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "run-data-model") {
+    runDataModel(message.tabId, { purpose: message.connectionPurpose, groups: message.groups, saveObjects: message.saveObjects, attributeGroups: message.attributeGroups || [], addAttributes: message.addAttributes, columnOverrides: message.columnOverrides || {}, parentByGroup: message.parentByGroup || {} })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
+    return true;
+  }
+  if (message?.type === "run-data-model-attributes") {
+    runDataModelAttributes(message.tabId, { group: message.group, objectName: message.objectName, columnOverrides: message.columnOverrides || {} })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
+    return true;
+  }
   if (message?.type === "run-data-viewer") {
     runDataViewer(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, sourceId: message.sourceId, parentSourceCustomerId: message.parentSourceCustomerId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
       .then(() => sendResponse({ ok: true }))

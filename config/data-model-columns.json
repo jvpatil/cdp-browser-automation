@@ -1,0 +1,39 @@
+{
+  "groups": {
+    "Profile": [
+      { "name": "Email", "dataType": "string" },
+      { "name": "FirstName", "dataType": "string" },
+      { "name": "LastName", "dataType": "string" },
+      { "name": "Age", "dataType": "int" },
+      { "name": "BirthDate", "dataType": "date" }
+    ],
+    "Behavioral": [
+      { "name": "EventName", "dataType": "string" },
+      { "name": "EventTimestamp", "dataType": "timestamp" },
+      { "name": "Channel", "dataType": "string" },
+      { "name": "PageURL", "dataType": "string" },
+      { "name": "EngagementScore", "dataType": "int" }
+    ],
+    "Transactional": [
+      { "name": "TransactionID", "dataType": "string" },
+      { "name": "TransactionDate", "dataType": "timestamp" },
+      { "name": "TransactionAmount", "dataType": "decimal" },
+      { "name": "CurrencyCode", "dataType": "string" },
+      { "name": "TransactionStatus", "dataType": "string" }
+    ],
+    "Product": [
+      { "name": "ProductCode", "dataType": "string" },
+      { "name": "ProductName", "dataType": "string" },
+      { "name": "ProductCategory", "dataType": "string" },
+      { "name": "UnitPrice", "dataType": "decimal" },
+      { "name": "IsActive", "dataType": "boolean" }
+    ],
+    "Other": [
+      { "name": "ReferenceCode", "dataType": "string" },
+      { "name": "Status", "dataType": "string" },
+      { "name": "EffectiveDate", "dataType": "date" },
+      { "name": "ExpiryDate", "dataType": "date" },
+      { "name": "Notes", "dataType": "string" }
+    ]
+  }
+}

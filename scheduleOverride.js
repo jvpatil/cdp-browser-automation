@@ -6,7 +6,7 @@
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const visible = (element) => Boolean(element?.getClientRects().length);
   const text = (element) => (element?.textContent || "").replace(/\s+/g, " ").trim();
-  const config = () => ({ mode: "scheduled", frequency: "Daily", startTime: "immediate", ...(window.__cdpSchedule || {}) });
+  const config = () => ({ schedulerUi: "legacy", mode: "scheduled", frequency: "Daily", startTime: "immediate", ...(window.__cdpSchedule || {}) });
   const click = (element) => {
     element.scrollIntoView?.({ block: "center" });
     element.focus?.();
@@ -28,7 +28,7 @@
 
   Document.prototype.querySelectorAll = function (selector) {
     const hourlyQuery = typeof selector === "string" && /^oj-buttonset-many#recurring-hourly-(?:am|pm) input\[value="\d+"\]$/.test(selector);
-    if (!hourlyQuery || window.__cdpScheduleApplied || config().mode === "onDemand") {
+    if (!hourlyQuery || window.__cdpScheduleApplied || config().mode === "onDemand" || config().schedulerUi === "new") {
       return originalQuerySelectorAll.call(this, selector);
     }
     const run = scheduledRun();
@@ -96,7 +96,7 @@
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
 
-    if (schedule.mode === "onDemand" && !window.__cdpManualScheduleApplied && target.closest("oj-button#saveNclose-create-job, #saveNclose-create-job")) {
+    if (schedule.schedulerUi === "legacy" && schedule.mode === "onDemand" && !window.__cdpManualScheduleApplied && target.closest("oj-button#saveNclose-create-job, #saveNclose-create-job")) {
       event.preventDefault();
       event.stopImmediatePropagation();
       window.__cdpManualScheduleApplied = true;
@@ -110,7 +110,7 @@
       return;
     }
 
-    if (schedule.mode === "scheduled" && schedule.frequency !== "Daily" && !window.__cdpFrequencySaveDeferred && !window.__cdpFrequencyOverrideSaved && target.closest("oj-button#saveNclose-create-job, #saveNclose-create-job")) {
+    if (schedule.schedulerUi === "legacy" && schedule.mode === "scheduled" && schedule.frequency !== "Daily" && !window.__cdpFrequencySaveDeferred && !window.__cdpFrequencyOverrideSaved && target.closest("oj-button#saveNclose-create-job, #saveNclose-create-job")) {
       event.preventDefault();
       event.stopImmediatePropagation();
       window.__cdpFrequencySaveDeferred = true;
