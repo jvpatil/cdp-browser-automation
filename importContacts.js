@@ -150,111 +150,6 @@
     }
           throw new Error(`${label} "${preferredValue}" was not available after waiting for CDP to save it. ${lastError?.message||""}`.trim());
   };
-    const selectNewSchedulerChoice=async(value,label)=>{
-          const values=Array.isArray(value)?value:[value];
-          const input=await wait(()=>{
-                const choices=[...document.querySelectorAll("oj-radioset#recurring-or-manual input")];
-                return choices.find(item=>visible(item.closest("oj-radioset"))&&values.some(candidate=>String(item.value||"").toLowerCase()===String(candidate).toLowerCase()))||null;
-    },label);
-          await mouseClick(labelFor(input));
-          await wait(()=>input.checked?input:null,label+" selected",10000);
-  };
-    const chooseNewSchedulerFrequency=async frequency=>{
-          const input=await wait(()=>document.getElementById("requency|input"),"new scheduler frequency");
-          await mouseClick(input);
-          const menu=await wait(()=>{
-                const popup=document.getElementById("lovDropdown_requency");
-                return popup&&visible(popup)?popup:null;
-    },"new scheduler frequency options",10000);
-          const wanted=normalize(frequency);
-          const option=await wait(()=>{
-                const choices=[...menu.querySelectorAll("[role='option'],[role='gridcell'],li,oj-option")].filter(visible);
-                return choices.find(item=>normalize(textOf(item))===wanted)||
-                  choices.find(item=>normalize(textOf(item)).startsWith(wanted))||null;
-    },"new scheduler frequency "+frequency,10000);
-          await mouseClick(option.closest("[role='option'],[role='gridcell'],li,oj-option")||option);
-          await wait(()=>normalize(input.value).startsWith(wanted)?input:null,"new scheduler frequency selected",10000);
-  };
-    const selectNewSchedulerTimeMode=async value=>{
-          const input=await wait(()=>{
-                const choices=[...document.querySelectorAll("oj-radioset#specific_or_interval input")];
-                return choices.find(item=>visible(item.closest("oj-radioset"))&&String(item.value||"").toLowerCase()===String(value).toLowerCase())||null;
-    },"new scheduler "+value);
-          await mouseClick(labelFor(input));
-          await wait(()=>input.checked?input:null,"new scheduler "+value+" selected",10000);
-  };
-    const newSchedulerDate=()=>{
-          const schedule=window.__cdpSchedule||{};
-          if(Number.isFinite(Number(schedule.scheduledAt)))return new Date(Number(schedule.scheduledAt));
-          const result=new Date();
-          const preset=schedule.specificPreset||schedule.startTime||"in15";
-          if(preset==="in30")result.setMinutes(result.getMinutes()+30);
-          else if(preset==="in15")result.setMinutes(result.getMinutes()+15);
-          else if(preset==="plusOneHour")result.setHours(result.getHours()+1);
-          else if(preset==="immediate")result.setMinutes(result.getMinutes()+15);
-          else if(preset==="custom"&&schedule.customTime){
-                const [hours,minutes]=String(schedule.customTime).split(":").map(Number);
-                if(Number.isInteger(hours)&&Number.isInteger(minutes))result.setHours(hours,minutes,0,0);
-    }
-          return result;
-  };
-    const newSchedulerTimeText=date=>{
-          const hour=date.getHours()%12||12;
-          return `${hour}:${String(date.getMinutes()).padStart(2,"0")} ${date.getHours()>=12?"PM":"AM"}`;
-  };
-    const newSchedulerInput=async(id,label)=>{
-          return await wait(()=>document.getElementById(id+"|input")||document.getElementById(id)||null,label,10000);
-  };
-    const setNewSchedulerTime=async(input,value)=>{
-          const result=await new Promise((resolve,reject)=>{
-                const receive=event=>{
-                      clearTimeout(timeout);
-                      try{resolve(JSON.parse(String(event.detail||"{}")));}
-                      catch(error){reject(error);}
-    };
-                const timeout=setTimeout(()=>{
-                      window.removeEventListener("cdp-import-schedule-time-result",receive);
-                      reject(new Error("Timed out committing Import schedule time."));
-    },10000);
-                window.addEventListener("cdp-import-schedule-time-result",receive,{once:true});
-                window.dispatchEvent(new CustomEvent("cdp-import-schedule-time-request",{
-                      detail:JSON.stringify({inputId:input.id,value})
-    }));
-  });
-          if(!result?.ok)throw new Error(result?.error||"Could not commit Import schedule time.");
-  };
-    const configureNewSchedulerLocally=async()=>{
-          const schedule=window.__cdpSchedule||{};
-          const mode=String(schedule.mode||"scheduled").toLowerCase();
-          if(mode==="ondemand"){
-                await selectNewSchedulerChoice(["onDemand","manual"],"new scheduler On demand");
-                return;
-    }
-          await selectNewSchedulerChoice("recurring","new scheduler Recurring");
-          await chooseNewSchedulerFrequency(schedule.frequency||"Daily");
-          const timeMode=String(schedule.timeMode||"specific").toLowerCase();
-          await selectNewSchedulerTimeMode(timeMode);
-          if(timeMode==="interval"){
-                const interval=await newSchedulerInput("interval","new scheduler interval");
-                const start=await newSchedulerInput("interval_start_time","new scheduler interval start time");
-                const end=await newSchedulerInput("interval_end_time","new scheduler interval end time");
-                const startAt=newSchedulerDate();
-                const endAt=new Date(startAt);
-                const [endHours,endMinutes]=String(schedule.intervalEndTime||"23:59").split(":").map(Number);
-                if(Number.isInteger(endHours)&&Number.isInteger(endMinutes))endAt.setHours(endHours,endMinutes,0,0);
-                await setJetValueAndValidate(interval,String(schedule.intervalHours||"1"));
-                await setNewSchedulerTime(start,newSchedulerTimeText(startAt));
-                await setNewSchedulerTime(end,newSchedulerTimeText(endAt));
-                return;
-    }
-          // #times also contains helper/hidden inputs.  The actual Oracle JET
-          // time control is marked specific-time-length; targeting it avoids
-          // sending the time to a non-bound input and leaving the default
-          // 12:00 AM value in the scheduler.
-          const timeInput=await wait(()=>[...document.querySelectorAll("#times oj-input-time.specific-time-length input, #times .specific-time-length input")]
-                .find(item=>visible(item)&&!item.disabled&&!item.id.startsWith("interval_"))||null,"new scheduler specific time",10000);
-          await setNewSchedulerTime(timeInput,newSchedulerTimeText(newSchedulerDate()));
-  };
     const setJetValueAndValidate=async(el,value)=>{
           el.scrollIntoView({
             block:"center"
@@ -462,10 +357,10 @@
     await clickEnabled("#field-mapping-container oj-button button","Field Mapping Continue");
     await wait(".schedule-job-container","schedule page");
     const scheduleMode=window.__cdpSchedule?.mode;
-    // New Scheduler is applied by the shared page bridge before the job save.
-    // Legacy Scheduler keeps the page-local recurring/manual controls.
+    // New Scheduler is shared with Export through jobSchedulerBridge.js.
+    // Legacy Scheduler keeps the existing page-local controls unchanged.
     if(window.__cdpSchedule?.schedulerUi==="new"){
-            await configureNewSchedulerLocally();
+            await window.__cdpApplyConfiguredSchedule();
     }
         else{
             const recurring=await wait(()=>[...document.querySelectorAll("oj-radioset#recurring-or-manual input[value='Recurring']")].find(x=>{

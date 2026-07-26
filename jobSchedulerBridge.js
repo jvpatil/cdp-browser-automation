@@ -55,7 +55,8 @@
         window.addEventListener("message", onMessageResult);
         window.postMessage({ source: "cdp-import-scheduler", type: "apply", requestId, schedule }, "*");
       } else {
-        // Preserve Export's existing bridge path unchanged.
+        // Export uses the same worker scheduler through its existing event
+        // bridge. Both branches return the same normalized result.
         window.addEventListener("cdp-new-scheduler-result", onResult, { once: true });
         window.dispatchEvent(new CustomEvent("cdp-new-scheduler-request", {
           detail: JSON.stringify(schedule)

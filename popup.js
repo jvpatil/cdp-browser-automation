@@ -359,7 +359,7 @@ function renderOptionHint(id, total, visible, filter) {
   hint.textContent = `${remaining} more available — search to find`;
 }
 function specificPresetLabel(value) {
-  return ({ in15: "+15 min", in30: "+30 min", nextHour: "Next hour", plusOneHour: "+1 hour", custom: "Custom" })[value] || "+15 min";
+  return ({ in15: "+15 min", in30: "+30 min", plusOneHour: "+1 hour", custom: "Custom" })[value] || "+15 min";
 }
 function schedulerSummary(config) { return scheduleSummary(config); }
 function schedulerConfig(key) { return { ...state.schedulers[key] }; }
@@ -369,9 +369,14 @@ function normalizeScheduler(key, saved) {
   // of unexpectedly changing an established job's behavior.
   if (!saved || typeof saved !== "object") return defaultScheduler(schedulerKind(key));
   if (!saved.schedulerUi) return { ...LEGACY_SCHEDULER, ...saved };
-  return saved.schedulerUi === "new"
-    ? { ...defaultScheduler(schedulerKind(key)), ...saved, schedulerUi: "new" }
-    : { ...LEGACY_SCHEDULER, ...saved, schedulerUi: "legacy" };
+  if (saved.schedulerUi === "new") {
+    // Migrate the retired clock-boundary option to the clear +1 hour preset.
+    const migrated = { ...saved };
+    if (migrated.specificPreset === "nextHour") migrated.specificPreset = "plusOneHour";
+    if (migrated.intervalStartPreset === "nextHour") migrated.intervalStartPreset = "plusOneHour";
+    return { ...defaultScheduler(schedulerKind(key)), ...migrated, schedulerUi: "new" };
+  }
+  return { ...LEGACY_SCHEDULER, ...saved, schedulerUi: "legacy" };
 }
 function selectedFlowSteps() { return DEFAULT_FLOW.filter((step) => document.getElementById(`flow-${step}`).checked); }
 function flowHasBothJobs() { const steps = selectedFlowSteps(); return steps.includes("export") && steps.includes("import"); }
@@ -414,7 +419,7 @@ function renderSchedulers() {
     [["Daily", "Daily"], ["Weekly, on selected Days", "Weekly"], ["Monthly, on selected Days", "Monthly (days)"], ["Monthly, on selected Dates", "Monthly (dates)"]].forEach(([value, label]) => select.append(new Option(label, value)));
     select.value = config.frequency; select.addEventListener("change", () => { config.frequency = select.value; persistDraft(); renderAll(); }); frequency.append(select); newSchedule.append(frequency);
     newSchedule.append(schedulerRow("Times", [{ value: "specific", label: "Specific" }, { value: "interval", label: "Interval" }], config.timeMode, (timeMode) => { config.timeMode = timeMode; persistDraft(); renderAll(); }));
-    const presets = [{ value: "in15", label: "+15 min" }, { value: "in30", label: "+30 min" }, { value: "nextHour", label: "Next hour" }, { value: "plusOneHour", label: "+1 hour" }, { value: "custom", label: "Custom" }];
+    const presets = [{ value: "in15", label: "+15 min" }, { value: "in30", label: "+30 min" }, { value: "plusOneHour", label: "+1 hour" }, { value: "custom", label: "Custom" }];
     if (config.timeMode === "specific") {
       newSchedule.append(schedulerRow("Run time", presets, config.specificPreset, (specificPreset) => { config.specificPreset = specificPreset; persistDraft(); renderAll(); }));
       if (config.specificPreset === "custom") {

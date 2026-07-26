@@ -647,8 +647,12 @@ function newSchedulerRunAt(schedule, presetKey, customTimeKey) {
     if (result <= new Date()) result.setDate(result.getDate() + 1);
     return result;
   }
-  if (preset === "nextHour" || preset === "plusOneHour") {
-    result.setHours(result.getHours() + (preset === "plusOneHour" ? 2 : 1), 0, 0, 0);
+  if (preset === "nextHour") {
+    // Backward compatibility for saved pre-change drafts only.
+    result.setHours(result.getHours() + 1, 0, 0, 0);
+  } else if (preset === "plusOneHour") {
+    // The popup's +1 hour means exactly 60 minutes from now.
+    result.setHours(result.getHours() + 1);
   } else {
     result.setMinutes(result.getMinutes() + (preset === "in30" ? 30 : 15), 0, 0);
   }
@@ -860,6 +864,90 @@ async function clickImportRecurringRadio(tabId) {
   return Boolean(result.checked);
 }
 
+async function clickImportOnDemandRadio(tabId) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: () => {
+      const visible = (element) => Boolean(element?.getClientRects?.().length);
+      const group = [...document.querySelectorAll("oj-radioset#recurring-or-manual")]
+        .find(visible)
+        || document.querySelector("oj-radioset#recurring-or-manual");
+      const onDemand = group?.querySelector("input[name='recurring-or-manual'][value='onDemand'], input[name='recurring-or-manual'][value='manual']");
+      if (!onDemand) return { found: false, checked: false };
+      if (!onDemand.checked) onDemand.click();
+      return { found: true, checked: Boolean(onDemand.checked) };
+    }
+  });
+  if (!result?.found) throw new Error("New scheduler: On-demand run option is not available.");
+  return Boolean(result.checked);
+}
+
+// Import's Frequency and Times controls are Oracle JET components that sit
+// behind a transient mapping overlay. The component accepts this native JET
+// event sequence reliably, whereas a debugger-coordinate click can land on
+// the overlay. Keep the behavior in the shared scheduler—not the Import job.
+async function selectImportSchedulerFrequency(tabId, frequency) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    args: [frequency],
+    func: async (requestedFrequency) => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const visible = (element) => Boolean(element?.getClientRects?.().length);
+      const normalized = (value) => String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+      const click = (element) => {
+        element.scrollIntoView({ block: "center" });
+        element.focus?.();
+        const options = { bubbles: true, cancelable: true, view: window, button: 0, buttons: 1 };
+        if (typeof PointerEvent !== "undefined") element.dispatchEvent(new PointerEvent("pointerdown", { ...options, pointerType: "mouse" }));
+        element.dispatchEvent(new MouseEvent("mousedown", options));
+        element.dispatchEvent(new MouseEvent("mouseup", { ...options, buttons: 0 }));
+        element.click();
+      };
+      const input = document.getElementById("requency|input");
+      if (!input || !visible(input) || input.disabled) return { ok: false, error: "Import Frequency input is unavailable." };
+      click(input);
+      const wanted = normalized(requestedFrequency);
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        const menu = document.getElementById("lovDropdown_requency");
+        const choices = [...(menu?.querySelectorAll("[role='option'],[role='gridcell'],li,oj-option") || [])].filter(visible);
+        const option = choices.find((item) => normalized(item.textContent) === wanted)
+          || choices.find((item) => normalized(item.textContent).startsWith(wanted));
+        if (option) {
+          click(option.closest("[role='option'],[role='gridcell'],li,oj-option") || option);
+          return { ok: true };
+        }
+        await sleep(100);
+      }
+      return { ok: false, error: `Import Frequency option ${requestedFrequency} was not available.` };
+    }
+  });
+  if (!result?.ok) throw new Error(result?.error || "New scheduler: Import Frequency could not be selected.");
+}
+
+async function selectImportSchedulerTimeMode(tabId, timeMode) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    args: [timeMode],
+    func: (requestedMode) => {
+      const visible = (element) => Boolean(element?.getClientRects?.().length);
+      const input = [...document.querySelectorAll("oj-radioset#specific_or_interval input")]
+        .find((element) => visible(element.closest("oj-radioset")) && String(element.value || "").toLowerCase() === String(requestedMode).toLowerCase());
+      if (!input) return { ok: false, error: `Import ${requestedMode} option is unavailable.` };
+      const target = document.querySelector(`label[for="${CSS.escape(input.id)}"]`) || input.closest(".oj-choice-item") || input;
+      const options = { bubbles: true, cancelable: true, view: window, button: 0, buttons: 1 };
+      target.dispatchEvent(new MouseEvent("mousedown", options));
+      target.dispatchEvent(new MouseEvent("mouseup", { ...options, buttons: 0 }));
+      target.click();
+      return { ok: Boolean(input.checked) };
+    }
+  });
+  if (!result?.ok) throw new Error(result?.error || `New scheduler: Import ${timeMode} could not be selected.`);
+}
+
 async function trustedSchedulerSpace(tabId) {
   const target = { tabId };
   let attached = false;
@@ -909,7 +997,17 @@ async function activateRecurringMode(tabId) {
 async function applyTrustedNewScheduler(tabId, schedule = {}) {
   const normalized = { frequency: "Daily", timeMode: "specific", specificPreset: "in15", intervalHours: "1", intervalStartPreset: "in15", intervalEndTime: "23:59", ...schedule };
   const isImportJob = normalized.jobKind === "import";
+  const schedulerGroup = `Scheduler · ${isImportJob ? "Import" : "Export"}`;
   await waitForNewSchedulerState(tabId, { type: "ready" }, "schedule controls", Boolean, 120000);
+  await appendRunLog("Schedule and Notify controls are ready.", "info", schedulerGroup, "Ready");
+
+  // Only Import exposes an explicit On-demand radio in the New Scheduler.
+  // Export's schedule mode is determined by its payload/filter selection.
+  if (isImportJob && String(normalized.mode || "scheduled").toLowerCase() === "ondemand") {
+    await clickImportOnDemandRadio(tabId);
+    await appendRunLog("Run mode = On-demand.", "info", schedulerGroup, "Select");
+    return { ok: true, mode: "onDemand" };
+  }
 
   // Import jobs can open with Manual selected; Export has Recurring fixed. In
   // both cases, a New Scheduler configuration must explicitly be recurring.
@@ -953,13 +1051,16 @@ async function applyTrustedNewScheduler(tabId, schedule = {}) {
       }
     }
   }
+  await appendRunLog("Run mode = Recurring.", "info", schedulerGroup, "Select");
 
-  // Export's host click works on its layout. Import needs the actual focusable
-  // combobox input, whose bounds differ from the full JET host.
-  const frequencyProbe = isImportJob ? { type: "import-frequency-input" } : { type: "frequency-input" };
-  await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, frequencyProbe, "frequency selector"), "frequency selector");
-  await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, { type: "frequency-option", value: normalized.frequency }, `${normalized.frequency} option`), "frequency option");
+  if (isImportJob) {
+    await selectImportSchedulerFrequency(tabId, normalized.frequency);
+  } else {
+    await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, { type: "frequency-input" }, "frequency selector"), "frequency selector");
+    await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, { type: "frequency-option", value: normalized.frequency }, `${normalized.frequency} option`), "frequency option");
+  }
   await waitForNewSchedulerState(tabId, { type: "frequency-value" }, `${normalized.frequency} selection`, (value) => String(value).trim().toLowerCase() === String(normalized.frequency).trim().toLowerCase());
+  await appendRunLog(`Frequency = ${normalized.frequency}.`, "info", schedulerGroup, "Select");
 
   if (normalized.frequency !== "Daily") {
     const now = new Date();
@@ -967,11 +1068,16 @@ async function applyTrustedNewScheduler(tabId, schedule = {}) {
     const calendar = await waitForNewSchedulerState(tabId, { type: "calendar-choice", value }, "calendar choice", (state) => state?.rect);
     if (!calendar.checked) await trustedSchedulerClick(tabId, calendar.rect, "calendar choice");
     await waitForNewSchedulerState(tabId, { type: "calendar-choice", value }, "calendar selection", (state) => state?.checked);
+    await appendRunLog(`Calendar selection = ${value}.`, "info", schedulerGroup, "Select");
   }
 
   const timeMode = await waitForNewSchedulerState(tabId, { type: "time-mode", value: normalized.timeMode }, `${normalized.timeMode} option`, (state) => state?.rect);
-  if (!timeMode.checked) await trustedSchedulerClick(tabId, timeMode.rect, `${normalized.timeMode} option`);
+  if (!timeMode.checked) {
+    if (isImportJob) await selectImportSchedulerTimeMode(tabId, normalized.timeMode);
+    else await trustedSchedulerClick(tabId, timeMode.rect, `${normalized.timeMode} option`);
+  }
   await waitForNewSchedulerState(tabId, { type: "time-mode", value: normalized.timeMode }, `${normalized.timeMode} selection`, (state) => state?.checked);
+  await appendRunLog(`Times = ${normalized.timeMode === "interval" ? "Interval" : "Specific"}.`, "info", schedulerGroup, "Select");
 
   if (normalized.timeMode === "interval") {
     const hours = Number.parseInt(normalized.intervalHours, 10);
@@ -982,10 +1088,12 @@ async function applyTrustedNewScheduler(tabId, schedule = {}) {
     await typeJetInput(tabId, startId, newSchedulerTimeText(newSchedulerRunAt(normalized, "intervalStartPreset", "intervalStartTime")), "Interval start time");
     const endId = await waitForNewSchedulerState(tabId, { type: "interval-input", id: "interval_end_time" }, "interval end time", Boolean);
     await typeJetInput(tabId, endId, newSchedulerTimeText(newSchedulerRunAt({ ...normalized, customTime: normalized.intervalEndTime || "23:59" }, "custom", "customTime")), "Interval end time");
+    await appendRunLog(`Interval = ${hours} hour(s); start = ${newSchedulerTimeText(newSchedulerRunAt(normalized, "intervalStartPreset", "intervalStartTime"))}; end = ${newSchedulerTimeText(newSchedulerRunAt({ ...normalized, customTime: normalized.intervalEndTime || "23:59" }, "custom", "customTime"))}.`, "info", schedulerGroup, "Type");
   } else {
     const timeInputId = await waitForNewSchedulerState(tabId, { type: "time-input" }, "specific time", Boolean);
     const runAt = newSchedulerRunAt(normalized, "specificPreset", "customTime");
     await typeJetInput(tabId, timeInputId, newSchedulerTimeText(runAt), "Specific time");
+    await appendRunLog(`Specific time = ${newSchedulerTimeText(runAt)}.`, "info", schedulerGroup, "Type");
     return { ok: true, scheduledAt: runAt.getTime() };
   }
   return { ok: true };
@@ -1021,28 +1129,6 @@ async function installNewSchedulerRelay(tabId) {
           requestId: message.requestId,
           result: result || { ok: false, error: "New scheduler did not return a result." }
         }, "*");
-      });
-    }
-  });
-}
-
-async function installImportScheduleTimeRelay(tabId) {
-  await chrome.scripting.executeScript({
-    target: { tabId }, world: "ISOLATED",
-    func: () => {
-      if (window.__cdpImportScheduleTimeRelayInstalled) return;
-      window.__cdpImportScheduleTimeRelayInstalled = true;
-      window.addEventListener("cdp-import-schedule-time-request", async (event) => {
-        let result;
-        try {
-          const payload = JSON.parse(String(event.detail || "{}"));
-          result = await chrome.runtime.sendMessage({ type: "set-import-schedule-time", ...payload });
-        } catch (error) {
-          result = { ok: false, error: error.message || String(error) };
-        }
-        window.dispatchEvent(new CustomEvent("cdp-import-schedule-time-result", {
-          detail: JSON.stringify(result || { ok: false, error: "Import schedule time did not return a result." })
-        }));
       });
     }
   });
@@ -1340,10 +1426,9 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
           files: ["scheduleOverride.js"]
         });
       }
-      // Generic Import applies the new scheduler in its own MAIN-world script,
-      // matching the original direct page flow. Export and Responsys retain the
-      // existing worker bridge.
-      if (schedule?.schedulerUi === "new" && filename !== "importContacts.js") {
+      // New Scheduler is one shared scheduler for Import, Export, and
+      // Responsys. Legacy scheduler scripts remain page-specific.
+      if (schedule?.schedulerUi === "new") {
         await installNewSchedulerRelay(tabId);
         await chrome.scripting.executeScript({
           target: { tabId },
@@ -1390,7 +1475,6 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
     }
 
     if (filename === "importContacts.js") {
-      await installImportScheduleTimeRelay(tabId);
       if (!importConfig?.csvContent || !Array.isArray(importConfig.targetTables) || !importConfig.fieldToTable) importConfig = E2E_IMPORT_FALLBACK;
       await chrome.scripting.executeScript({
         target: { tabId },
@@ -1575,7 +1659,14 @@ async function runImportJobRequest(tabId, rawRequest) {
   }
   const jobConfig = buildJobRuntimeConfig(request);
   await appendRunLog(`Import runner: ${request.variant} · ${request.tableIds.join(", ") || "Responsys Profile"}.`, "info", "Import", "Configure");
+  await appendRunLog(`Job name = ${jobConfig.name}; Source = ${jobConfig.sourceName || "—"}.`, "info", "Import", "Plan");
+  if (request.variant === "generic") {
+    const headerCount = String(importConfig?.csvContent || "").split(/\r?\n/, 1)[0].split(",").filter(Boolean).length;
+    await appendRunLog(`Tables = ${request.tableIds.join(", ")}; generated mapping CSV = ${headerCount} fields.`, "info", "Import", "Map");
+  }
+  await appendRunLog(`File contract = ${jobConfig.fileContract?.fileFormat || "CSV"} · ${jobConfig.fileContract?.charset || "UTF-8"} · ${jobConfig.fileContract?.csvParser || "RFC 4180"} · ${jobConfig.fileContract?.delimiter || "Comma"}.`, "info", "Import", "Configure");
   await appendRunLog(`Import scheduler: ${request.schedule.schedulerUi === "new" ? `New · ${request.schedule.frequency} · ${request.schedule.timeMode}` : `Legacy · ${request.schedule.mode} · ${request.schedule.frequency}`}.`, "info", "Scheduler · Import", "Configure");
+  await appendRunLog("Opening Create Ingest Job.", "info", "Import", "Navigate");
   await runTask(tabId, filename, request.monitor, request.schedule, importConfig, undefined, request.tableIds, undefined, jobConfig);
   await waitForStep(tabId, request.variant === "responsys" ? "Responsys Import" : "Import Job", task.saveSelector, request.runId, request.monitor?.stepId || filename);
   const saved = request.runMetadata ? await captureCreatedEntity(tabId, request.runMetadata, filename) : null;
@@ -1589,7 +1680,11 @@ async function runExportJobRequest(tabId, rawRequest) {
   if (!catalog.exportPayloads.includes(request.payloadName)) throw new Error(`Unsupported export payload: ${request.payloadName}.`);
   const jobConfig = buildJobRuntimeConfig(request);
   await appendRunLog(`Export runner: ${request.payloadName}.`, "info", "Export", "Configure");
+  await appendRunLog(`Job name = ${jobConfig.name}; Destination = ${jobConfig.destinationName || "—"}.`, "info", "Export", "Plan");
+  await appendRunLog(`Payload = ${request.payloadName}; type = ${request.payloadType}; records = ${request.filterRecords}.`, "info", "Export", "Select");
+  await appendRunLog(`File contract = ${jobConfig.fileContract?.fileFormat || "CSV"} · compression = ${jobConfig.compression || "none"}.`, "info", "Export", "Configure");
   await appendRunLog(`Export scheduler: ${request.schedule.schedulerUi === "new" ? `New · ${request.schedule.frequency} · ${request.schedule.timeMode}` : `Legacy · ${request.schedule.mode} · ${request.schedule.frequency}`}.`, "info", "Scheduler · Export", "Configure");
+  await appendRunLog("Opening Create Export Job.", "info", "Export", "Navigate");
   await runTask(tabId, "exportJob.js", request.monitor, request.schedule, undefined, request.payloadName, undefined, undefined, jobConfig);
   await waitForStep(tabId, "Export Job", task.saveSelector, request.runId, request.monitor?.stepId || "exportJob.js");
   const saved = request.runMetadata ? await captureCreatedEntity(tabId, request.runMetadata, "exportJob.js") : null;
@@ -2276,18 +2371,6 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === "set-import-schedule-time") {
-    const tabId = sender.tab?.id;
-    const inputId = String(message.inputId || "");
-    if (!tabId || !inputId) {
-      sendResponse({ ok: false, error: "Import schedule time is missing its CDP input." });
-      return undefined;
-    }
-    typeJetInput(tabId, inputId, String(message.value || ""), "Import schedule time")
-      .then(() => sendResponse({ ok: true }))
-      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
-    return true;
-  }
   if (message?.type === "apply-new-scheduler") {
     const tabId = sender.tab?.id;
     if (!tabId) {
