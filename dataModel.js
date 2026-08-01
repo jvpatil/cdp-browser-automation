@@ -122,8 +122,10 @@
       const name = document.getElementById("objNameInput|input");
       const objectId = document.getElementById("objIdInput|input");
       const cancel = document.querySelector("#btnCancel button");
+      // CDP enables Object ID only after Name is committed. Waiting for the
+      // generated ID here deadlocks the drawer before Name can be entered.
       return visible(drawer) && drawer.classList.contains("oj-complete") &&
-        visible(name) && visible(objectId) && !name.disabled && !objectId.disabled &&
+        visible(name) && visible(objectId) && !name.disabled &&
         cancel && !cancel.disabled && !hasVisibleLoading();
     }, "fully rendered Create data object drawer");
     // Oracle can expose the inputs just before its Knockout/JET bindings are
