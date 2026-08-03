@@ -1329,7 +1329,8 @@ async function waitForStep(tabId, label, saveSelector, runId, stepId, timeout = 
       const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
-        func: () => {
+        args: [saveSelector],
+        func: (stepSaveSelector) => {
           const visible = (element) => Boolean(element?.getClientRects().length);
           const messages = [...document.querySelectorAll(
             "[data-bind='text: message.data.detail'], [role='alert'], .oj-message, .oj-message-summary, .oj-messages, [class*='toast'], [class*='notification']"
@@ -1337,7 +1338,7 @@ async function waitForStep(tabId, label, saveSelector, runId, stepId, timeout = 
             .filter(visible)
             .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim())
             .filter(Boolean);
-          const saveHost = saveSelector ? document.querySelector(saveSelector) : null;
+          const saveHost = stepSaveSelector ? document.querySelector(stepSaveSelector) : null;
           const saveButton = saveHost?.matches("button") ? saveHost : saveHost?.querySelector("button");
           const saveEnabled = Boolean(
             saveHost && saveButton && visible(saveHost) && !saveButton.disabled &&
