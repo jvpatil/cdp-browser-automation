@@ -407,7 +407,12 @@ window.cdpDataModelSaveAttribute = async () => {
     }, "enabled relationship Save button", 60000);
     await sleep(500);
     await click(save);
-    await waitFor(() => !visible(relationshipDialog()), "relationship save confirmation", 60000);
+    await waitFor(() => {
+      return [...document.querySelectorAll("[role=alert], .oj-message, .oj-message-detail, [class*='toast'], [class*='notification']")]
+        .filter(visible)
+        .some((element) => /your changes have been saved\.?/i.test(text(element)));
+    }, "CDP relationship save confirmation: Your changes have been saved.", 60000);
+    await waitFor(() => !visible(relationshipDialog()), "relationship dialog to close after save", 60000);
     await sleep(2000);
     await waitFor(
       () => relationshipDetailsContain(parentName),
