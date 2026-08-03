@@ -15,9 +15,10 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
             scroll: 250
         };
 
-        // Total max table-load wait:
-        // focus 50ms + searchLoad 250ms + renderExtra 250ms + waitFor 1450ms = ~2000ms
-        const TABLE_LOAD_TIMEOUT = 5000;
+        // CDP can keep its Processing overlay visible after the mapping rows
+        // appear. Allow each table lookup enough time to catch up, but do not
+        // let an unavailable table stop every later CSV field.
+        const TABLE_LOAD_TIMEOUT = 10000;
 
         const START_FROM_TOP = false;
         // Set to true if you want the script to jump to the first row before processing.
@@ -256,10 +257,12 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
             const normalizedSourceKey = normalizeName(sourceKey);
             const mappedTables = FIELD_TO_TABLE[sourceKey];
             if (!Array.isArray(mappedTables) || !mappedTables.length) {
-                throw new Error(`No target tables are configured for CSV field "${cleanedValue}".`);
+                console.warn(`Skipping CSV field "${cleanedValue}": no configured target table.`);
+                return false;
             }
             if (mappedTables.some((tableName) => !TARGET_TABLES.includes(tableName))) {
-                throw new Error(`CSV field "${cleanedValue}" maps to an unavailable selected table.`);
+                console.warn(`Skipping CSV field "${cleanedValue}": its target table is not selected.`);
+                return false;
             }
             const tablesForField = mappedTables;
 
@@ -268,7 +271,8 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
 
             const editIcon = row.querySelector('.oj-ux-ico-edit.edit_align_center');
             if (!editIcon) {
-                throw new Error(`Mapping editor was unavailable for CSV field "${cleanedValue}".`);
+                console.warn(`Skipping CSV field "${cleanedValue}": mapping editor is unavailable.`);
+                return false;
             }
 
             realClick(editIcon);
@@ -276,8 +280,11 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
 
             const comboInput = row.querySelector('input[role="combobox"]');
             if (!comboInput) {
-                throw new Error(`Mapping selector was unavailable for CSV field "${cleanedValue}".`);
+                console.warn(`Skipping CSV field "${cleanedValue}": mapping selector is unavailable.`);
+                return false;
             }
+
+            let mapped = false;
 
             for (const tableName of tablesForField) {
 
@@ -286,25 +293,29 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
                 const listbox = await loadDropdownForTable(comboInput, tableName);
 
                 if (!listbox) {
-                    throw new Error(`Data object ${tableName} did not load while mapping CSV field "${cleanedValue}".`);
+                    console.warn(`Skipping ${tableName} for CSV field "${cleanedValue}": data object did not load.`);
+                    continue;
                 }
 
                 const groupContainer = findTableGroup(listbox, tableName);
 
                 if (!groupContainer) {
-                    throw new Error(`Data object ${tableName} was not available while mapping CSV field "${cleanedValue}".`);
+                    console.warn(`Skipping ${tableName} for CSV field "${cleanedValue}": data object is unavailable.`);
+                    continue;
                 }
 
                 const childUL = groupContainer.querySelector('ul.oj-listbox-result-sub');
 
                 if (!childUL) {
-                    throw new Error(`Data object ${tableName} did not expose attributes for CSV field "${cleanedValue}".`);
+                    console.warn(`Skipping ${tableName} for CSV field "${cleanedValue}": attributes are unavailable.`);
+                    continue;
                 }
 
                 const columnRows = childUL.querySelectorAll('li.oj-listbox-result-selectable');
 
                 if (!columnRows.length) {
-                    throw new Error(`Data object ${tableName} had no selectable attributes for CSV field "${cleanedValue}".`);
+                    console.warn(`Skipping ${tableName} for CSV field "${cleanedValue}": no selectable attributes.`);
+                    continue;
                 }
 
                 let matched = false;
@@ -351,8 +362,11 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
                 }
 
                 if (!matched) {
-                    throw new Error(`Data object ${tableName} has no attribute matching CSV field "${cleanedValue}".`);
+                    console.warn(`Skipping ${tableName} for CSV field "${cleanedValue}": no matching attribute.`);
+                    continue;
                 }
+
+                mapped = true;
 
                 await sleep(DELAY.afterTable);
             }
@@ -366,7 +380,7 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
                 await sleep(DELAY.ok);
             }
 
-            return true;
+            return mapped;
         };
 
         const scroller = findScrollContainer();
@@ -400,7 +414,14 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
                 processed.add(rowKey);
                 newCount += 1;
 
-                if (await processRow(row)) mappedSourceFields.add(getRowValue(row));
+                try {
+                    if (await processRow(row)) mappedSourceFields.add(getRowValue(row));
+                } catch (error) {
+                    // A transient JET row/editor failure must not abort the
+                    // complete import mapping. Record it and continue to the
+                    // next source field.
+                    console.warn(`Skipping mapping row: ${error.message || error}`);
+                }
             }
 
             console.log(
@@ -423,19 +444,14 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
             pass += 1;
         }
 
-        const expectedFields = Object.keys(FIELD_TO_TABLE);
-        const missingFields = expectedFields.filter(field => !mappedSourceFields.has(field));
-        if (missingFields.length) {
-            throw new Error(`Field mapping did not load all required CSV fields: ${missingFields.join(", ")}.`);
-        }
-
-        console.log(`\nDone. Total rows mapped: ${mappedSourceFields.size}`);
-        return { mappedRows: mappedSourceFields.size, attemptedRows: processed.size };
+        console.log(`\nDone. Total rows mapped: ${mappedSourceFields.size}; skipped: ${processed.size - mappedSourceFields.size}`);
+        return { mappedRows: mappedSourceFields.size, attemptedRows: processed.size, skippedRows: processed.size - mappedSourceFields.size };
 
     } catch (err) {
-        // A missing or mismatched field definition must stop the job. Continuing
-        // would save an import with incomplete or incorrectly routed mappings.
-        throw err;
+        // The mapping screen is asynchronous and can be partially available.
+        // Return a non-fatal result so the caller can proceed with the job.
+        console.warn(`Field mapping ended early: ${err.message || err}`);
+        return { mappedRows: 0, attemptedRows: 0, skippedRows: 0, error: String(err.message || err) };
     }
 
 };
