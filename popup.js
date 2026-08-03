@@ -47,7 +47,7 @@ let flowPresets = [];
 
 function cloneConfig(value) { return JSON.parse(JSON.stringify(value)); }
 function jobPresetConfig(kind) {
-  const common = { templateId: state.templateId, purpose: state.connectionPurpose.trim() };
+  const common = { templateId: state.templateId };
   if (kind === "responsys") return { ...common, kind, schedule: cloneConfig(schedulerConfig("responsys")) };
   if (kind === "import") return { ...common, kind, tableIds: selectedTableIds(), schedule: cloneConfig(schedulerConfig("quickImport")) };
   return { ...common, kind: "export", payloadName: state.exportPayloadName, schedule: cloneConfig(schedulerConfig("quickExport")) };
@@ -55,7 +55,6 @@ function jobPresetConfig(kind) {
 function flowPresetConfig() {
   return {
     templateId: state.templateId,
-    purpose: state.connectionPurpose.trim(),
     steps: selectedFlowSteps(),
     importTableIds: selectedTableIds(),
     exportPayloadName: state.exportPayloadName,
@@ -75,8 +74,6 @@ function flowPresetConfig() {
 function applyPresetConfig(config) {
   if (!config) return;
   if (state.templates.some((template) => template.id === config.templateId)) state.templateId = config.templateId;
-  state.connectionPurpose = config.purpose || "";
-  connectionPurposeInput.value = state.connectionPurpose;
   if (config.kind === "responsys") state.schedulers.responsys = normalizeScheduler("responsys", config.schedule);
   if (config.kind === "import") {
     state.importSettings = Object.fromEntries((config.tableIds || []).map((id) => [id, true]));
@@ -105,8 +102,18 @@ function applyPresetConfig(config) {
 async function persistPresets() { await chrome.storage.local.set({ jobPresets, flowPresets }); }
 async function loadPresets() {
   const stored = await chrome.storage.local.get({ jobPresets: [], flowPresets: [] });
-  jobPresets = Array.isArray(stored.jobPresets) ? stored.jobPresets : [];
-  flowPresets = Array.isArray(stored.flowPresets) ? stored.flowPresets : [];
+  const withoutPurpose = (preset) => {
+    if (!preset?.config) return preset;
+    const { purpose: _purpose, ...config } = preset.config;
+    return { ...preset, config };
+  };
+  jobPresets = Array.isArray(stored.jobPresets) ? stored.jobPresets.map(withoutPurpose) : [];
+  flowPresets = Array.isArray(stored.flowPresets) ? stored.flowPresets.map(withoutPurpose) : [];
+  // Migrate existing presets once so an older saved Purpose cannot overwrite
+  // the run-specific value when a preset is loaded later.
+  if (JSON.stringify(jobPresets) !== JSON.stringify(stored.jobPresets) || JSON.stringify(flowPresets) !== JSON.stringify(stored.flowPresets)) {
+    await persistPresets();
+  }
 }
 function renderPresetRows() {
   document.querySelectorAll("[data-preset-row]").forEach((row) => {
