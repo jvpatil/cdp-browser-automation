@@ -66,7 +66,6 @@ function flowPresetConfig() {
     dataModelAttributeGroups: selectedDataModelAttributeGroups(),
     dataModelParents: cloneConfig(state.dataModelParents),
     dataModelAttributeGroup: state.dataModelAttributeGroup,
-    dataModelAttributeObjectName: state.dataModelAttributeObjectName.trim(),
     dataModelColumnOverrides: cloneConfig(state.dataModelAttributeColumns),
     saveDataModelObjects: !state.dataModelOptions.dryRun
   };
@@ -94,7 +93,7 @@ function applyPresetConfig(config) {
     state.dataModelAttributeEnabled = Object.fromEntries((config.dataModelAttributeGroups || []).map((group) => [group, true]));
     state.dataModelParents = config.dataModelParents || state.dataModelParents;
     state.dataModelAttributeGroup = DATA_MODEL_GROUPS.includes(config.dataModelAttributeGroup) ? config.dataModelAttributeGroup : state.dataModelAttributeGroup;
-    state.dataModelAttributeObjectName = config.dataModelAttributeObjectName || "";
+    state.dataModelAttributeObjectName = "";
     state.dataModelAttributeColumns = config.dataModelColumnOverrides || {};
   }
   renderTemplates(); renderAll(); persistDraft();
@@ -104,7 +103,7 @@ async function loadPresets() {
   const stored = await chrome.storage.local.get({ jobPresets: [], flowPresets: [] });
   const withoutPurpose = (preset) => {
     if (!preset?.config) return preset;
-    const { purpose: _purpose, ...config } = preset.config;
+    const { purpose: _purpose, dataModelAttributeObjectName: _objectName, ...config } = preset.config;
     return { ...preset, config };
   };
   jobPresets = Array.isArray(stored.jobPresets) ? stored.jobPresets.map(withoutPurpose) : [];
