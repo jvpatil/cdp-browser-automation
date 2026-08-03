@@ -17,7 +17,7 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
 
         // Total max table-load wait:
         // focus 50ms + searchLoad 250ms + renderExtra 250ms + waitFor 1450ms = ~2000ms
-        const TABLE_LOAD_TIMEOUT = 1450;
+        const TABLE_LOAD_TIMEOUT = 5000;
 
         const START_FROM_TOP = false;
         // Set to true if you want the script to jump to the first row before processing.
@@ -253,6 +253,7 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
             // use a convention that differs from CDP's display labels; only
             // the later CDP-attribute comparison is formatting-tolerant.
             const sourceKey = cleanedValue;
+            const normalizedSourceKey = normalizeName(sourceKey);
             const mappedTables = FIELD_TO_TABLE[sourceKey];
             if (!Array.isArray(mappedTables) || !mappedTables.length) {
                 throw new Error(`No target tables are configured for CSV field "${cleanedValue}".`);
@@ -267,8 +268,7 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
 
             const editIcon = row.querySelector('.oj-ux-ico-edit.edit_align_center');
             if (!editIcon) {
-                console.log(`   ✖ No edit icon`);
-                return false;
+                throw new Error(`Mapping editor was unavailable for CSV field "${cleanedValue}".`);
             }
 
             realClick(editIcon);
@@ -276,8 +276,7 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
 
             const comboInput = row.querySelector('input[role="combobox"]');
             if (!comboInput) {
-                console.log(`   ✖ No combo input`);
-                return false;
+                throw new Error(`Mapping selector was unavailable for CSV field "${cleanedValue}".`);
             }
 
             for (const tableName of tablesForField) {
@@ -287,29 +286,25 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
                 const listbox = await loadDropdownForTable(comboInput, tableName);
 
                 if (!listbox) {
-                    console.log(`      ✖ ${tableName}: dropdown/table group did not load`);
-                    continue;
+                    throw new Error(`Data object ${tableName} did not load while mapping CSV field "${cleanedValue}".`);
                 }
 
                 const groupContainer = findTableGroup(listbox, tableName);
 
                 if (!groupContainer) {
-                    console.log(`      ✖ ${tableName}: exact group not present`);
-                    continue;
+                    throw new Error(`Data object ${tableName} was not available while mapping CSV field "${cleanedValue}".`);
                 }
 
                 const childUL = groupContainer.querySelector('ul.oj-listbox-result-sub');
 
                 if (!childUL) {
-                    console.log(`      ✖ ${tableName}: no columns`);
-                    continue;
+                    throw new Error(`Data object ${tableName} did not expose attributes for CSV field "${cleanedValue}".`);
                 }
 
                 const columnRows = childUL.querySelectorAll('li.oj-listbox-result-selectable');
 
                 if (!columnRows.length) {
-                    console.log(`      ✖ ${tableName}: empty columns`);
-                    continue;
+                    throw new Error(`Data object ${tableName} had no selectable attributes for CSV field "${cleanedValue}".`);
                 }
 
                 let matched = false;
@@ -326,7 +321,7 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
                     // sourcecustomerid matches Source Customer ID.
                     // accountid matches Account ID.
                     // accountid does NOT match Source Account ID.
-                    if (columnKey !== sourceKey) {
+                    if (columnKey !== normalizedSourceKey) {
                         continue;
                     }
 
@@ -356,9 +351,7 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
                 }
 
                 if (!matched) {
-                    console.log(
-                        `      ✖ ${tableName}: exact column not found for "${cleanedValue}"`
-                    );
+                    throw new Error(`Data object ${tableName} has no attribute matching CSV field "${cleanedValue}".`);
                 }
 
                 await sleep(DELAY.afterTable);
@@ -384,6 +377,7 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
         }
 
         const processed = new Set();
+        const mappedSourceFields = new Set();
 
         let pass = 0;
         let noNewPasses = 0;
@@ -406,7 +400,7 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
                 processed.add(rowKey);
                 newCount += 1;
 
-                await processRow(row);
+                if (await processRow(row)) mappedSourceFields.add(getRowValue(row));
             }
 
             console.log(
@@ -429,7 +423,14 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
             pass += 1;
         }
 
-        console.log(`\nDone. Total rows attempted: ${processed.size}`);
+        const expectedFields = Object.keys(FIELD_TO_TABLE);
+        const missingFields = expectedFields.filter(field => !mappedSourceFields.has(field));
+        if (missingFields.length) {
+            throw new Error(`Field mapping did not load all required CSV fields: ${missingFields.join(", ")}.`);
+        }
+
+        console.log(`\nDone. Total rows mapped: ${mappedSourceFields.size}`);
+        return { mappedRows: mappedSourceFields.size, attemptedRows: processed.size };
 
     } catch (err) {
         // A missing or mismatched field definition must stop the job. Continuing

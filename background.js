@@ -1272,7 +1272,7 @@ async function installStepMonitor(tabId, { runId, stepId, saveSelector }) {
     world: "MAIN",
     args: [saveSelector],
     func: (selector) => {
-      const state = { status: "running", error: "" };
+      const state = { status: "running", error: "", saveClickedAt: 0 };
       window.__cdpSequenceStep = state;
       const originalAlert = window.alert.bind(window);
       window.alert = (message) => {
@@ -1283,6 +1283,7 @@ async function installStepMonitor(tabId, { runId, stepId, saveSelector }) {
       document.addEventListener("click", (event) => {
         if (event.target instanceof Element && event.target.closest(selector)) {
           state.status = "saved";
+          state.saveClickedAt = Date.now();
         }
       }, true);
     }
@@ -1304,8 +1305,11 @@ async function installTaskCompletionMonitor(tabId, runId, saveSelector) {
   });
 }
 
-async function waitForStep(tabId, label, _saveSelector, runId, stepId, timeout = 180000) {
+async function waitForStep(tabId, label, saveSelector, runId, stepId, timeout = 180000) {
   const deadline = Date.now() + timeout;
+  const isJobSave = /Create (Import|Export) Job/i.test(label);
+  let saveRetryAttempted = false;
+  let saveRetryDeadline = 0;
   while (Date.now() < deadline) {
     try {
       const activeSequence = activeSequences.get(tabId);
@@ -1323,8 +1327,15 @@ async function waitForStep(tabId, label, _saveSelector, runId, stepId, timeout =
             .filter(visible)
             .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim())
             .filter(Boolean);
+          const saveHost = saveSelector ? document.querySelector(saveSelector) : null;
+          const saveButton = saveHost?.matches("button") ? saveHost : saveHost?.querySelector("button");
+          const saveEnabled = Boolean(
+            saveHost && saveButton && visible(saveHost) && !saveButton.disabled &&
+            !saveHost.classList.contains("oj-disabled") && saveHost.getAttribute("aria-disabled") !== "true"
+          );
           return {
             monitor: window.__cdpSequenceStep || null,
+            saveEnabled,
             success: messages.some((message) =>
               /\byour\s+changes\s+have\s+been\s+saved\b/i.test(message) ||
               /\bjob\s+was\s+saved\s+successfully\b/i.test(message)
@@ -1341,6 +1352,32 @@ async function waitForStep(tabId, label, _saveSelector, runId, stepId, timeout =
       }
       if (!result?.monitor) {
         throw new Error(`${label} was interrupted before Oracle confirmed it was saved successfully.`);
+      }
+      const saveClickedAt = Number(result.monitor.saveClickedAt || 0);
+      const elapsedSinceSave = saveClickedAt ? Date.now() - saveClickedAt : 0;
+      if (isJobSave && saveClickedAt && !saveRetryAttempted && elapsedSinceSave >= 4000) {
+        saveRetryAttempted = true;
+        saveRetryDeadline = Date.now() + 5000;
+        if (result.saveEnabled) {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            world: "MAIN",
+            args: [saveSelector],
+            func: (selector) => {
+              const host = document.querySelector(selector);
+              const button = host?.matches("button") ? host : host?.querySelector("button");
+              if (!host || !button || button.disabled || host.classList.contains("oj-disabled") || host.getAttribute("aria-disabled") === "true") return false;
+              button.click();
+              return true;
+            }
+          });
+          await appendRunLog(`${label}: Save remained enabled after 4 seconds; retried Save.`, "warn", label, "Retry");
+        } else {
+          await appendRunLog(`${label}: Save became unavailable; waiting briefly for CDP confirmation.`, "info", label, "Wait");
+        }
+      }
+      if (isJobSave && saveRetryAttempted && Date.now() >= saveRetryDeadline) {
+        throw new Error(`${label} did not show a save confirmation after the Save retry.`);
       }
     } catch (error) {
       throw new Error(`${label} failed: ${error.message || error}`);

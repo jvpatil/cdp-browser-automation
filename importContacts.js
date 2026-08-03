@@ -327,6 +327,19 @@
                 return null
     },"enabled Start Mapping button");
           await click(startMappingButton);
+          // Start Mapping can briefly leave the old upload panel visible before
+          // JET creates the mapping grid. Do not treat the absence of the
+          // processing dialog as readiness: it may not have appeared yet.
+          await waitLong(()=>{
+                const grid=document.querySelector("oj-list-view#fieldMappingList ul[role='grid'][aria-label='FieldMappingData']");
+                const rows=document.querySelectorAll("oj-list-view#fieldMappingList li[role='row']");
+                const dialogs=[...document.querySelectorAll("oj-dialog,[role='dialog'],.oj-dialog,.oj-popup")].filter(visible);
+                const processing=dialogs.some(x=>{
+                      const t=normalize(textOf(x));
+                      return t.includes(normalize("Processing. Please wait"))&&t.includes(normalize("Cancel"));
+                });
+                return !processing&&grid&&rows.length>0;
+          },"field mapping table to load",120000);
           await waitLong(()=>{
                 const dialogs=[...document.querySelectorAll("oj-dialog,[role='dialog'],.oj-dialog,.oj-popup")].filter(visible);
                 const processing=dialogs.find(x=>{
@@ -336,10 +349,15 @@
       });
                 return processing?null:true;
     },"mapping processing dialog to close",120000);
+          await waitLong("oj-list-view#fieldMappingList ul[role='grid'][aria-label='FieldMappingData']","field mapping table",120000);
+          await waitLong("oj-list-view#fieldMappingList li[role='row']","field mapping rows",120000);
           if(typeof window.runCdpFieldMapping!=="function"){
                 throw new Error("The shared Import Job field mapper was not loaded.");
           }
-          await window.runCdpFieldMapping(window.__cdpImportConfig?.targetTables,window.__cdpImportConfig?.fieldToTable);
+          const mappingResult=await window.runCdpFieldMapping(window.__cdpImportConfig?.targetTables,window.__cdpImportConfig?.fieldToTable);
+          if(!mappingResult?.mappedRows){
+                throw new Error("Field mapping completed without mapping any CSV fields.");
+          }
   };
     try{
         if(!location.href.includes("root=createConnectJob"))throw new Error("Open /data/?root=createConnectJob before running.");
