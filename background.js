@@ -1939,11 +1939,14 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
       }
       assertSequenceActive(tabId, runId, "Data Model relationship creation");
       await appendRunLog(`Creating relationship: ${objectName} → ${parentName}.`, "info", `Relationship · ${group}`, "Plan");
-      await chrome.scripting.executeScript({
+      const [{ result: relationshipResult }] = await chrome.scripting.executeScript({
         target: { tabId }, world: "MAIN", args: [objectName, parentName],
         func: async (childObjectName, relationshipParentName) => window.cdpDataModelCreateRelationship(childObjectName, relationshipParentName)
       });
-      await appendRunLog(`Relationship saved: ${objectName} → ${parentName}.`, "info", `Relationship · ${group}`, "Save");
+      if (!relationshipResult?.saved || !relationshipResult?.verified) {
+        throw new Error(`CDP did not verify the relationship ${objectName} → ${parentName}.`);
+      }
+      await appendRunLog(`Relationship verified: ${objectName} → ${parentName}.`, "info", `Relationship · ${group}`, "Save");
     }
   }
   await appendRunLog(saveObjects ? "Selected Data Model objects were saved." : "Selected Data Model groups validated without saving objects.");

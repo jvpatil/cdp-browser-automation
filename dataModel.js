@@ -343,13 +343,38 @@ window.cdpDataModelSaveAttribute = async () => {
     return waitFor(relationshipDialog, "Create relationship dialog");
   }
 
+  function detailsTab() {
+    const tab = document.getElementById("dataObjDetails-tab");
+    return visible(tab) ? tab : null;
+  }
+
+  function createRelationshipControl() {
+    const control = document.getElementById("create-foreign-key-plus");
+    return visible(control) ? control : null;
+  }
+
+  function relationshipDetailsContain(parentName) {
+    const details = document.getElementById("dataObjDetails-tab")?.closest("oj-cxu-data-object-management, .data-object-management, main") || document;
+    const detailText = normal(text(details));
+    // The parent must be shown in the selected object's Details view after
+    // CDP has persisted the relationship.  The dialog closing alone only
+    // confirms that a click was accepted, not that the relationship exists.
+    return detailText.includes(normal(parentName)) && /relationship|parent object|foreign key/.test(detailText);
+  }
+
   window.cdpDataModelCreateRelationship = async (objectName, parentName) => {
     if (!String(objectName || "").trim() || !String(parentName || "").trim()) {
       throw new Error("Relationship requires both a child object and a parent object.");
     }
     await click(await waitFor(() => objectTab(objectName), `${objectName} data object`));
     await sleep(2000);
-    await click(await waitFor(() => namedButton("Create relationship"), "Create relationship control"));
+    // The add-relationship affordance is only available in Details.  Using a
+    // text-only "Create relationship" lookup could target a stale control on
+    // the Attributes view and report a false save.
+    await click(await waitFor(detailsTab, "Data Model Details tab"));
+    await waitFor(createRelationshipControl, "Create relationship control in Details");
+    await sleep(800);
+    await click(createRelationshipControl());
     const dialog = await waitForRelationshipDialog();
     const childRadio = await waitFor(() => {
       const input = dialog.querySelector('input[name="object-one"][value="child"]');
@@ -383,8 +408,13 @@ window.cdpDataModelSaveAttribute = async () => {
     await sleep(500);
     await click(save);
     await waitFor(() => !visible(relationshipDialog()), "relationship save confirmation", 60000);
-    await sleep(3000);
-    return { child: objectName, parent: parentName, saved: true };
+    await sleep(2000);
+    await waitFor(
+      () => relationshipDetailsContain(parentName),
+      `saved relationship to ${parentName}`,
+      60000
+    );
+    return { child: objectName, parent: parentName, saved: true, verified: true };
   };
 
   window.cdpDataModelCancel = async () => {
