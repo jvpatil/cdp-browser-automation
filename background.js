@@ -407,7 +407,7 @@ function navigationUrl(tabUrl, path, root) {
   return url.href;
 }
 
-async function captureCreatedEntity(tabId, runMetadata, filename) {
+async function captureCreatedEntity(tabId, runMetadata, filename, fallbackName = "") {
   const creation = {
     "source.js": { section: "sources", label: "Source", inputId: "source-name-input|input" },
     "destination.js": { section: "destinations", label: "Destination", inputId: "source-name-input|input" },
@@ -417,21 +417,31 @@ async function captureCreatedEntity(tabId, runMetadata, filename) {
   }[filename];
   if (!creation) return;
 
-  const [{ result: capturedEntity }] = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: "MAIN",
-    args: [creation.inputId],
-    func: (inputId) => ({
-      name: document.getElementById(inputId)?.value?.trim() || "",
-      scheduledAt: Number(window.__cdpScheduledRunAt) || null
-    })
-  });
+  let capturedEntity;
+  // A plain Save keeps most CDP forms open, but connection forms can rerender
+  // immediately after their success toast. Give the input a short chance to
+  // return before relying on the exact name we generated for this run.
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      args: [creation.inputId],
+      func: (inputId) => ({
+        name: document.getElementById(inputId)?.value?.trim() || "",
+        scheduledAt: Number(window.__cdpScheduledRunAt) || null
+      })
+    });
+    capturedEntity = result;
+    if (capturedEntity?.name) break;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
   const { name: jobName, scheduledAt: capturedScheduledAt } = capturedEntity || {};
   const scheduledAt = capturedScheduledAt || (filename === "exportJob.js" ? runMetadata.exportScheduledAt : null);
-  if (!jobName) throw new Error(`The saved ${creation.label} name could not be captured.`);
+  const resolvedName = jobName || String(fallbackName || "").trim();
+  if (!resolvedName) throw new Error(`The saved ${creation.label} name could not be captured.`);
   const savedEntity = {
     label: creation.label,
-    name: jobName,
+    name: resolvedName,
     savedAt: Date.now()
   };
   if (creation.section === "jobs" && scheduledAt) savedEntity.scheduledAt = scheduledAt;
@@ -2223,7 +2233,12 @@ async function runConfiguredFlow(tabId, flow = {}) {
       if (step.id === "source" || step.id === "destination") {
         await rememberConnectionSequence(template.id, connectionSequence);
       }
-      const savedEntity = await captureCreatedEntity(tabId, runMetadata, step.filename);
+      const savedEntity = await captureCreatedEntity(
+        tabId,
+        runMetadata,
+        step.filename,
+        connectionConfig?.name || ""
+      );
       // The connection form may have added a suffix only after CDP rejected a
       // duplicate name. Carry that actual saved name into the later job's
       // source/destination selector.
