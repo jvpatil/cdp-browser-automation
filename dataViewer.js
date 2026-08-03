@@ -126,7 +126,20 @@
       input.dispatchEvent(new FocusEvent("blur", { bubbles: true, composed: true }));
     }
     await wait(() => selected() ? input : null, `${tableName} to be selected`, 20000);
-    await sleep(1000);
+    // Selecting an object commits the combobox before Data Viewer finishes
+    // loading that object's metadata.  Clicking Add during that interval
+    // opens a drawer that remains on skeleton/grey fields. Require the
+    // selected state and enabled Add action to remain stable before proceeding.
+    const addIsReady = () => {
+      const host = document.getElementById("add");
+      const button = host?.querySelector("button") || host;
+      return visible(button) && !button.disabled && button.getAttribute("aria-disabled") !== "true";
+    };
+    await wait(() => addIsReady() ? input : null, `${tableName} metadata to become available`, 30000);
+    await sleep(2500);
+    if (!selected() || !addIsReady()) {
+      throw new Error(`${tableName} did not remain ready after object selection.`);
+    }
   };
 
   const valueContext = (sequence, tableSequence, sourceId, objectId) => {
