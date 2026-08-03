@@ -57,11 +57,23 @@
       }
       throw new Error(`CDP kept the connection name invalid for ${baseName}; no available suffix was found.`);
     };
-    const saveId = config.side === "destination" ? "dst-saveClose-btn" : "create-source-saveClose";
     // A successful Verify Connection result is not a prerequisite for this
-    // automation. Persist the configured connection as soon as Oracle enables
-    // Save and Close, then let the following flow stage continue.
-    const waitSave = async () => { for (let tries = 0; tries < 120; tries += 1) { const save = realButton(d.getElementById(saveId)); if (enabled(save)) { clickButton(save); return; } await sleep(250); } throw new Error("Save and Close did not become available after filling the connection form."); };
+    // automation. Use plain Save rather than Save and Close: CDP keeps the
+    // form alive long enough to publish "Your changes have been saved.",
+    // which is the flow's actual completion gate.
+    const plainSave = () => [...d.querySelectorAll("button, oj-button, [role=button]")]
+      .find((item) => (item.getClientRects().length) && (item.textContent || "").replace(/\s+/g, " ").trim() === "Save" && enabled(realButton(item)));
+    const waitSave = async () => {
+      for (let tries = 0; tries < 120; tries += 1) {
+        const save = plainSave();
+        if (save) {
+          clickButton(save);
+          return;
+        }
+        await sleep(250);
+      }
+      throw new Error("Save did not become available after filling the connection form.");
+    };
     const selectOption = async (input, value) => { if (!input || input.disabled) return; clickButton(input.closest("oj-select-single,oj-combobox-one")?.querySelector(".oj-searchselect-arrow,.oj-select-arrow") || input); for (let tries = 0; tries < 20; tries += 1) { const option = [...d.querySelectorAll("[role=option],oj-option,li")].find((item) => item.getClientRects().length && (item.textContent || "").replace(/\s+/g," ").trim().toLowerCase().includes(String(value).toLowerCase())); if (option) { clickButton(option); d.activeElement?.blur?.(); return; } await sleep(100); } };
     const chooseCsvParser = async (parser) => {
       const group = d.getElementById("csv-parsers");
@@ -304,9 +316,12 @@
   const deadline = Date.now() + 60000;
   let save;
   while (Date.now() < deadline && !save) {
-    save = [...document.querySelectorAll("button,oj-button")].find((item) => visible(item) && /save and close/i.test(text(item)) && !(item.disabled || item.getAttribute("aria-disabled") === "true"));
+    save = [...document.querySelectorAll("button,oj-button,[role=button]")].find((item) => {
+      const button = item.matches("button") ? item : item.querySelector("button");
+      return visible(item) && /^save$/i.test(text(item)) && !(button || item).disabled && (button || item).getAttribute("aria-disabled") !== "true";
+    });
     if (!save) await sleep(250);
   }
-  if (!save) throw new Error("Save and Close did not become available after filling the connection form.");
+  if (!save) throw new Error("Save did not become available after filling the connection form.");
   await click(save.querySelector("button") || save);
 })().catch((error) => { console.error("Connection template automation failed", error); alert(`Connection template automation failed: ${error.message || error}`); });
