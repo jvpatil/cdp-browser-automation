@@ -413,7 +413,7 @@ async function captureCreatedEntity(tabId, runMetadata, filename, fallbackName =
     "destination.js": { section: "destinations", label: "Destination", inputId: "source-name-input|input" },
     "exportJob.js": { section: "jobs", role: "export", label: "Export Job", inputId: "job-name-input|input" },
     "importContacts.js": { section: "jobs", role: "import", label: "Import Job", inputId: "job-name-input|input" },
-    "importJob.js": { section: "jobs", role: "import", label: "Responsys Import", inputId: "job-name-input|input" }
+    "importJob.js": { section: "jobs", role: "responsys", label: "Responsys Import", inputId: "job-name-input|input" }
   }[filename];
   if (!creation) return;
 
@@ -455,7 +455,8 @@ async function captureCreatedEntity(tabId, runMetadata, filename, fallbackName =
   }
   runMetadata.jobNames = [
     runMetadata.creations.jobs.export?.name,
-    runMetadata.creations.jobs.import?.name
+    runMetadata.creations.jobs.import?.name,
+    runMetadata.creations.jobs.responsys?.name
   ].filter(Boolean);
   await chrome.storage.local.set({ e2eRun: runMetadata });
   return savedEntity;
@@ -2088,7 +2089,7 @@ async function runDataModelAttributes(tabId, options = {}) {
 async function runConfiguredFlow(tabId, flow = {}) {
   if (activeSequences.has(tabId)) throw new Error("An E2E flow is already running in this tab.");
   const selectedSteps = new Set(flow.steps || ["dataViewer", "source", "destination", "export", "import", "publish", "verify"]);
-  const usesTransfer = [...selectedSteps].some((step) => ["source", "destination", "export", "import"].includes(step));
+  const usesTransfer = [...selectedSteps].some((step) => ["source", "destination", "export", "import", "responsys"].includes(step));
   const selectedTemplate = usesTransfer ? await selectedTransferTemplate(flow.templateId) : null;
   const template = selectedTemplate ? { ...selectedTemplate, connectionPurpose: flow.connectionPurpose || "" } : null;
   const connectionSequence = template ? await nextConnectionSequence(template.id) : 0;
@@ -2096,7 +2097,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
   const destinationConfig = template ? connectionRuntime(template, "destination", connectionSequence) : null;
   // A job always owns its prerequisite connection, even when the user did not
   // select the connection card explicitly in a custom flow.
-  if (selectedSteps.has("import")) selectedSteps.add("source");
+  if (selectedSteps.has("import") || selectedSteps.has("responsys")) selectedSteps.add("source");
   if (selectedSteps.has("export")) selectedSteps.add("destination");
   const stepDefinitions = [
     { id: "dataModel", label: "Data Models" },
@@ -2105,9 +2106,10 @@ async function runConfiguredFlow(tabId, flow = {}) {
     { id: "source", filename: "source.js", label: "Create Source", saveSelector: "#create-source-saveClose" },
     { id: "destination", filename: "destination.js", label: "Create Destination", saveSelector: "#dst-saveClose-btn" },
     { id: "export", filename: "exportJob.js", label: "Create Export Job", saveSelector: "#saveNclose-create-job" },
-    { id: "import", filename: "importContacts.js", label: "Create Import Job", saveSelector: "#saveNclose-create-job" }
+    { id: "import", filename: "importContacts.js", label: "Create Import Job", saveSelector: "#saveNclose-create-job" },
+    { id: "responsys", filename: "importJob.js", label: "Create Responsys Import", saveSelector: "#saveNclose-create-job" }
   ].filter((step) => selectedSteps.has(step.id));
-  const selectedJobSteps = stepDefinitions.filter((step) => step.id === "export" || step.id === "import");
+  const selectedJobSteps = stepDefinitions.filter((step) => step.id === "export" || step.id === "import" || step.id === "responsys");
   if (!stepDefinitions.length && !selectedSteps.has("publish") && !selectedSteps.has("verify")) {
     throw new Error("Select at least one flow step.");
   }
@@ -2125,7 +2127,8 @@ async function runConfiguredFlow(tabId, flow = {}) {
       destinations: [],
       jobs: {
         export: null,
-        import: null
+        import: null,
+        responsys: null
       }
     }
   };
@@ -2173,11 +2176,13 @@ async function runConfiguredFlow(tabId, flow = {}) {
         ? (useLegacyStagger ? { ...flow.exportSchedule, scheduledAt: runMetadata.exportScheduledAt } : normalizeNewSchedulerConfig(flow.exportSchedule, "export"))
         : step.id === "import"
           ? (useLegacyStagger ? { ...flow.importSchedule, scheduledAt: runMetadata.exportScheduledAt + 3600000 } : normalizeNewSchedulerConfig(flow.importSchedule, "import"))
-          : undefined;
-      if (step.id === "export" || step.id === "import") {
+          : step.id === "responsys"
+            ? normalizeNewSchedulerConfig(flow.responsysSchedule, "import")
+            : undefined;
+      if (step.id === "export" || step.id === "import" || step.id === "responsys") {
         await appendRunLog(`${step.label} scheduler: ${schedule.schedulerUi === "new" ? `New · ${schedule.frequency} · ${schedule.timeMode} · ${schedule.specificPreset || schedule.intervalStartPreset}` : `Legacy · ${schedule.mode} · ${schedule.frequency}`}.`, "info", `Scheduler · ${step.label}`, "Configure");
       }
-      if (step.id === "export" || step.id === "import") {
+      if (step.id === "export" || step.id === "import" || step.id === "responsys") {
         const monitor = { runId, stepId: step.filename, saveSelector: step.saveSelector };
         const result = step.id === "export"
           ? await runExportJobRequest(tabId, {
@@ -2203,8 +2208,8 @@ async function runConfiguredFlow(tabId, flow = {}) {
             connectionSequence,
             connection: sourceConfig,
             schedule,
-            variant: flow.importVariant || "generic",
-            tableIds: flow.importTableIds || ["customer", "contactPoint"],
+            variant: step.id === "responsys" ? "responsys" : (flow.importVariant || "generic"),
+            tableIds: step.id === "responsys" ? [] : (flow.importTableIds || ["customer", "contactPoint"]),
             jobName: flow.importJobName,
             description: flow.importDescription,
             notification: flow.notification,
