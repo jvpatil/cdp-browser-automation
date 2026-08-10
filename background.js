@@ -1640,7 +1640,7 @@ function normalizeJobRunRequest(request = {}) {
   const kind = request.kind === "export" ? "export" : "import";
   const variant = kind === "import" && request.variant === "responsys" ? "responsys" : "generic";
   if (!request.runId) throw new Error("A job run requires a run ID.");
-  if (!request.template) throw new Error("A job run requires a transfer template.");
+  if (!request.template && variant !== "responsys") throw new Error("A job run requires a transfer template.");
   if (kind === "export" && !String(request.payloadName || "").trim()) throw new Error("Select an Export payload.");
   if (kind === "import" && variant === "generic" && (!Array.isArray(request.tableIds) || !request.tableIds.length)) throw new Error("Select at least one Import table.");
   return {
@@ -1650,7 +1650,8 @@ function normalizeJobRunRequest(request = {}) {
     runId: request.runId,
     template: request.template,
     connectionSequence: request.connectionSequence,
-    connection: request.connection,
+    connection: request.connection || null,
+    responsysSourceName: String(request.responsysSourceName || "Responsys").trim() || "Responsys",
     schedule: kind === "export"
       ? normalizeNewSchedulerConfig(request.schedule, "export")
       : normalizeNewSchedulerConfig(request.schedule, "import"),
@@ -1669,8 +1670,17 @@ function normalizeJobRunRequest(request = {}) {
 
 function buildJobRuntimeConfig(request) {
   const isExport = request.kind === "export";
+  const isResponsys = request.variant === "responsys";
   const connection = request.connection;
   const operation = isExport ? "Export" : "Import";
+  if (isResponsys) return {
+    name: request.jobName || "",
+    description: request.description || "Responsys import",
+    sourceName: request.responsysSourceName,
+    sourceObjectName: "Responsys",
+    notification: request.notification || "",
+    fileContract: {}
+  };
   return isExport ? {
     name: request.jobName || transferJobName(request.template, connection, operation, request.connectionSequence),
     description: request.description || request.template.description || `${request.template.name} export`,
@@ -2089,7 +2099,7 @@ async function runDataModelAttributes(tabId, options = {}) {
 async function runConfiguredFlow(tabId, flow = {}) {
   if (activeSequences.has(tabId)) throw new Error("An E2E flow is already running in this tab.");
   const selectedSteps = new Set(flow.steps || ["dataViewer", "source", "destination", "export", "import", "publish", "verify"]);
-  const usesTransfer = [...selectedSteps].some((step) => ["source", "destination", "export", "import", "responsys"].includes(step));
+  const usesTransfer = [...selectedSteps].some((step) => ["source", "destination", "export", "import"].includes(step));
   const selectedTemplate = usesTransfer ? await selectedTransferTemplate(flow.templateId) : null;
   const template = selectedTemplate ? { ...selectedTemplate, connectionPurpose: flow.connectionPurpose || "" } : null;
   const connectionSequence = template ? await nextConnectionSequence(template.id) : 0;
@@ -2097,7 +2107,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
   const destinationConfig = template ? connectionRuntime(template, "destination", connectionSequence) : null;
   // A job always owns its prerequisite connection, even when the user did not
   // select the connection card explicitly in a custom flow.
-  if (selectedSteps.has("import") || selectedSteps.has("responsys")) selectedSteps.add("source");
+  if (selectedSteps.has("import")) selectedSteps.add("source");
   if (selectedSteps.has("export")) selectedSteps.add("destination");
   const stepDefinitions = [
     { id: "dataModel", label: "Data Models" },
@@ -2206,7 +2216,8 @@ async function runConfiguredFlow(tabId, flow = {}) {
             runId,
             template,
             connectionSequence,
-            connection: sourceConfig,
+            connection: step.id === "responsys" ? null : sourceConfig,
+            responsysSourceName: flow.responsysSourceName,
             schedule,
             variant: step.id === "responsys" ? "responsys" : (flow.importVariant || "generic"),
             tableIds: step.id === "responsys" ? [] : (flow.importTableIds || ["customer", "contactPoint"]),
@@ -2287,12 +2298,12 @@ async function runConfiguredFlow(tabId, flow = {}) {
   }
 }
 
-async function runFullSequence(tabId, templateId, connectionPurpose) {
+async function runFullSequence(tabId, templateId, connectionPurpose, responsysSourceName) {
   return runConfiguredFlow(tabId, {
     origin: "sanity",
     templateId,
     connectionPurpose,
-    steps: ["dataModel", "dataViewer", "source", "destination", "export", "import", "publish", "verify"],
+    steps: ["dataModel", "dataViewer", "source", "destination", "export", "import", "responsys", "publish", "verify"],
     dataModelGroups: ["Profile"],
     dataModelAttributeGroups: ["Profile"],
     saveDataModelObjects: true,
@@ -2304,6 +2315,8 @@ async function runFullSequence(tabId, templateId, connectionPurpose) {
     exportPayloadName: "Customer",
     exportSchedule: { schedulerUi: "new", frequency: "Daily", timeMode: "specific", specificPreset: "in15" },
     importSchedule: { schedulerUi: "new", frequency: "Daily", timeMode: "specific", specificPreset: "in30" },
+    responsysSchedule: { schedulerUi: "new", frequency: "Daily", timeMode: "specific", specificPreset: "in30" },
+    responsysSourceName: String(responsysSourceName || "Responsys").trim() || "Responsys",
     staggerJobs: true,
     allowImportFallback: true
   });
@@ -2550,6 +2563,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       steps: ["import"],
       importTableIds: message.tableIds,
       importSchedule: message.schedule,
+      responsysSchedule: message.schedule,
+      responsysSourceName: message.responsysSourceName,
       staggerJobs: false
     })
       .then(() => sendResponse({ ok: true }))
@@ -2569,7 +2584,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       origin: "independent",
       templateId: message.templateId,
       connectionPurpose: message.connectionPurpose,
-      steps: [isExport ? "export" : "import"],
+      steps: [isExport ? "export" : (isResponsys ? "responsys" : "import")],
       exportPayloadName: message.exportPayloadName || "Customer",
       exportFilterRecords: message.filterRecords || message.filterRec || "UPDATED",
       exportPayloadType: message.exportPayloadType || message.payloadType || "data-object",
@@ -2631,7 +2646,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type !== "run-full-sequence") return;
 
-  runFullSequence(message.tabId, message.templateId, message.connectionPurpose)
+  runFullSequence(message.tabId, message.templateId, message.connectionPurpose, message.responsysSourceName)
     .then(() => sendResponse({ ok: true }))
     .catch((error) => {
       console.error("CDP sequence failed", error);

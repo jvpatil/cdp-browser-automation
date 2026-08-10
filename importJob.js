@@ -1,5 +1,5 @@
 (async()=>{
-    const d=new Date(),dateTag=`${String(d.getDate()).padStart(2,"0")}${d.toLocaleString("en-US",{month:"short"}).toUpperCase()}${String(d.getFullYear()).slice(-2)}`,hostKey=location.hostname.split(".")[0].toUpperCase(),jobName=window.__cdpJobConfig?.name||`ImportJob_${dateTag}`,sourceObjectName=`PROFILE_${hostKey}`,C={
+    const d=new Date(),dateTag=`${String(d.getDate()).padStart(2,"0")}${d.toLocaleString("en-US",{month:"short"}).toUpperCase()}${String(d.getFullYear()).slice(-2)}`,hostKey=location.hostname.split(".")[0].toUpperCase(),jobName=window.__cdpJobConfig?.name||`ImportJob_${dateTag}`,sourceObjectName=window.__cdpJobConfig?.sourceObjectName||"Responsys",C={
         description:"Independent import draft validation",source:window.__cdpJobConfig?.sourceName||`OOS-SRC-${dateTag}`,template:"ResponsysProfile",frequency:window.__cdpSchedule?.frequency||"Daily",notify:"test.user@oracle.com"
   },nextRun=(()=>{
         const x=new Date();
@@ -86,13 +86,13 @@
     return input
   },renameSourceObject=async()=>{
         if(document.getElementById(sourceObjectName))return;
-    const ellipsis=await wait(()=>document.getElementById("PROFILE"),"PROFILE ellipsis"),hoverTarget=ellipsis.parentElement||ellipsis;
+    const ellipsis=await wait(() => document.getElementById("PROFILE"), "Responsys mapping source object"),hoverTarget=ellipsis.parentElement||ellipsis;
     await hover(hoverTarget);
     await hover(ellipsis);
     await mouseClick(ellipsis);
     const editAction=await wait(()=>[...document.querySelectorAll('[role="menuitem"],oj-option,button,a,li,span,div')].find(x=>visible(x)&&textOf(x)==="Edit")||null,"Edit source object action");
     await mouseClick(editAction.closest('[role="menuitem"],oj-option,button,a,li')||editAction);
-    const nameInput=await wait(()=>[...document.querySelectorAll('input:not([type="hidden"]),textarea')].find(x=>visible(x)&&String(x.value||"").trim()==="PROFILE")||null,"PROFILE rename input");
+    const nameInput=await wait(()=>[...document.querySelectorAll('input:not([type="hidden"]),textarea')].find(x=>visible(x)&&String(x.value||"").trim()==="PROFILE")||null,"Responsys mapping source-object rename input");
     setValue(nameInput,sourceObjectName);
     await sleep(1000);
     const editor=nameInput.closest("oj-dialog,[role='dialog'],.oj-popup,.oj-popup-content")||document,saveAction=[...editor.querySelectorAll("button,oj-button button,[role='button']")].find(x=>visible(x)&&/^(save|apply|ok|done)$/i.test(textOf(x)));
