@@ -228,12 +228,30 @@ function dataModelParentsForRun(groups = selectedDataModelGroups()) {
 function dataModelSummary() { const groups = selectedDataModelGroups(); const relationshipCount = groups.filter((group) => dataModelParentName(group)).length; return !groups.length ? "Select types" : `${groups[0]}${groups.length > 1 ? ` +${groups.length - 1}` : ""}${relationshipCount ? ` · ${relationshipCount} parent` : ""}${state.dataModelOptions.dryRun ? " · Dry run" : ""}`; }
 function dataModelDefaultColumns(group) { return Array.isArray(DATA_MODEL_COLUMN_DEFAULTS.groups?.[group]) ? DATA_MODEL_COLUMN_DEFAULTS.groups[group] : []; }
 function cloneDataModelColumns(columns) { return columns.map((column) => ({ name: String(column?.name || ""), dataType: String(column?.dataType || "string").toLowerCase() })); }
+function normalizeDataModelColumnType(value) {
+  const type = String(value || "string").trim().toLowerCase();
+  return ({ integer: "int", number: "decimal", float: "decimal", double: "decimal", datetime: "timestamp", "date-time": "timestamp", bool: "boolean" })[type] || type;
+}
+function parseDataModelColumnsJson(parsed, group) {
+  const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.columns) ? parsed.columns : (Array.isArray(parsed?.attributes) ? parsed.attributes : null));
+  const columns = list
+    ? list.map((column) => ({
+      name: String(column?.name || column?.attributeName || column?.columnName || "").trim(),
+      dataType: normalizeDataModelColumnType(column?.dataType || column?.type || column?.datatype)
+    }))
+    : Object.entries(parsed || {}).map(([name, definition]) => ({
+      name: String(name).trim(),
+      dataType: normalizeDataModelColumnType(typeof definition === "object" ? definition?.dataType || definition?.type || definition?.datatype : definition)
+    }));
+  if (!columns.length) throw new Error(`${group}: JSON contains no attributes.`);
+  return validateDataModelColumnsForRun(columns, group);
+}
 function dataModelEditableColumns(group) { return Array.isArray(state.dataModelAttributeColumns[group]) ? state.dataModelAttributeColumns[group] : cloneDataModelColumns(dataModelDefaultColumns(group)); }
 function dataModelColumnCount(group) { return dataModelEditableColumns(group).length; }
 function validateDataModelColumnsForRun(columns, group) {
   const allowed = new Set(["string", "int", "bigint", "decimal", "date", "timestamp", "boolean"]);
   const names = new Set();
-  const result = columns.map((column, index) => ({ name: String(column?.name || "").trim(), dataType: String(column?.dataType || "string").trim().toLowerCase(), index }));
+  const result = columns.map((column, index) => ({ name: String(column?.name || "").trim(), dataType: normalizeDataModelColumnType(column?.dataType), index }));
   if (!result.length) throw new Error(`${group}: add at least one attribute.`);
   for (const column of result) {
     if (!column.name) throw new Error(`${group}: enter a name for attribute ${column.index + 1}.`);
@@ -650,9 +668,10 @@ function dataModelColumnEditor(group) {
       const selected = file.files?.[0];
       if (!selected) return;
       const parsed = JSON.parse(await selected.text());
-      if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("JSON must be an object of attribute-name: data-type pairs.");
-      const uploaded = Object.entries(parsed).map(([name, dataType]) => ({ name, dataType: String(dataType || "").toLowerCase() }));
-      state.dataModelAttributeColumns[group] = validateDataModelColumnsForRun(uploaded, group);
+      if (!parsed || typeof parsed !== "object") throw new Error("JSON must be an attribute map, an array of rows, or an object with columns/attributes.");
+      const uploaded = parseDataModelColumnsJson(parsed, group);
+      state.dataModelAttributeColumns[group] = uploaded;
+      state.dataModelAttributeEnabled[group] = true;
       await persistDraft(); renderDataModelAttributeChoices(); setStatus(`Loaded ${uploaded.length} ${group} attributes.`);
     } catch (error) { setStatus(`JSON error: ${error.message || error}`); } finally { file.value = ""; }
   });
@@ -773,7 +792,21 @@ document.getElementById("dataViewerParentCustomerId").addEventListener("input", 
 document.getElementById("dataViewerDryRun").addEventListener("change", (event) => { state.dataViewerOptions.dryRun = event.target.checked; document.getElementById("runDataViewerBtn").textContent = event.target.checked ? "▶ Test Data Viewer Record" : "▶ Save Data Viewer Record"; persistDraft(); });
 document.getElementById("dataModelDryRun").addEventListener("change", (event) => { state.dataModelOptions.dryRun = event.target.checked; persistDraft(); renderDataModelChoices(); renderFlow(); });
 document.getElementById("removeDataModelCreationAttributesBtn").addEventListener("click", () => { if (!attributeEditorForCreationGroup) return; delete state.dataModelAttributeEnabled[attributeEditorForCreationGroup]; attributeEditorForCreationGroup = ""; persistDraft(); openSheet("dataModel"); renderAll(); });
-document.getElementById("applyDataModelCreationAttributesBtn").addEventListener("click", async () => { if (!attributeEditorForCreationGroup) return; await persistDraft(); attributeEditorForCreationGroup = ""; openSheet("dataModel"); renderAll(); });
+document.getElementById("applyDataModelCreationAttributesBtn").addEventListener("click", async () => {
+  if (!attributeEditorForCreationGroup) return;
+  try {
+    const group = attributeEditorForCreationGroup;
+    state.dataModelAttributeColumns[group] = validateDataModelColumnsForRun(dataModelEditableColumns(group), group);
+    state.dataModelAttributeEnabled[group] = true;
+    await persistDraft();
+    attributeEditorForCreationGroup = "";
+    openSheet("dataModel");
+    renderAll();
+    setStatus(`Applied ${state.dataModelAttributeColumns[group].length} ${group} attributes.`);
+  } catch (error) {
+    setStatus(`Cannot apply attributes: ${error.message || error}`);
+  }
+});
 document.getElementById("dataModelAttributeBack").addEventListener("click", async () => { const returnToDataModel = Boolean(attributeEditorForCreationGroup); if (!returnToDataModel) commitFlowConfiguration(); await persistDraft(); attributeEditorForCreationGroup = ""; if (returnToDataModel) { openSheet("dataModel"); renderAll(); } else closeSheets(); });
 document.getElementById("dataModelAttributeGroup").addEventListener("change", (event) => { state.dataModelAttributeGroup = event.target.value; chrome.storage.local.set({ lastDataModelAttributeGroup: state.dataModelAttributeGroup }); persistDraft(); renderDataModelAttributeChoices(); renderFlow(); });
 document.getElementById("dataModelAttributeObjectName").addEventListener("input", (event) => { state.dataModelAttributeObjectName = event.target.value; persistDraft(); renderDataModelAttributeChoices(); renderFlow(); });
