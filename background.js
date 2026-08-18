@@ -286,6 +286,30 @@ function connectionRuntime(template, side, sequence = null) {
   };
 }
 
+function transferPurposeCode(template) {
+  return String(template.connectionPurpose || "")
+    .replace(/[^a-z0-9]+/gi, "_")
+    .split("_").filter(Boolean).join("_").slice(0, 28);
+}
+
+function responsysSourceRuntime(template, sequence = null) {
+  const runtime = connectionRuntime(template, "source", sequence);
+  const provider = connectionProviderCode(runtime.type);
+  const dateTag = sequence?.dateTag || dateTagForName();
+  const ordinal = Number(sequence?.ordinal || 1);
+  const stamp = dateTag + (ordinal > 1 ? "_" + String(ordinal).padStart(2, "0") : "");
+  runtime.name = [provider, transferPurposeCode(template), "Responsys", stamp].filter(Boolean).join("_");
+  return runtime;
+}
+
+function responsysImportJobName(template, connection, sequence) {
+  const provider = connectionProviderCode(connection.type);
+  const dateTag = sequence?.dateTag || dateTagForName();
+  const ordinal = Number(sequence?.ordinal || 1);
+  const stamp = dateTag + (ordinal > 1 ? "_" + String(ordinal).padStart(2, "0") : "");
+  return ["Import", "Responsys", provider, transferPurposeCode(template), stamp].filter(Boolean).join("_");
+}
+
 function jobRuntime(template, side) {
   const stamp = runStamp();
   const prefix = `${template.name || "CDP"}`.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 28) || "CDP";
@@ -1682,8 +1706,10 @@ function buildJobRuntimeConfig(request) {
     payloadType: request.payloadType,
     notification: request.notification || ""
   } : {
-    name: request.jobName || transferJobName(request.template, connection, operation, request.connectionSequence),
-    description: request.description || request.template.description || `${request.template.name} import`,
+    name: request.jobName || (request.variant === "responsys"
+      ? responsysImportJobName(request.template, connection, request.connectionSequence)
+      : transferJobName(request.template, connection, operation, request.connectionSequence)),
+    description: request.description || request.template.description || request.template.name + " import",
     sourceName: connection.name,
     sourceObjectName: "",
     notification: request.notification || "",
@@ -2094,16 +2120,21 @@ async function runConfiguredFlow(tabId, flow = {}) {
   const template = selectedTemplate ? { ...selectedTemplate, connectionPurpose: flow.connectionPurpose || "" } : null;
   const connectionSequence = template ? await nextConnectionSequence(template.id) : 0;
   const sourceConfig = template ? connectionRuntime(template, "source", connectionSequence) : null;
+  // Responsys uses its own file and mapping contract, so it always creates a
+  // dedicated Source instead of reusing the generic Import Source.
+  const responsysSourceConfig = template ? responsysSourceRuntime(template, connectionSequence) : null;
   const destinationConfig = template ? connectionRuntime(template, "destination", connectionSequence) : null;
   // A job always owns its prerequisite connection, even when the user did not
   // select the connection card explicitly in a custom flow.
-  if (selectedSteps.has("import") || selectedSteps.has("responsys")) selectedSteps.add("source");
+  if (selectedSteps.has("import")) selectedSteps.add("source");
+  if (selectedSteps.has("responsys")) selectedSteps.add("responsysSource");
   if (selectedSteps.has("export")) selectedSteps.add("destination");
   const stepDefinitions = [
     { id: "dataModel", label: "Data Models" },
     { id: "dataModelAttributes", label: "Add New Attributes" },
     { id: "dataViewer", label: "Data Viewer" },
     { id: "source", filename: "source.js", label: "Create Source", saveSelector: "#create-source-saveClose" },
+    { id: "responsysSource", filename: "source.js", label: "Create Responsys Source", saveSelector: "#create-source-saveClose" },
     { id: "destination", filename: "destination.js", label: "Create Destination", saveSelector: "#dst-saveClose-btn" },
     { id: "export", filename: "exportJob.js", label: "Create Export Job", saveSelector: "#saveNclose-create-job" },
     { id: "import", filename: "importContacts.js", label: "Create Import Job", saveSelector: "#saveNclose-create-job" },
@@ -2206,7 +2237,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
             runId,
             template,
             connectionSequence,
-            connection: sourceConfig,
+            connection: step.id === "responsys" ? responsysSourceConfig : sourceConfig,
             schedule,
             variant: step.id === "responsys" ? "responsys" : (flow.importVariant || "generic"),
             tableIds: step.id === "responsys" ? [] : (flow.importTableIds || ["customer", "contactPoint"]),
@@ -2229,7 +2260,13 @@ async function runConfiguredFlow(tabId, flow = {}) {
         await saveRunSnapshot({ ...runSnapshot, jobs: [...runSnapshot.jobs] });
         continue;
       }
-      const connectionConfig = step.id === "source" ? sourceConfig : step.id === "destination" ? destinationConfig : undefined;
+      const connectionConfig = step.id === "source"
+        ? sourceConfig
+        : step.id === "responsysSource"
+          ? responsysSourceConfig
+          : step.id === "destination"
+            ? destinationConfig
+            : undefined;
       await runTask(tabId, step.filename, {
         runId,
         stepId: step.filename,
@@ -2249,8 +2286,9 @@ async function runConfiguredFlow(tabId, flow = {}) {
       // duplicate name. Carry that actual saved name into the later job's
       // source/destination selector.
       if (step.id === "source" && savedEntity?.name) sourceConfig.name = savedEntity.name;
+      if (step.id === "responsysSource" && savedEntity?.name) responsysSourceConfig.name = savedEntity.name;
       if (step.id === "destination" && savedEntity?.name) destinationConfig.name = savedEntity.name;
-      if (step.id === "source" || step.id === "destination") {
+      if (step.id === "source" || step.id === "responsysSource" || step.id === "destination") {
         runSnapshot.connections[step.id] = savedEntity?.name || connectionConfig?.name || "";
         await saveRunSnapshot({ ...runSnapshot, connections: { ...runSnapshot.connections } });
       }

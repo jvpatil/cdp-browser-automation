@@ -54,7 +54,6 @@ function jobPresetConfig(kind) {
 }
 function flowPresetConfig() {
   return {
-    templateId: state.templateId,
     steps: selectedFlowSteps(),
     importTableIds: selectedTableIds(),
     exportPayloadName: state.exportPayloadName,
@@ -73,7 +72,7 @@ function flowPresetConfig() {
 }
 function applyPresetConfig(config) {
   if (!config) return;
-  if (state.templates.some((template) => template.id === config.templateId)) state.templateId = config.templateId;
+  if (config.kind && state.templates.some((template) => template.id === config.templateId)) state.templateId = config.templateId;
   if (config.kind === "responsys") state.schedulers.responsys = normalizeScheduler("responsys", config.schedule);
   if (config.kind === "import") {
     state.importSettings = Object.fromEntries((config.tableIds || []).map((id) => [id, true]));
@@ -103,13 +102,16 @@ function applyPresetConfig(config) {
 async function persistPresets() { await chrome.storage.local.set({ jobPresets, flowPresets }); }
 async function loadPresets() {
   const stored = await chrome.storage.local.get({ jobPresets: [], flowPresets: [] });
-  const withoutPurpose = (preset) => {
+  const withoutPurpose = (preset, removeTemplate = false) => {
     if (!preset?.config) return preset;
-    const { purpose: _purpose, dataModelAttributeObjectName: _objectName, ...config } = preset.config;
+    const config = { ...preset.config };
+    delete config.purpose;
+    delete config.dataModelAttributeObjectName;
+    if (removeTemplate) delete config.templateId;
     return { ...preset, config };
   };
-  jobPresets = Array.isArray(stored.jobPresets) ? stored.jobPresets.map(withoutPurpose) : [];
-  flowPresets = Array.isArray(stored.flowPresets) ? stored.flowPresets.map(withoutPurpose) : [];
+  jobPresets = Array.isArray(stored.jobPresets) ? stored.jobPresets.map((preset) => withoutPurpose(preset)) : [];
+  flowPresets = Array.isArray(stored.flowPresets) ? stored.flowPresets.map((preset) => withoutPurpose(preset, true)) : [];
   // Migrate existing presets once so an older saved Purpose cannot overwrite
   // the run-specific value when a preset is loaded later.
   if (JSON.stringify(jobPresets) !== JSON.stringify(stored.jobPresets) || JSON.stringify(flowPresets) !== JSON.stringify(stored.flowPresets)) {
