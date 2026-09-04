@@ -2113,7 +2113,7 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
   return { createdObjects };
 }
 
-async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, seedRecords = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {} } = {}) {
+async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {} } = {}) {
   if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
   const runId = crypto.randomUUID();
   let failed = false;
@@ -2123,11 +2123,6 @@ async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, s
   await setE2EStatus(`Running: ${runLabel}`, tabId);
   try {
     const result = await runDataModelStep(tabId, runId, { purpose, groups, saveObjects, attributeGroups, addAttributes, columnOverrides, parentByGroup });
-    if (saveObjects && seedRecords && Object.keys(result.createdObjects || {}).length) {
-      const dataViewerParents = Object.fromEntries(Object.entries(result.createdObjects).map(([group, objectName]) => [objectName, parentByGroup?.[group] || ""]));
-      await appendRunLog("All selected objects, attributes, and relationships are saved; adding records.", "info", "Data Model", "Seed");
-      await runDataViewerStep(tabId, { dataViewerTableIds: Object.values(result.createdObjects), dataViewerParents, recordsPerTable: 1, sourceId: "UI", saveRecords: true, dataViewerOverrides: {} }, runId);
-    }
   } catch (error) {
     failed = true;
     failureDetail = error.message || String(error);
@@ -2315,11 +2310,6 @@ async function runConfiguredFlow(tabId, flow = {}) {
       if (step.id === "dataModel") {
         const result = await runDataModelStep(tabId, runId, { purpose: flow.connectionPurpose || "", groups: flow.dataModelGroups, saveObjects: Boolean(flow.saveDataModelObjects), attributeGroups: flow.dataModelAttributeGroups || [], addAttributes: Boolean(flow.addDataModelAttributes), columnOverrides: flow.dataModelColumnOverrides || {}, parentByGroup: flow.dataModelParents || {} });
         Object.assign(createdDataModelObjects, result.createdObjects || {});
-        if (flow.seedDataModelRecords && !selectedSteps.has("dataViewer") && Object.keys(result.createdObjects || {}).length) {
-          const dataViewerParents = Object.fromEntries(Object.entries(result.createdObjects).map(([group, objectName]) => [objectName, flow.dataModelParents?.[group] || ""]));
-          await appendRunLog("Data Models complete; adding configured seed records.", "info", "Data Model", "Seed");
-          await runDataViewerStep(tabId, { dataViewerTableIds: Object.values(result.createdObjects), dataViewerParents, recordsPerTable: 1, sourceId: "UI", saveRecords: true, dataViewerOverrides: {} }, runId);
-        }
         continue;
       }
       if (step.id === "dataModelAttributes") {
@@ -2779,7 +2769,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "run-data-model") {
-    runDataModel(message.tabId, { purpose: message.connectionPurpose, groups: message.groups, saveObjects: message.saveObjects, seedRecords: message.seedRecords, attributeGroups: message.attributeGroups || [], addAttributes: message.addAttributes, columnOverrides: message.columnOverrides || {}, parentByGroup: message.parentByGroup || {} })
+    runDataModel(message.tabId, { purpose: message.connectionPurpose, groups: message.groups, saveObjects: message.saveObjects, attributeGroups: message.attributeGroups || [], addAttributes: message.addAttributes, columnOverrides: message.columnOverrides || {}, parentByGroup: message.parentByGroup || {} })
       .then(() => sendResponse({ ok: true }))
       .catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
     return true;

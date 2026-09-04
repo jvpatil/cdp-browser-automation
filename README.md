@@ -67,7 +67,7 @@ To add a table, add its catalog entry and CSV fragment, then reload the extensio
 
 Selecting a live object loads its columns for the value editor. The runner enters only fields whose metadata has `systemAttribute: false`, using each `fieldId` directly (for example, `Email_c` maps to `Email_c|input`). CDP's Add Record **Next** page remains the source of truth for Source IDs and foreign keys.
 
-For a custom object related to Customer or Account, Data Viewer automatically creates the matching parent record first and uses that sequence's generated `Source…ID` in the child FK. This works both for records added later and for the optional **Add records after all selected objects are saved** setting in **Data Models**. That setting is off by default and starts only after every selected table, attribute, and relationship has saved successfully.
+For a custom object related to Customer or Account, Data Viewer automatically creates the matching parent record first and uses that sequence's generated `Source…ID` in the child FK. Add records only after the tenant has been published and the object is available in the separate Data Viewer flow.
 
 `config/data-viewer-records.json` remains the reusable baseline for standard-table values. Custom tables do not need entries there; their live non-system fields receive editable generated defaults.
 
