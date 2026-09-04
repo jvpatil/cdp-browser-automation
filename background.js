@@ -121,13 +121,22 @@ function metadataListFromResponse(response) {
 }
 
 function metadataFieldList(response) {
-  const candidates = [response, response?.data, response?.metadata, response?.schema];
-  for (const candidate of candidates) {
-    for (const key of ["fields", "attributes", "columns"]) {
-      if (Array.isArray(candidate?.[key])) return candidate[key];
+  // CDP returns table attributes under different nesting keys across Data Model
+  // and Data Viewer routes. Collect actual field nodes by their stable fieldId
+  // instead of assuming one response wrapper.
+  const found = [];
+  const visited = new Set();
+  const walk = (value) => {
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+    if (!Array.isArray(value) && typeof value.fieldId === "string" && value.fieldId.trim()) {
+      found.push(value);
+      return;
     }
-  }
-  return [];
+    for (const child of Array.isArray(value) ? value : Object.values(value)) walk(child);
+  };
+  walk(response);
+  return found;
 }
 
 async function fetchCdpMetadata(tabId, endpoint) {
@@ -159,6 +168,7 @@ function normalizeLiveDataViewerTable(table) {
     cdpTable: name,
     tableId,
     sourceAttribute: String(table?.sourceAttribute || "").trim(),
+    versionTS: Number(table?.versionTS || 0) || 0,
     isCustom: /_c$/i.test(tableId) || (table?.createdBy && !/^system$/i.test(String(table.createdBy)))
   };
 }
@@ -180,12 +190,18 @@ async function loadLiveDataViewerTables(tabId) {
 async function loadLiveDataViewerFields(tabId, table) {
   const tableId = encodeURIComponent(String(table?.tableId || table?.id || table || ""));
   if (!tableId) throw new Error("A Data Viewer table ID is required.");
-  const response = await fetchCdpMetadata(tabId, `tables/${tableId}`);
+  const before = Number(table?.versionTS || 0);
+  const response = await fetchCdpMetadata(tabId, `tables/${tableId}${before ? `?before=${before}` : ""}`);
   const unique = new Map();
   for (const field of metadataFieldList(response)) {
     const fieldId = String(field?.fieldId || field?.id || field?.name || "").trim();
     if (!fieldId) continue;
-    unique.set(fieldId, { fieldId, dataType: String(field?.dataType || field?.type || "string").toLowerCase(), systemAttribute: Boolean(field?.systemAttribute) });
+    const rawSystemAttribute = field?.systemAttribute;
+    unique.set(fieldId, {
+      fieldId,
+      dataType: String(field?.dataType || field?.type || "string").toLowerCase(),
+      systemAttribute: rawSystemAttribute === true || /^true$/i.test(String(rawSystemAttribute || ""))
+    });
   }
   return [...unique.values()];
 }
