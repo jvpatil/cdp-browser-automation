@@ -121,11 +121,12 @@
       const drawer = document.getElementById("data-object-management");
       const name = document.getElementById("objNameInput|input");
       const objectId = document.getElementById("objIdInput|input");
+      const resourceName = document.getElementById("objResNameInput|input");
       const cancel = document.querySelector("#btnCancel button");
       // CDP enables Object ID only after Name is committed. Waiting for the
       // generated ID here deadlocks the drawer before Name can be entered.
       return visible(drawer) && drawer.classList.contains("oj-complete") &&
-        visible(name) && visible(objectId) && !name.disabled &&
+        visible(name) && visible(objectId) && visible(resourceName) && !name.disabled && !resourceName.disabled &&
         cancel && !cancel.disabled && !hasVisibleLoading();
     }, "fully rendered Create data object drawer");
     // Oracle can expose the inputs just before its Knockout/JET bindings are
@@ -135,9 +136,10 @@
       "Create data object drawer to become stable", 15000);
   }
 
-  function drawerReady(expectedGroup) {
+  function drawerReady(expectedGroup, expectedResourceName = "") {
     const objectName = document.getElementById("objNameInput|input")?.value || "";
     const objectId = document.getElementById("objIdInput|input")?.value || "";
+    const resourceName = document.getElementById("objResNameInput|input")?.value || "";
     // JET's combobox value lives on the inner input. textContent is empty,
     // which previously made this validation wait forever on page one.
     const groupInput = document.getElementById("objGroupInput|input");
@@ -145,8 +147,9 @@
       ...[...document.querySelectorAll("oj-select-single, oj-combobox-one, [role=combobox]")].filter(visible).map((element) => element.value || text(element))];
     const groupMatches = groupValues.some((value) => normal(value).includes(normal(expectedGroup)));
     const next = namedButton("Next");
-    return objectName && objectId && groupMatches && !(next?.querySelector("button") || next)?.disabled
-      ? { objectName, objectId }
+    const resourceMatches = !expectedResourceName || normal(resourceName) === normal(expectedResourceName);
+    return objectName && objectId && resourceMatches && groupMatches && !(next?.querySelector("button") || next)?.disabled
+      ? { objectName, objectId, resourceName }
       : null;
   }
 
@@ -174,8 +177,8 @@
     return { inputId: search.id };
   };
 
-  window.cdpDataModelValidateAndAdvance = async (group) => {
-    const ready = await waitFor(() => drawerReady(group), `${group} object name, generated ID, and group`);
+  window.cdpDataModelValidateAndAdvance = async (group, expectedResourceName = "") => {
+    const ready = await waitFor(() => drawerReady(group, expectedResourceName), "Data Model object name, Resource Name, generated ID, and group");
     await click(namedButton("Next"));
     await waitFor(() => {
       const back = namedButton("Back");

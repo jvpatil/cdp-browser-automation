@@ -1175,12 +1175,19 @@ async function dataModelObjectState(tabId) {
     func: () => {
       const name = document.getElementById("objNameInput|input");
       const objectId = document.getElementById("objIdInput|input");
+      const resourceName = document.getElementById("objResNameInput|input");
       const messages = [...document.querySelectorAll("[role=alert], [role=tooltip], .oj-message, .oj-message-detail, .oj-messages, .oj-popup-content")]
         .filter((element) => element.getClientRects().length)
         .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim())
         .filter(Boolean)
         .join(" ");
-      return { name: name?.value || "", objectId: objectId?.value || "", invalid: name?.getAttribute("aria-invalid") === "true", messages };
+      return {
+        name: name?.value || "",
+        objectId: objectId?.value || "",
+        resourceName: resourceName?.value || "",
+        invalid: name?.getAttribute("aria-invalid") === "true" || resourceName?.getAttribute("aria-invalid") === "true",
+        messages
+      };
     }
   });
   return result || {};
@@ -1198,6 +1205,20 @@ async function commitJetDataModelObjectName(tabId, objectName) {
   const state = await dataModelObjectState(tabId);
   if (state.invalid) return { ...state, name: candidate, skipped: true, reason: state.messages || "CDP rejected this Data Model object name." };
   throw new Error(`CDP did not generate an Object ID for ${candidate}${state.messages ? `: ${state.messages}` : ""}`);
+}
+
+async function commitJetDataModelResourceName(tabId, resourceName) {
+  const candidate = String(resourceName || "").trim();
+  if (!candidate) throw new Error("Data Model Resource Name is required.");
+  await typeJetInput(tabId, "objResNameInput|input", candidate, "Resource Name");
+  for (let attempt = 0; attempt < 28; attempt += 1) {
+    const state = await dataModelObjectState(tabId);
+    if (String(state.resourceName || "").trim() === candidate && !state.invalid) return state;
+    if (state.invalid) throw new Error("CDP rejected Resource Name " + candidate + (state.messages ? ": " + state.messages : ""));
+    await new Promise((resolve) => setTimeout(resolve, 180));
+  }
+  const state = await dataModelObjectState(tabId);
+  throw new Error("CDP did not commit Resource Name " + candidate + (state.messages ? ": " + state.messages : ""));
 }
 
 async function dataModelAttributeState(tabId) {
@@ -1930,10 +1951,11 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
         await appendRunLog(`Skipped: ${generated.name}. ${generated.reason}`, "warn", `Data Model · ${group}`, "Skip");
         continue;
       }
-      await appendRunLog(`Object name = ${generated.name}; Object ID = ${generated.objectId}.`, "info", `Data Model · ${group}`, "Type");
+      const resource = await commitJetDataModelResourceName(tabId, generated.name);
+      await appendRunLog("Object name = " + generated.name + "; Object ID = " + generated.objectId + "; Resource Name = " + resource.resourceName + ".", "info", "Data Model · " + group, "Type");
       const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId }, world: "MAIN", args: [group],
-        func: async (selectedGroup) => window.cdpDataModelValidateAndAdvance(selectedGroup)
+        target: { tabId }, world: "MAIN", args: [group, generated.name],
+        func: async (selectedGroup, expectedResourceName) => window.cdpDataModelValidateAndAdvance(selectedGroup, expectedResourceName)
       });
       await appendRunLog(`Object group = ${result.group}; settings page opened.`, "info", `Data Model · ${group}`, "Validate");
       if (saveObjects) {
