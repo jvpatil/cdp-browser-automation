@@ -344,8 +344,9 @@
         const sourceObjectId = sourceObjectIdFor(table.cdpTable, context, tableSequence);
         context.objectId = sourceObjectId;
         const configuredValues = table.recordConfig?.values || {};
-        const fields = entryFieldKeys(drawer);
-        if (!fields.length) throw new Error(`${table.cdpTable} has no editable fields in the Add record drawer.`);
+        const allowedFields = Array.isArray(table.enterableFieldIds) ? table.enterableFieldIds.map(normalize) : [];
+        const fields = entryFieldKeys(drawer).filter((field) => !allowedFields.length || allowedFields.includes(normalize(field)));
+        if (!fields.length) throw new Error(`${table.cdpTable} has no eligible non-system fields in the Add record drawer.`);
         setProgress(`Filling ${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
         const skippedFields = [];
         for (const field of fields) {
@@ -385,7 +386,7 @@
         setProgress(`Filling ${table.cdpTable} key fields`);
         await wait(() => findField(drawer, "SourceID"), "the source ID fields", 60000);
         const keyFields = sourceKeyFieldNames(drawer);
-        const currentTableKey = `Source${table.cdpTable.replace(/[^A-Za-z0-9]/g, "")}ID`;
+        const currentTableKey = String(table.sourceAttribute || `Source${table.cdpTable.replace(/[^A-Za-z0-9]/g, "")}ID`);
         // Parent IDs are stored by sequence. A child record at sequence 2 uses
         // the parent table's sequence-2 ID, even though all parent records are
         // intentionally created before the child table is selected.

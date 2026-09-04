@@ -108,6 +108,95 @@ async function loadTableCatalog() {
   return tableCatalogPromise;
 }
 
+
+// Data Viewer is driven by tenant metadata rather than a copied static list.
+// The request runs in the page MAIN world, using the signed-in CDP session and
+// never persisting cookies or credentials in extension storage.
+function metadataListFromResponse(response) {
+  if (Array.isArray(response)) return response;
+  for (const key of ["items", "data", "results", "content", "tables"]) {
+    if (Array.isArray(response?.[key])) return response[key];
+  }
+  return [];
+}
+
+function metadataFieldList(response) {
+  const candidates = [response, response?.data, response?.metadata, response?.schema];
+  for (const candidate of candidates) {
+    for (const key of ["fields", "attributes", "columns"]) {
+      if (Array.isArray(candidate?.[key])) return candidate[key];
+    }
+  }
+  return [];
+}
+
+async function fetchCdpMetadata(tabId, endpoint) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    args: [endpoint],
+    func: async (metadataEndpoint) => {
+      const tenant = String(location.hostname || "").split(".")[0];
+      if (!tenant) throw new Error("Could not determine the CDP tenant from the active tab.");
+      const response = await fetch(`${location.origin}/api-metadata/v1/${tenant}/metadata/${metadataEndpoint}`, {
+        credentials: "same-origin",
+        headers: { Accept: "application/json, text/javascript, */*; q=0.01", "X-Requested-With": "XMLHttpRequest" }
+      });
+      if (!response.ok) throw new Error(`CDP metadata request failed (${response.status}).`);
+      return response.json();
+    }
+  });
+  return result;
+}
+
+function normalizeLiveDataViewerTable(table) {
+  const name = String(table?.name || table?.resourceName || table?.tableId || "").trim();
+  const tableId = String(table?.tableId || table?.resourceName || name).trim();
+  if (!name || !tableId) return null;
+  return {
+    id: tableId,
+    label: name,
+    cdpTable: name,
+    tableId,
+    sourceAttribute: String(table?.sourceAttribute || "").trim(),
+    isCustom: /_c$/i.test(tableId) || (table?.createdBy && !/^system$/i.test(String(table.createdBy)))
+  };
+}
+
+async function loadLiveDataViewerTables(tabId) {
+  const filter = encodeURIComponent(JSON.stringify([{ operator: "IN", attribute: "scope", value: ["DW"] }]));
+  const response = await fetchCdpMetadata(tabId, `tables?q=${filter}&limit=1000`);
+  const unique = new Map();
+  for (const item of metadataListFromResponse(response)) {
+    const table = normalizeLiveDataViewerTable(item);
+    if (table) unique.set(table.id, table);
+  }
+  return [...unique.values()].sort((left, right) => {
+    if (left.isCustom !== right.isCustom) return left.isCustom ? -1 : 1;
+    return left.label.localeCompare(right.label);
+  });
+}
+
+async function loadLiveDataViewerFields(tabId, table) {
+  const tableId = encodeURIComponent(String(table?.tableId || table?.id || table || ""));
+  if (!tableId) throw new Error("A Data Viewer table ID is required.");
+  const response = await fetchCdpMetadata(tabId, `tables/${tableId}`);
+  const unique = new Map();
+  for (const field of metadataFieldList(response)) {
+    const fieldId = String(field?.fieldId || field?.id || field?.name || "").trim();
+    if (!fieldId) continue;
+    unique.set(fieldId, { fieldId, dataType: String(field?.dataType || field?.type || "string").toLowerCase(), systemAttribute: Boolean(field?.systemAttribute) });
+  }
+  return [...unique.values()];
+}
+
+function parentTableFromMetadataFields(fields = []) {
+  const ids = new Set(fields.map((field) => String(field.fieldId || "").replace(/[^a-z0-9]/gi, "").toLowerCase()));
+  if (ids.has("sourcecustomerid")) return "Customer";
+  if (ids.has("sourceaccountid")) return "Account";
+  return "";
+}
+
 const E2E_IMPORT_FALLBACK = {
   targetTables: ["Customer", "ContactPoint"],
   fieldToTable: {
@@ -1861,13 +1950,8 @@ async function runDataViewerStep(tabId, flow, runId) {
   const recordsPerTable = flow.recordsPerTable ?? 1;
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
   const sourceId = String(flow.sourceId || "").trim() || "UI";
-  const [catalog, recordConfig] = await Promise.all([loadTableCatalog(), loadDataViewerRecordConfig()]);
   const tableIds = [...new Set(flow.dataViewerTableIds || ["Customer"])];
-  const inheritCustomerValues = tableIds.includes("Customer") && tableIds.includes("ContactPoint");
-  const tables = tableIds.map((tableName) => catalog.dataViewerTables.includes(tableName)
-    ? { id: tableName, label: tableName, cdpTable: tableName, recordConfig: dataViewerRecordConfigFor(tableName, recordConfig, flow.dataViewerOverrides, inheritCustomerValues) }
-    : null);
-  if (!tables.length || tables.some((table) => !table)) throw new Error("Select valid Data Viewer tables.");
+  const tables = await resolveDataViewerTables(tabId, tableIds, flow.dataViewerOverrides || {}, flow.dataViewerParents || {});
   const tab = await chrome.tabs.get(tabId);
   await navigateAndWait(tabId, navigationUrl(tab.url, TASKS["dataViewer.js"].path, TASKS["dataViewer.js"].root));
   await activatePageAutomationRun(tabId, runId);
@@ -1876,7 +1960,7 @@ async function runDataViewerStep(tabId, flow, runId) {
   await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["dataViewer.js"] });
   const [{ result: dataViewerResult }] = await chrome.scripting.executeScript({
     target: { tabId }, world: "MAIN",
-    args: [tables, { recordsPerTable, sourceId, saveRecords: Boolean(flow.saveRecords) }],
+    args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, sourceAttribute: table.sourceAttribute, enterableFieldIds: table.enterableFieldIds, recordConfig: table.recordConfig })), { recordsPerTable, sourceId, saveRecords: Boolean(flow.saveRecords) }],
     func: async (dataViewerTables, options) => {
       if (typeof window.runCdpDataViewer !== "function") throw new Error("Data Viewer automation did not load.");
       return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
@@ -2013,7 +2097,7 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
   return { createdObjects };
 }
 
-async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {} } = {}) {
+async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, seedRecords = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {} } = {}) {
   if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
   const runId = crypto.randomUUID();
   let failed = false;
@@ -2022,7 +2106,12 @@ async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, s
   activeSequences.set(tabId, { runId, cancelled: false, status: `Running: ${runLabel}` });
   await setE2EStatus(`Running: ${runLabel}`, tabId);
   try {
-    await runDataModelStep(tabId, runId, { purpose, groups, saveObjects, attributeGroups, addAttributes, columnOverrides, parentByGroup });
+    const result = await runDataModelStep(tabId, runId, { purpose, groups, saveObjects, attributeGroups, addAttributes, columnOverrides, parentByGroup });
+    if (saveObjects && seedRecords && Object.keys(result.createdObjects || {}).length) {
+      const dataViewerParents = Object.fromEntries(Object.entries(result.createdObjects).map(([group, objectName]) => [objectName, parentByGroup?.[group] || ""]));
+      await appendRunLog("All selected objects, attributes, and relationships are saved; adding records.", "info", "Data Model", "Seed");
+      await runDataViewerStep(tabId, { dataViewerTableIds: Object.values(result.createdObjects), dataViewerParents, recordsPerTable: 1, sourceId: "UI", saveRecords: true, dataViewerOverrides: {} }, runId);
+    }
   } catch (error) {
     failed = true;
     failureDetail = error.message || String(error);
@@ -2210,6 +2299,11 @@ async function runConfiguredFlow(tabId, flow = {}) {
       if (step.id === "dataModel") {
         const result = await runDataModelStep(tabId, runId, { purpose: flow.connectionPurpose || "", groups: flow.dataModelGroups, saveObjects: Boolean(flow.saveDataModelObjects), attributeGroups: flow.dataModelAttributeGroups || [], addAttributes: Boolean(flow.addDataModelAttributes), columnOverrides: flow.dataModelColumnOverrides || {}, parentByGroup: flow.dataModelParents || {} });
         Object.assign(createdDataModelObjects, result.createdObjects || {});
+        if (flow.seedDataModelRecords && !selectedSteps.has("dataViewer") && Object.keys(result.createdObjects || {}).length) {
+          const dataViewerParents = Object.fromEntries(Object.entries(result.createdObjects).map(([group, objectName]) => [objectName, flow.dataModelParents?.[group] || ""]));
+          await appendRunLog("Data Models complete; adding configured seed records.", "info", "Data Model", "Seed");
+          await runDataViewerStep(tabId, { dataViewerTableIds: Object.values(result.createdObjects), dataViewerParents, recordsPerTable: 1, sourceId: "UI", saveRecords: true, dataViewerOverrides: {} }, runId);
+        }
         continue;
       }
       if (step.id === "dataModelAttributes") {
@@ -2415,17 +2509,85 @@ function dataViewerRecordConfigFor(tableName, defaults, overrides, inheritCustom
   };
 }
 
+
+async function resolveDataViewerTables(tabId, selections, overrides = {}, parentByTable = {}) {
+  const catalog = await loadTableCatalog();
+  const staticTables = catalog.dataViewerTables.map((name) => ({
+    id: name,
+    label: name,
+    cdpTable: name,
+    tableId: name,
+    sourceAttribute: `Source${String(name).replace(/[^A-Za-z0-9]/g, "")}ID`,
+    isCustom: false
+  }));
+  const requested = [...new Map((selections || []).map((entry) => {
+    const key = typeof entry === "string" ? entry : entry?.id || entry?.tableId || entry?.cdpTable;
+    return [String(key || ""), entry];
+  })).values()];
+  if (!requested.length) throw new Error("Select at least one Data Viewer table.");
+  let liveTables = [];
+  for (let attempt = 0; attempt < 7; attempt += 1) {
+    try {
+      liveTables = await loadLiveDataViewerTables(tabId);
+    } catch (error) {
+      if (attempt === 6) console.warn("Could not load live Data Viewer metadata", error);
+      break;
+    }
+    const available = new Set([...staticTables, ...liveTables].flatMap((table) => [String(table.id).toLowerCase(), String(table.label).toLowerCase()]));
+    const allPresent = requested.every((entry) => {
+      const id = typeof entry === "string" ? entry : entry?.id || entry?.tableId || entry?.cdpTable;
+      const label = typeof entry === "string" ? entry : entry?.label || entry?.cdpTable || id;
+      return available.has(String(id || "").toLowerCase()) || available.has(String(label || "").toLowerCase());
+    });
+    if (allPresent || attempt === 6) break;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  const byId = new Map([...staticTables, ...liveTables].map((table) => [table.id, table]));
+  const byName = new Map([...staticTables, ...liveTables].map((table) => [String(table.label).toLowerCase(), table]));
+
+  const resolved = [];
+  for (const request of requested) {
+    const rawId = typeof request === "string" ? request : request?.id || request?.tableId || request?.cdpTable;
+    const rawName = typeof request === "string" ? request : request?.label || request?.cdpTable || rawId;
+    const base = byId.get(String(rawId)) || byName.get(String(rawName).toLowerCase());
+    if (!base) throw new Error(`Data Viewer object "${rawName}" is not available in the current DW metadata.`);
+    const table = { ...base };
+    const effectiveOverrides = { ...overrides };
+    if (overrides?.[table.id] && !effectiveOverrides[table.cdpTable]) effectiveOverrides[table.cdpTable] = overrides[table.id];
+    if (liveTables.some((item) => item.id === table.id)) {
+      const fields = await loadLiveDataViewerFields(tabId, table);
+      if (!fields.length) throw new Error(`CDP did not return columns for ${table.cdpTable}.`);
+      table.liveFields = fields;
+      table.enterableFieldIds = fields.filter((field) => !field.systemAttribute).map((field) => field.fieldId);
+      table.parentTable = String(parentByTable?.[table.id] || parentByTable?.[table.cdpTable] || parentTableFromMetadataFields(fields) || "").trim();
+    }
+    table.recordConfig = dataViewerRecordConfigFor(table.cdpTable, await loadDataViewerRecordConfig(), effectiveOverrides,
+      requested.some((entry) => String(typeof entry === "string" ? entry : entry?.label || entry?.cdpTable) === "Customer")
+      && requested.some((entry) => String(typeof entry === "string" ? entry : entry?.label || entry?.cdpTable) === "ContactPoint"));
+    resolved.push(table);
+  }
+
+  // Custom children can be inserted safely without forcing the user to select
+  // Customer or Account manually. Add only the needed parent once per sequence.
+  for (const child of [...resolved]) {
+    const parentName = /^(Customer|Account)$/i.test(child.parentTable || "") ? child.parentTable : "";
+    if (!parentName || resolved.some((table) => table.cdpTable.toLowerCase() === parentName.toLowerCase())) continue;
+    const parent = staticTables.find((table) => table.cdpTable.toLowerCase() === parentName.toLowerCase());
+    if (parent) {
+      parent.recordConfig = dataViewerRecordConfigFor(parent.cdpTable, await loadDataViewerRecordConfig(), overrides, false);
+      resolved.unshift(parent);
+    }
+  }
+  const parentFirst = (table) => /^(Customer|Account)$/i.test(table.cdpTable) ? 0 : 1;
+  return resolved.sort((left, right) => parentFirst(left) - parentFirst(right));
+}
+
+
 async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false, dataViewerOverrides = {} } = {}) {
   if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
   const resolvedSourceId = String(sourceId || "").trim() || "UI";
-  const [catalog, recordConfig] = await Promise.all([loadTableCatalog(), loadDataViewerRecordConfig()]);
-  const selectedTableIds = [...new Set(tableIds || [])];
-  const inheritCustomerValues = selectedTableIds.includes("Customer") && selectedTableIds.includes("ContactPoint");
-  const tables = selectedTableIds.map((tableName) => catalog.dataViewerTables.includes(tableName)
-    ? { id: tableName, label: tableName, cdpTable: tableName, recordConfig: dataViewerRecordConfigFor(tableName, recordConfig, dataViewerOverrides, inheritCustomerValues) }
-    : null);
-  if (!tables.length || tables.some((table) => !table)) throw new Error("Select valid tables from config/tables.json.");
+  const tables = await resolveDataViewerTables(tabId, tableIds, dataViewerOverrides);
   const runId = crypto.randomUUID();
   let failed = false;
   activeSequences.set(tabId, { runId, cancelled: false, status: "Running: Data Viewer Record" });
@@ -2440,7 +2602,7 @@ async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = 
     const [{ result: dataViewerResult }] = await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
-      args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, recordConfig: table.recordConfig })), { recordsPerTable, sourceId: resolvedSourceId, parentSourceCustomerId: String(parentSourceCustomerId || "").trim(), saveRecords: Boolean(saveRecords) }],
+      args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, sourceAttribute: table.sourceAttribute, enterableFieldIds: table.enterableFieldIds, recordConfig: table.recordConfig })), { recordsPerTable, sourceId: resolvedSourceId, parentSourceCustomerId: String(parentSourceCustomerId || "").trim(), saveRecords: Boolean(saveRecords) }],
       func: async (dataViewerTables, options) => {
         if (typeof window.runCdpDataViewer !== "function") throw new Error("Data Viewer automation did not load.");
         return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
@@ -2573,6 +2735,21 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "get-live-data-viewer-tables") {
+    loadLiveDataViewerTables(message.tabId)
+      .then((tables) => sendResponse({ ok: true, tables }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+  if (message?.type === "get-live-data-viewer-fields") {
+    loadLiveDataViewerFields(message.tabId, message.table)
+      .then((fields) => sendResponse({ ok: true, fields }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "run-publish-all") return;
 
   runPublishAll(message.tabId)
@@ -2586,7 +2763,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "run-data-model") {
-    runDataModel(message.tabId, { purpose: message.connectionPurpose, groups: message.groups, saveObjects: message.saveObjects, attributeGroups: message.attributeGroups || [], addAttributes: message.addAttributes, columnOverrides: message.columnOverrides || {}, parentByGroup: message.parentByGroup || {} })
+    runDataModel(message.tabId, { purpose: message.connectionPurpose, groups: message.groups, saveObjects: message.saveObjects, seedRecords: message.seedRecords, attributeGroups: message.attributeGroups || [], addAttributes: message.addAttributes, columnOverrides: message.columnOverrides || {}, parentByGroup: message.parentByGroup || {} })
       .then(() => sendResponse({ ok: true }))
       .catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
     return true;

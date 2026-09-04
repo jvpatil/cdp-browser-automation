@@ -61,6 +61,16 @@ Import preserves CSV headers exactly as authored:
 
 To add a table, add its catalog entry and CSV fragment, then reload the extension. Do not edit generated browser storage directly.
 
+## Live custom-object records
+
+**Data Viewer** keeps its shipped defaults for common objects, but it also reads the current tenant's CDP metadata when the popup opens or **Refresh** is selected. Only data objects with `scope = DW` are returned; custom objects are shown first and their CDP `name` is displayed in the picker.
+
+Selecting a live object loads its columns for the value editor. The runner enters only fields whose metadata has `systemAttribute: false`, using each `fieldId` directly (for example, `Email_c` maps to `Email_c|input`). CDP's Add Record **Next** page remains the source of truth for Source IDs and foreign keys.
+
+For a custom object related to Customer or Account, Data Viewer automatically creates the matching parent record first and uses that sequence's generated `Source…ID` in the child FK. This works both for records added later and for the optional **Add records after all selected objects are saved** setting in **Data Models**. That setting is off by default and starts only after every selected table, attribute, and relationship has saved successfully.
+
+`config/data-viewer-records.json` remains the reusable baseline for standard-table values. Custom tables do not need entries there; their live non-system fields receive editable generated defaults.
+
 ## Data Model test columns
 
 `config/data-model-columns.json` defines the default attributes created for each Data Model object group. Each entry has a `name` and CDP `dataType`; the initial Profile defaults are Email, FirstName, LastName, Age, and BirthDate.
