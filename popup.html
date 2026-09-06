@@ -509,22 +509,29 @@ body.drawer-active .sheet-body { display:block; flex:1 1 auto; overflow-y:auto; 
 .drawer-selection-chips,.drawer-preview,.drawer-done { display:none !important; }
 .sheet-back-bottom { display:block !important; margin:13px 0 0 auto; border:1px solid #38516f; border-radius:7px; padding:6px 9px; color:#d4a359; background:#101c2d; font-size:11px; }
 
-/* Narrow side-panel density: one column, compact controls, and no wasted card space. */
+/* Compact enterprise configuration panel. */
+html,body { width:100%; min-width:0; }
+body { width:100%; min-width:0; }
 .header { display:none; }
-.workflow-context .context-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px; }
-.workflow-context .context-row strong { font-size:14px; }
-.workflow-default-fields { display:grid; grid-template-columns:minmax(25ch,1.15fr) 54px minmax(11ch,.85fr); gap:6px; }
-.workflow-default-fields select,.workflow-default-fields input { width:100%; min-width:0; }
-.workflow-context #workingSet { grid-column:1; grid-row:1; }
-.workflow-context #workingSetRefreshBtn { grid-column:2; grid-row:1; min-width:54px; border:1px solid #38516f; border-radius:7px; padding:0 5px; color:#d4a359; background:#101c2d; font-size:10px; }
-.workflow-context #connectionPurpose { grid-column:3; grid-row:1; width:100%; }
-.workflow-context #transferTemplate { grid-column:1; grid-row:2; }
-.workflow-context #manageTemplatesBtn { grid-column:2 / span 2; grid-row:2; display:flex; align-items:center; justify-content:center; width:100%; height:33px; min-width:0; border:1px solid #38516f; border-radius:7px; padding:0 6px; color:#d4a359; background:#101c2d; font-size:11px; line-height:1; white-space:nowrap; }
-.workflow-context .scheduler-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); margin-top:7px; }
-.preset-row { display:grid; grid-template-columns:minmax(74px,1.15fr) minmax(64px,1fr) auto auto; gap:5px; }
+.workflow-context { display:grid !important; width:100%; max-width:100%; gap:9px; padding:10px; border-color:#24364f; background:#162235; overflow:hidden; }
+.environment-strip { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:9px; }
+.purpose-field,.schedule-field { display:flex; align-items:center; gap:6px; min-width:0; }
+.purpose-field label { color:#9eafc3; font-size:9px; font-weight:800; letter-spacing:.08em; }
+.schedule-field > span { color:#9eafc3; font-size:9px; font-weight:800; letter-spacing:.08em; }
+.purpose-field input { width:15ch; height:28px; min-width:0; border:1px solid #38516f; border-radius:7px; padding:0 7px; color:#f8fafc; background:#101c2d; font-size:11px; outline:0; }
+.purpose-field input::placeholder { color:#9eafc3; }
+#toggle-scheduler-mode { display:flex; flex:0 0 auto; width:104px; height:28px; min-height:28px; margin:0; padding:1px; border:1px solid #38516f; border-radius:7px; background:#101c2d; }
+#toggle-scheduler-mode button { min-width:0; height:24px; border-radius:5px; font-size:10px; }
+.configuration-grid { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr); gap:6px; }
+.configuration-control { min-width:0; }
+.configuration-label-row { display:flex; min-width:0; align-items:center; justify-content:space-between; gap:6px; margin:0 0 4px; }
+.configuration-label { display:block; flex:1 1 0; min-width:0; margin:0; overflow:hidden; color:#9eafc3; font-size:9px; font-weight:800; letter-spacing:.08em; text-overflow:ellipsis; white-space:nowrap; }
+.configuration-label-row button { flex:0 0 auto; border:0; padding:0; color:#d4a359; background:transparent; font-size:9px; font-weight:800; white-space:nowrap; }
+.configuration-control select { width:100%; height:33px; min-width:0; appearance:auto; border:1px solid #38516f; border-radius:7px; padding:0 7px; color:#f8fafc; background:#101c2d; font-size:11px; text-overflow:ellipsis; }
+.preset-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:5px; }
 .preset-row select,.preset-row input,.preset-row button { width:100%; min-width:0; min-height:34px; }
 .preset-row button { border:1px solid #38516f; border-radius:7px; color:#d4a359; background:#101c2d; font-size:11px; font-weight:800; }
-.flow-step { margin-bottom:6px; padding:9px 10px; }
+.flow-step { margin-bottom:6px; padding:9px 10px; border-color:#314762; background:rgba(255,255,255,.045); }
 .flow-step-top { min-height:24px; }
 .flow-step-icon { display:none; }
 .flow-step small { display:flex; flex-wrap:wrap; gap:5px; padding-left:23px; min-height:17px; color:#aebdcb; }
@@ -537,6 +544,7 @@ body.drawer-active .sheet-body { display:block; flex:1 1 auto; overflow-y:auto; 
 .run { margin-top:9px; }
 #view-flow:not([hidden]) { display:flex; flex-direction:column; height:100%; min-height:0; }
 #view-flow .flow-scroll { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding-right:1px; }
+#view-flow .flow-scroll > .section-title:first-child { margin-top:0; }
 #view-flow > .run { flex:0 0 auto; width:100%; margin:8px 0 0; }
 .choices,.data-viewer-options { grid-template-columns:1fr; }
 .scheduler-row,.scheduler-select-row { grid-template-columns:1fr; gap:4px; }
@@ -545,8 +553,8 @@ body.drawer-active .sheet-body { display:block; flex:1 1 auto; overflow-y:auto; 
 @media (min-width:641px) {
   body { padding:16px; }
   .header { display:flex; }
-  .workflow-default-fields { grid-template-columns:minmax(25ch,1.15fr) 60px minmax(12ch,.85fr); }
-  .preset-row { grid-template-columns:1.35fr 1.15fr auto auto; gap:6px; }
+  .preset-row { grid-template-columns:minmax(0,1fr) auto auto; gap:6px; }
+  .purpose-field input { width:15ch; }
   .preset-row select,.preset-row input,.preset-row button { min-width:0; }
   .choices,.data-viewer-options { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .scheduler-row,.scheduler-select-row { grid-template-columns:62px minmax(0,1fr); gap:7px; }
@@ -560,7 +568,7 @@ body.drawer-active .sheet-body { display:block; flex:1 1 auto; overflow-y:auto; 
 </style></head><body>
 <header class="header" aria-label="Extension header"><div class="action-main"><span class="icon" aria-hidden="true">◉</span><span class="brand">CDP Browser Automation</span></div><span class="subtle">Active</span></header>
 <nav class="tabs" aria-label="Popup views"><button type="button" data-view="flow" aria-selected="true">Workflow</button><button type="button" data-view="activity" aria-selected="false">Activity</button></nav>
-<section class="context workflow-context"><div class="workflow-default-fields"><select id="workingSet" aria-label="Primary target"><option value="static:customer">Customer</option></select><button type="button" class="link" id="workingSetRefreshBtn">Refresh</button><input id="connectionPurpose" class="purpose" maxlength="28" placeholder="Purpose" aria-label="Connection purpose"><select id="transferTemplate" aria-label="Storage bucket preset"><option value="">Storage preset</option></select><button class="link manage-icon" id="manageTemplatesBtn" title="Manage templates" aria-label="Manage templates">Manage Templates</button></div><div class="scheduler-options" aria-label="Scheduler experience"><button type="button" id="tenantSchedulerNew" aria-pressed="true">New schedule</button><button type="button" id="tenantSchedulerLegacy" aria-pressed="false">Legacy</button></div><div id="workingSetHint" class="hint" hidden></div><div id="templateSummary" class="hint" hidden></div><div id="tenantSchedulerHint" class="hint" hidden></div></section>
+<section class="context workflow-context" aria-label="Workflow environment and defaults"><div class="configuration-grid"><div class="configuration-control"><div class="configuration-label-row"><label class="configuration-label" for="select-primary-object">TARGET OBJECT</label><button type="button" id="btn-refresh-tables" title="Refresh CDP tables &amp; metadata" aria-label="Refresh CDP tables &amp; metadata">Refresh</button></div><select id="select-primary-object" aria-label="Target object"><option value="static:customer">Customer</option></select></div><div class="configuration-control"><div class="configuration-label-row"><label class="configuration-label" for="select-template-source">TEMPLATE SOURCE</label><button type="button" id="btn-manage-templates" title="Manage CSV templates" aria-label="Manage CSV templates">Manage</button></div><select id="select-template-source" aria-label="Template source"><option value="">Storage preset</option></select></div></div><div class="environment-strip"><div class="purpose-field"><label for="connectionPurpose">PURPOSE</label><input id="connectionPurpose" maxlength="28" placeholder="Purpose" aria-label="Connection purpose"></div><div class="schedule-field"><span>SCHEDULE</span><div class="scheduler-options" id="toggle-scheduler-mode" aria-label="Scheduler experience"><button type="button" id="tenantSchedulerLegacy" aria-pressed="false">Legacy</button><button type="button" id="tenantSchedulerNew" aria-pressed="true">New</button></div></div></div><div id="workingSetHint" class="hint" hidden></div><div id="templateSummary" class="hint" hidden></div><div id="tenantSchedulerHint" class="hint" hidden></div></section>
 <main>
 <section class="view" id="view-run" hidden><div class="section-title">Quick actions</div>
 <div class="card"><button class="action" id="sourceBtn"><span class="action-main"><span class="icon">◌</span>Create Source</span><span class="summary">Template</span></button></div>
@@ -575,7 +583,7 @@ body.drawer-active .sheet-body { display:block; flex:1 1 auto; overflow-y:auto; 
 <div class="card"><button class="action" data-open-sheet="dataModelAttributes"><span class="action-main"><span class="icon">＋</span>Add New Attributes</span><span class="summary" id="dataModelAttributesValue">Select type and object</span></button></div>
 </section>
 
-<section class="view" id="view-flow"><div class="flow-scroll"><div class="section-title">Workflow</div><div class="preset-row" data-preset-row="flow" title="Load a saved workflow preset, or enter a name and save the current workflow."></div><div class="section-title">Steps</div>
+<section class="view" id="view-flow"><div class="flow-scroll"><div class="section-title">Presets</div><div class="preset-row" data-preset-row="flow" title="Load a saved workflow preset, or enter a name and save the current workflow."></div><div class="section-title">Workflow</div>
 <article class="flow-step"><div class="flow-step-top"><span class="flow-step-icon" aria-hidden="true">◇</span><label class="flow-step-title" for="flow-dataModel"><input id="flow-dataModel" type="checkbox"><span>Data Models</span></label><button class="flow-configure" type="button" data-open-sheet="dataModel" data-flow-config="dataModel">Edit</button></div><small id="flowDataModelValue">Select types</small></article>
 <article class="flow-step"><div class="flow-step-top"><span class="flow-step-icon" aria-hidden="true">⊕</span><label class="flow-step-title" for="flow-dataViewer"><input id="flow-dataViewer" type="checkbox"><span>Add data</span></label><button class="flow-configure" type="button" data-open-sheet="flowDataViewer" data-flow-config="dataViewer">Edit</button></div><small id="flowDataViewerValue">Customer</small></article>
 <article class="flow-step"><div class="flow-step-top"><span class="flow-step-icon" aria-hidden="true">⇡</span><label class="flow-step-title" for="flow-export"><input id="flow-export" type="checkbox"><span>Export</span></label><button class="flow-configure" type="button" data-open-sheet="flowExport" data-flow-config="export">Edit</button></div><small id="flowExportValue">Customer</small></article>
@@ -588,7 +596,7 @@ body.drawer-active .sheet-body { display:block; flex:1 1 auto; overflow-y:auto; 
 <article class="flow-step" data-extra-step="source"><div class="flow-step-top"><span class="flow-step-icon" aria-hidden="true">◌</span><label class="flow-step-title" for="flow-source"><input id="flow-source" type="checkbox"><span>Create Source</span></label></div><small><span class="flow-pill flow-pill-neutral">Uses selected template</span></small></article>
 <article class="flow-step" data-extra-step="destination"><div class="flow-step-top"><span class="flow-step-icon" aria-hidden="true">◎</span><label class="flow-step-title" for="flow-destination"><input id="flow-destination" type="checkbox"><span>Create Destination</span></label></div><small><span class="flow-pill flow-pill-neutral">Uses selected template</span></small></article>
 <article class="flow-step" data-extra-step="responsys"><div class="flow-step-top"><span class="flow-step-icon" aria-hidden="true">⇣</span><label class="flow-step-title" for="flow-responsys"><input id="flow-responsys" type="checkbox"><span>Responsys Import</span></label><button class="flow-configure" type="button" data-open-sheet="flowResponsys" data-flow-config="responsys">Edit</button></div><small id="flowResponsysScheduleLabel">Scheduled · Daily</small></article>
-<article class="flow-step" data-extra-step="verify"><div class="flow-step-top"><span class="flow-step-icon" aria-hidden="true">✓</span><label class="flow-step-title" for="flow-verify"><input id="flow-verify" type="checkbox"><span>Verify Published</span></label></div><small><span class="flow-pill flow-pill-neutral">Optional</span></small></article></div></div>
+<article class="flow-step" data-extra-step="verify"><div class="flow-step-top"><span class="flow-step-icon" aria-hidden="true">✓</span><label class="flow-step-title" for="flow-verify"><input id="flow-verify" type="checkbox"><span>Verify Published</span></label></div></article></div></div>
 <button class="run" id="runCustomFlowBtn">▶ Run workflow</button></section>
 
 <section class="view" id="view-activity" hidden><div class="section-title">Active run</div><div class="status-card"><span class="status-dot idle" id="statusDot"></span><span id="status" role="status" aria-live="polite">No automation running</span><button class="stop" id="stopE2EBtn" hidden>■ Stop</button></div><div class="activity-tabs" role="tablist" aria-label="Activity details"><button type="button" data-activity-section="runs" aria-selected="true">Runs</button><button type="button" data-activity-section="logs" aria-selected="false">Logs</button></div><div id="activityRunsPanel"><div class="section-title">Recent runs</div><div id="runHistory" class="hint">No completed runs yet.</div></div><div id="activityLogsPanel" hidden><div class="section-title">Run log</div><div id="activityLogs" class="activity-logs">Choose View log from a recent run.</div></div></section>

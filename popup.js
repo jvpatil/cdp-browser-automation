@@ -131,18 +131,27 @@ function renderPresetRows() {
     const kind = row.dataset.presetRow;
     const list = kind === "flow" ? flowPresets : jobPresets.filter((preset) => preset?.config?.kind === kind);
     const select = document.createElement("select");
-    select.title = "Load a saved preset. To save the current settings, enter a preset name and select Save.";
+    select.title = "Load a saved preset. Select Save As to name and save the current settings.";
     select.append(new Option("Load preset…", ""), ...list.map((preset) => new Option(preset.name, preset.id)));
-    const name = document.createElement("input"); name.type = "text"; name.placeholder = "Preset name";
-    const save = document.createElement("button"); save.type = "button"; save.textContent = "Save";
+    const save = document.createElement("button"); save.type = "button"; save.textContent = "Save As";
     const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Delete";
     select.addEventListener("change", () => {
       const preset = list.find((item) => item.id === select.value);
-      if (preset) applyPresetConfig(preset.config);
+      if (preset) {
+        applyPresetConfig(preset.config);
+        return;
+      }
+      if (kind === "flow") {
+        DEFAULT_FLOW.forEach((step) => { document.getElementById(`flow-${step}`).checked = false; });
+        advancedStepsExpanded = false;
+        persistDraft();
+        renderAll();
+      }
     });
     save.addEventListener("click", async () => {
-      const presetName = name.value.trim();
-      if (!presetName) return setStatus("Enter a preset name before saving.");
+      const selectedPreset = list.find((preset) => preset.id === select.value);
+      const presetName = window.prompt("Preset name", selectedPreset?.name || "")?.trim();
+      if (!presetName) return;
       const config = kind === "flow" ? flowPresetConfig() : jobPresetConfig(kind);
       const collection = kind === "flow" ? flowPresets : jobPresets;
       const existing = collection.find((item) => item.name.toLowerCase() === presetName.toLowerCase() && (kind === "flow" || item?.config?.kind === kind));
@@ -157,7 +166,7 @@ function renderPresetRows() {
       else jobPresets = jobPresets.filter((item) => item.id !== select.value);
       await persistPresets(); renderPresetRows();
     });
-    row.replaceChildren(select, name, save, remove);
+    row.replaceChildren(select, save, remove);
   });
 }
 const statusEl = document.getElementById("status");
@@ -168,7 +177,7 @@ const activityLogsEl = document.getElementById("activityLogs");
 let activitySection = "runs";
 let selectedLogRun = null;
 let activeLogRun = null;
-const templateSelect = document.getElementById("transferTemplate");
+const templateSelect = document.getElementById("select-template-source");
 const connectionPurposeInput = document.getElementById("connectionPurpose");
 const templateSummaryEl = document.getElementById("templateSummary");
 
@@ -282,7 +291,7 @@ function applyWorkingSet(table) {
   renderAll();
 }
 function renderWorkingSet() {
-  const select = document.getElementById("workingSet");
+  const select = document.getElementById("select-primary-object");
   const options = workingSetOptions();
   if (!select || !options.length) return;
   const selected = selectedWorkingSet() || options.find((table) => table.workingSetKey === "static:customer") || options[0];
@@ -1054,8 +1063,8 @@ document.getElementById("runDataModelAttributesBtn").addEventListener("click", (
 document.getElementById("runCustomFlowBtn").addEventListener("click", () => { try { const steps = selectedFlowSteps(); if (!catalogReady && (steps.includes("import") || steps.includes("export") || steps.includes("dataViewer"))) return setStatus("Table catalog is still loading."); const dataViewerTableIds = selectedDataViewerTables().map((table) => table.id); const dataModelGroups = selectedDataModelGroups(); if (steps.includes("import") && !selectedImportEntries().length) return setStatus("Select at least one Import table."); if (steps.includes("export") && !selectedExportPayloads().length) return setStatus("Select at least one Export table."); if (steps.includes("dataViewer") && !dataViewerTableIds.length) return setStatus("Select at least one Data Viewer table."); if (steps.includes("dataModel") && !dataModelGroups.length) return setStatus("Select at least one Data Model object group."); const canUseCreatedDataModelObject = steps.includes("dataModel") && dataModelGroups.includes(state.dataModelAttributeGroup) && !state.dataModelOptions.dryRun; if (steps.includes("dataModelAttributes") && !state.dataModelAttributeObjectName.trim() && !canUseCreatedDataModelObject) return setStatus("Enter the Data Model object name, or create that same type in this live flow."); const staggerJobs = flowHasBothJobs(); const customDataViewer = { recordsPerTable: 1, sourceId: "UI", saveRecords: true, dataViewerOverrides: state.dataViewerOverrides }; const dataModelAttributeGroups = steps.includes("dataModel") && !state.dataModelOptions.dryRun ? selectedDataModelAttributeGroups() : []; const columnGroups = [...new Set([...(steps.includes("dataModelAttributes") ? [state.dataModelAttributeGroup] : []), ...dataModelAttributeGroups])]; const dataModelParents = steps.includes("dataModel") && !state.dataModelOptions.dryRun ? dataModelParentsForRun(dataModelGroups) : {}; send({ type: "run-custom-flow", flow: { steps, importTableIds: selectedTableIds(), importCustomTables: selectedImportCustomTables(), importMappingMode: state.importMappingMode, exportPayloadName: state.exportPayloadName, exportPayloads: selectedExportPayloads(), exportCustomTables: LIVE_CUSTOM_TABLES.filter((table) => selectedExportPayloads().includes(table.label)), exportSchedule: schedulerConfig("flowExport"), importSchedule: schedulerConfig("flowImport"), responsysSchedule: schedulerConfig("flowResponsys"), staggerJobs, dataViewerTableIds, dataModelGroups, dataModelAttributeGroups, dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeObjectName: state.dataModelAttributeObjectName.trim(), dataModelColumnOverrides: dataModelColumnOverridesForRun(columnGroups), saveDataModelObjects: !state.dataModelOptions.dryRun, ...customDataViewer } }, "Workflow", { summary: `Workflow — ${steps.length} steps`, details: `Workflow — ${steps.join(" → ")}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
 templateSelect.addEventListener("change", async () => { state.templateId = templateSelect.value; await chrome.storage.local.set({ lastTemplateId: state.templateId }); renderTemplates(); });
 connectionPurposeInput.addEventListener("input", () => { state.connectionPurpose = connectionPurposeInput.value; chrome.storage.local.set({ lastConnectionPurpose: state.connectionPurpose }); persistDraft(); });
-document.getElementById("workingSet").addEventListener("change", (event) => applyWorkingSet(workingSetOptions().find((table) => table.workingSetKey === event.target.value)));
-document.getElementById("workingSetRefreshBtn").addEventListener("click", () => refreshLiveDataViewerTables());
+document.getElementById("select-primary-object").addEventListener("change", (event) => applyWorkingSet(workingSetOptions().find((table) => table.workingSetKey === event.target.value)));
+document.getElementById("btn-refresh-tables").addEventListener("click", () => refreshLiveDataViewerTables());
 document.getElementById("tenantSchedulerNew").addEventListener("click", () => saveTenantSchedulerPreference("new"));
 document.getElementById("tenantSchedulerLegacy").addEventListener("click", () => saveTenantSchedulerPreference("legacy"));
 document.querySelectorAll("[data-mapping-mode] button").forEach((button) => button.addEventListener("click", () => { state.importMappingMode = ["combined", "separate", "separateJobs"].includes(button.dataset.mode) ? button.dataset.mode : "combined"; persistDraft(); renderAll(); }));
@@ -1063,7 +1072,7 @@ document.getElementById("flowAddStepBtn").addEventListener("click", () => {
   advancedStepsExpanded = !advancedStepsExpanded;
   renderFlow();
 });
-document.getElementById("manageTemplatesBtn").addEventListener("click", async () => {
+document.getElementById("btn-manage-templates").addEventListener("click", async () => {
   try {
     await chrome.tabs.create({ url: chrome.runtime.getURL("templates.html") });
     window.close();
