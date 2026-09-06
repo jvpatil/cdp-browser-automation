@@ -31,38 +31,75 @@ async function cdpEnsureStarterTransferRecords() {
       : [];
     let profilesChanged = false;
     let templatesChanged = false;
+    for (const template of templates) {
+      if (Object.hasOwn(template, "description")) {
+        delete template.description;
+        templatesChanged = true;
+      }
+      // The export job now supplies TABLE_HOST_PURPOSE. Clear only the old
+      // connection-level fallback so the new placeholder is visible; leave
+      // every deliberate custom filename intact.
+      if (["PROFILE_{host}", "PROFILE_{host}_{timestamp}"].includes(template.fileContract?.destinationFileName)) {
+        template.fileContract.destinationFileName = "";
+        templatesChanged = true;
+      }
+    }
     const profilesByKey = new Map();
 
     for (const definition of catalog.profiles) {
       if (!definition?.key || !definition.name || !definition.type) continue;
       let profile = profiles.find((item) => item.name === definition.name && item.type === definition.type);
-      if (!profile) {
-        profile = {
-          id: `catalog-${definition.key}-profile`,
-          name: definition.name,
-          type: definition.type,
-          fields: { ...(definition.fields || {}) }
-        };
-        profiles.push(profile);
-        profilesChanged = true;
+      // CX Sales profiles are commonly created manually before the starter
+      // catalog is introduced. Reuse the unambiguous existing profile rather
+      // than adding a second blank credential record.
+      if (!profile && definition.reuseExistingProfileOfType) {
+        const matchingProfiles = profiles.filter((item) => item.type === definition.type);
+        if (matchingProfiles.length === 1) profile = matchingProfiles[0];
       }
+      // Connections contain credentials and must be explicitly created by the
+      // user. The catalog can reference an existing matching profile, but it
+      // must never add a blank/dummy profile during startup.
+      if (!profile) continue;
       profilesByKey.set(definition.key, profile);
     }
 
     for (const definition of catalog.templates) {
-      if (!definition?.name || templates.some((item) => item.name === definition.name)) continue;
+      if (!definition?.name) continue;
+      const legacyNames = Array.isArray(definition.legacyNames) ? definition.legacyNames : [];
+      const existingTemplate = templates.find((item) => item.id === definition.id)
+        || templates.find((item) => item.name === definition.name)
+        || templates.find((item) => legacyNames.includes(item.name));
+      // A catalog template keeps its stable ID and user-entered credentials,
+      // keys, and contract. Only its display name is migrated when the
+      // catalog naming convention changes.
+      if (existingTemplate) {
+        if (existingTemplate.name !== definition.name && existingTemplate.id === definition.id) {
+          existingTemplate.name = definition.name;
+          templatesChanged = true;
+        }
+        if (definition.kind === "direct" && existingTemplate.fileContract) {
+          delete existingTemplate.fileContract;
+          templatesChanged = true;
+        }
+        if (definition.kind === "direct" && existingTemplate.kind !== "direct") {
+          existingTemplate.kind = "direct";
+          templatesChanged = true;
+        }
+        continue;
+      }
       const source = profilesByKey.get(definition.sourceProfileKey);
       const destination = profilesByKey.get(definition.destinationProfileKey);
       if (!source || !destination) continue;
+      const isDirect = definition.kind === "direct";
       const compressed = definition.compression || definition.fileContract?.compression || "none";
-      const contract = {
+      const contract = isDirect ? null : {
         format: "CSV",
         filePatternMode: "automatic",
         filePattern: "",
         charset: "UTF-8",
         csvParser: "RFC 4180",
         delimiter: ",",
-        destinationFileName: "PROFILE_{host}",
+        destinationFileName: "",
         dateFormat: "yyyy-MM-dd-HH-mm-ss-SSS",
         compression: compressed,
         decryptionPassphrase: "",
@@ -71,17 +108,18 @@ async function cdpEnsureStarterTransferRecords() {
         ...(definition.fileContract || {}),
         compression: compressed
       };
-      if (!contract.filePattern && contract.filePatternMode === "automatic") {
+      if (contract && !contract.filePattern && contract.filePatternMode === "automatic") {
         contract.filePattern = compressed === "gzip" ? "^PROFILE_.*\\.gz$" : compressed === "PGP" ? "^PROFILE_.*\\.pgp$" : "";
       }
-      templates.push({
+      const template = {
           id: definition.id || `catalog-${definition.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
           name: definition.name,
-          description: definition.description || "Starter transfer template — add connection values to the selected profile.",
           source: { profileId: source.id, type: source.type },
           destination: { profileId: destination.id, type: destination.type },
-          fileContract: contract
-      });
+          kind: isDirect ? "direct" : "file"
+      };
+      if (contract) template.fileContract = contract;
+      templates.push(template);
       templatesChanged = true;
     }
 
@@ -118,5 +156,5 @@ async function cdpWriteConnectionProfiles(profiles) {
 
 function cdpTemplateSummary(template) {
   const contract = template.fileContract || {};
-  return { id: template.id, name: template.name, description: template.description || "", sourceType: template.source?.type || "", destinationType: template.destination?.type || "", format: contract.format || "CSV", compression: contract.compression || "none" };
+  return { id: template.id, name: template.name, sourceType: template.source?.type || "", destinationType: template.destination?.type || "", kind: template.kind || "file", format: template.kind === "direct" ? "Direct" : (contract.format || "CSV"), compression: template.kind === "direct" ? "" : (contract.compression || "none") };
 }

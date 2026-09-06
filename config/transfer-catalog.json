@@ -23,20 +23,29 @@
       "name": "GCS — Dummy profile",
       "type": "Google Cloud Storage",
       "fields": {}
+    },
+    {
+      "key": "cx-sales",
+      "name": "CX Sales — Dummy profile",
+      "type": "CX Sales",
+      "reuseExistingProfileOfType": true,
+      "fields": {}
     }
   ],
   "templates": [
-    { "id": "catalog-oos-csv", "name": "OOS-CSV", "sourceProfileKey": "oos", "destinationProfileKey": "oos", "compression": "none" },
-    { "id": "catalog-oos-gz", "name": "OOS-GZ", "sourceProfileKey": "oos", "destinationProfileKey": "oos", "compression": "gzip" },
-    { "id": "catalog-oos-pgp", "name": "OOS-PGP", "sourceProfileKey": "oos", "destinationProfileKey": "oos", "compression": "PGP" },
-    { "id": "catalog-sftp-csv", "name": "SFTP-CSV", "sourceProfileKey": "sftp", "destinationProfileKey": "sftp", "compression": "none" },
-    { "id": "catalog-sftp-gz", "name": "SFTP-GZ", "sourceProfileKey": "sftp", "destinationProfileKey": "sftp", "compression": "gzip" },
-    { "id": "catalog-sftp-pgp", "name": "SFTP-PGP", "sourceProfileKey": "sftp", "destinationProfileKey": "sftp", "compression": "PGP" },
-    { "id": "catalog-aws-csv", "name": "AWS-CSV", "sourceProfileKey": "aws", "destinationProfileKey": "aws", "compression": "none" },
-    { "id": "catalog-aws-gz", "name": "AWS-GZ", "sourceProfileKey": "aws", "destinationProfileKey": "aws", "compression": "gzip" },
-    { "id": "catalog-aws-pgp", "name": "AWS-PGP", "sourceProfileKey": "aws", "destinationProfileKey": "aws", "compression": "PGP" },
-    { "id": "catalog-gcs-csv", "name": "GCS-CSV", "sourceProfileKey": "gcs", "destinationProfileKey": "gcs", "compression": "none" },
-    { "id": "catalog-gcs-gz", "name": "GCS-GZ", "sourceProfileKey": "gcs", "destinationProfileKey": "gcs", "compression": "gzip" },
-    { "id": "catalog-gcs-pgp", "name": "GCS-PGP", "sourceProfileKey": "gcs", "destinationProfileKey": "gcs", "compression": "PGP" }
+    { "id": "catalog-oos-csv", "name": "OOS_CSV", "legacyNames": ["OOS-CSV"], "sourceProfileKey": "oos", "destinationProfileKey": "oos", "compression": "none" },
+    { "id": "catalog-oos-gz", "name": "OOS_GZIP", "legacyNames": ["OOS-GZ"], "sourceProfileKey": "oos", "destinationProfileKey": "oos", "compression": "gzip" },
+    { "id": "catalog-oos-pgp", "name": "OOS_PGP", "legacyNames": ["OOS-PGP"], "sourceProfileKey": "oos", "destinationProfileKey": "oos", "compression": "PGP" },
+    { "id": "catalog-sftp-csv", "name": "SFTP_CSV", "legacyNames": ["SFTP-CSV"], "sourceProfileKey": "sftp", "destinationProfileKey": "sftp", "compression": "none" },
+    { "id": "catalog-sftp-gz", "name": "SFTP_GZIP", "legacyNames": ["SFTP-GZ"], "sourceProfileKey": "sftp", "destinationProfileKey": "sftp", "compression": "gzip" },
+    { "id": "catalog-sftp-pgp", "name": "SFTP_PGP", "legacyNames": ["SFTP-PGP"], "sourceProfileKey": "sftp", "destinationProfileKey": "sftp", "compression": "PGP" },
+    { "id": "catalog-aws-csv", "name": "AWS_CSV", "legacyNames": ["AWS-CSV"], "sourceProfileKey": "aws", "destinationProfileKey": "aws", "compression": "none" },
+    { "id": "catalog-aws-gz", "name": "AWS_GZIP", "legacyNames": ["AWS-GZ"], "sourceProfileKey": "aws", "destinationProfileKey": "aws", "compression": "gzip" },
+    { "id": "catalog-aws-pgp", "name": "AWS_PGP", "legacyNames": ["AWS-PGP"], "sourceProfileKey": "aws", "destinationProfileKey": "aws", "compression": "PGP" },
+    { "id": "catalog-gcs-csv", "name": "GCS_CSV", "legacyNames": ["GCS-CSV"], "sourceProfileKey": "gcs", "destinationProfileKey": "gcs", "compression": "none" },
+    { "id": "catalog-gcs-gz", "name": "GCS_GZIP", "legacyNames": ["GCS-GZ"], "sourceProfileKey": "gcs", "destinationProfileKey": "gcs", "compression": "gzip" },
+    { "id": "catalog-gcs-pgp", "name": "GCS_PGP", "legacyNames": ["GCS-PGP"], "sourceProfileKey": "gcs", "destinationProfileKey": "gcs", "compression": "PGP" },
+    { "id": "catalog-cx-sales-import", "name": "CX_SALES_IMPORT", "kind": "direct", "sourceProfileKey": "cx-sales", "destinationProfileKey": "cx-sales" },
+    { "id": "catalog-cx-sales-export", "name": "CX_SALES_EXPORT", "kind": "direct", "sourceProfileKey": "cx-sales", "destinationProfileKey": "cx-sales" }
   ]
 }

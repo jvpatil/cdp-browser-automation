@@ -21,7 +21,7 @@ window.CDP_CONNECTION_ADAPTERS = {
   },
   "AWS": {
     status: "ready",
-    fields: ["path", "region", "accessKey", "secretKey"],
+    fields: ["path", "endpoint", "accessKey", "secretKey"],
     source: { name: "source-name-input|input", sourceId: "source-id-input|input", save: "create-source-saveClose", fields: { path: "oos-path|input", endpoint: "oos-storeEndpoint|input", accessKey: "oos-storeKey|input", secretKey: "oos-storeSecret|input" } },
     destination: { name: "source-name-input|input", destinationId: "destination-id-input|input", save: "dst-saveClose-btn", fields: { path: "oos-path|input", endpoint: "oos-storeEndpoint|input", accessKey: "oos-storeKey|input", secretKey: "oos-storeSecret|input" } },
     note: "Capture the live verify/save interaction before enabling."
