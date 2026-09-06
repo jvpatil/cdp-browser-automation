@@ -131,6 +131,7 @@ function renderPresetRows() {
     const kind = row.dataset.presetRow;
     const list = kind === "flow" ? flowPresets : jobPresets.filter((preset) => preset?.config?.kind === kind);
     const select = document.createElement("select");
+    select.title = "Load a saved preset. To save the current settings, enter a preset name and select Save.";
     select.append(new Option("Load preset…", ""), ...list.map((preset) => new Option(preset.name, preset.id)));
     const name = document.createElement("input"); name.type = "text"; name.placeholder = "Preset name";
     const save = document.createElement("button"); save.type = "button"; save.textContent = "Save";
@@ -400,7 +401,14 @@ function pill(text, tone = "neutral") { return { text, tone }; }
 function setStepPills(id, values) {
   const container = document.getElementById(id);
   if (!container) return;
-  container.textContent = values.filter(Boolean).map((value) => typeof value === "string" ? value : value.text).join(" · ");
+  const pills = values.filter(Boolean).map((value) => typeof value === "string" ? pill(value) : value);
+  container.replaceChildren(...pills.map((value) => {
+    const badge = document.createElement("span");
+    badge.className = `flow-pill flow-pill-${value.tone || "neutral"}`;
+    badge.textContent = value.text;
+    badge.title = value.text;
+    return badge;
+  }));
 }
 function tablePills(items, recordsPerTable = "") {
   const names = items.map((item) => typeof item === "string" ? item : item.label);
@@ -565,6 +573,7 @@ function closeSheets(restoreView = true) {
 }
 function openSheet(name) {
   closeSheets(false);
+  document.body.classList.add("drawer-active");
   document.querySelectorAll(".view").forEach((view) => { view.hidden = true; });
   const sheet = document.getElementById(`sheet-${name}`);
   sheet.hidden = false;
@@ -881,7 +890,7 @@ function renderDataModelChoices() {
   const summary = dataModelSummary();
   document.getElementById("dataModelValue").textContent = summary;
   const modelGroups = selectedDataModelGroups(); const parentCount = modelGroups.filter((group) => dataModelParentName(group)).length;
-  setStepPills("flowDataModelValue", modelGroups.length ? [modelGroups.length === 1 ? modelGroups[0] : `${modelGroups.length} objects`, parentCount ? `${parentCount} parent${parentCount === 1 ? "" : " links"}` : "No parent"] : ["No types"]);
+  setStepPills("flowDataModelValue", modelGroups.length ? [pill(modelGroups.length === 1 ? modelGroups[0] : `${modelGroups.length} objects`, "entity"), parentCount ? `${parentCount} parent${parentCount === 1 ? "" : " links"}` : "No parent"] : ["No types"]);
   document.getElementById("dataModelDryRun").checked = state.dataModelOptions.dryRun;
   const dataModelAction = document.getElementById("runDataModelBtn");
   if (dataModelConfigurationContext === "flow") dataModelAction.textContent = "Apply";
@@ -951,28 +960,23 @@ function renderFlow() {
   setStepPills("flowExportValue", [...tablePills(selectedExportPayloads(), ""), ...schedulePills(state.schedulers.flowExport)]);
   setStepPills("flowImportCount", [...tablePills(selectedImportEntries(), ""), ...schedulePills(state.schedulers.flowImport)]);
   const advancedSteps = document.getElementById("flowAdvancedSteps");
+  const selectedExtras = document.getElementById("flowSelectedExtras");
+  const extraCards = EXTRA_FLOW_STEP_ORDER.map((step) => document.querySelector(`[data-extra-step="${step}"]`)).filter(Boolean);
+  const selectedExtraCards = extraCards.filter((card) => document.getElementById(`flow-${card.dataset.extraStep}`).checked);
+  selectedExtras.replaceChildren(...selectedExtraCards);
+  advancedSteps.replaceChildren(...extraCards.filter((card) => !selectedExtraCards.includes(card)));
   const advancedToggle = document.getElementById("flowAddStepBtn");
   advancedSteps.hidden = !advancedStepsExpanded;
   advancedToggle.setAttribute("aria-expanded", String(advancedStepsExpanded));
   advancedToggle.textContent = advancedStepsExpanded ? "− Hide extra steps" : "+ Add step";
   const hasJobs = steps.includes("export") || steps.includes("import") || steps.includes("responsys");
   const publish = document.getElementById("flow-publish"); const verify = document.getElementById("flow-verify"); publish.disabled = !hasJobs; if (!hasJobs) publish.checked = false; verify.disabled = !hasJobs || !publish.checked; if (verify.disabled) verify.checked = false;
-  const both = flowHasBothJobs();
-  const legacyStagger = both && state.schedulers.flowExport.schedulerUi === "legacy" && state.schedulers.flowImport.schedulerUi === "legacy";
-  const preview = steps.map((step) => {
-    if (step === "export") return `Export (${exportSummary()}, ${legacyStagger ? "next hour" : schedulerSummary(state.schedulers.flowExport)})`;
-    if (step === "import") return `Import (${selectedTableSummary()}, ${legacyStagger ? "+1 hour" : schedulerSummary(state.schedulers.flowImport)})`;
-    if (step === "responsys") return `Responsys Import (${schedulerSummary(state.schedulers.flowResponsys)})`;
-    if (step === "dataModel") return `Data Model (${dataModelSummary()})`;
-    if (step === "dataModelAttributes") return `Add New Attributes (${dataModelAttributeSummary()})`;
-    if (step === "dataViewer") return `Data Viewer (${dataViewerSummary()})`;
-    return ({ source: "Source", destination: "Destination", publish: "Publish", verify: "Verify" })[step];
-  });
-  document.getElementById("flowPreview").textContent = preview.length
-    ? preview.map((step, index) => `${index + 1}. ${step}`).join("\n")
-    : "Select at least one step.";
-  document.getElementById("flowHint").textContent = legacyStagger ? "Legacy start times are locked: Export next hour, Import one hour later." : "Steps always run in dependency-safe order.";
-  const run = document.getElementById("runCustomFlowBtn"); run.textContent = steps.length === 1 ? "▶ Run step" : `▶ Run ${steps.length}-step workflow`; run.disabled = !steps.length || (steps.includes("import") && !selectedImportEntries().length) || (steps.includes("export") && !selectedExportPayloads().length) || (steps.includes("dataModel") && !selectedDataModelGroups().length);
+  const run = document.getElementById("runCustomFlowBtn");
+  const flowView = document.getElementById("view-flow");
+  if (advancedStepsExpanded) flowView.append(run);
+  else advancedToggle.after(run);
+  run.textContent = steps.length === 1 ? "▶ Run step" : `▶ Run ${steps.length}-step workflow`;
+  run.disabled = !steps.length || (steps.includes("import") && !selectedImportEntries().length) || (steps.includes("export") && !selectedExportPayloads().length) || (steps.includes("dataModel") && !selectedDataModelGroups().length);
 }
 function commitFlowConfiguration() {
   if (!pendingFlowConfigurationStep) return;
@@ -1008,15 +1012,16 @@ function closeAfterLaunch() {
 }
 async function send(message, label, runInfo) { try { const customTransferStep = message.type === "run-custom-flow" && message.flow.steps.some((step) => ["source", "destination", "export", "import", "responsys"].includes(step)); const needsTemplate = !["run-publish-all", "run-data-viewer", "run-data-model", "run-data-model-attributes", "run-custom-flow"].includes(message.type) || customTransferStep; if (needsTemplate && !state.templateId) throw new Error("Select a transfer template first."); const tabId = await activeTab(); const status = `Running: ${label}`; const pendingRun = { ...(runInfo || { summary: label, details: label }), startedAt: Date.now(), logs: [{ at: Date.now(), level: "info", message: `Started: ${label}` }] }; await chrome.storage.local.set({ pendingRun, e2eStatus: status, ...(needsTemplate ? { lastTemplateId: state.templateId } : {}) }); setStatus(status); chrome.runtime.sendMessage({ ...message, tabId, connectionPurpose: state.connectionPurpose.trim(), ...(needsTemplate ? { templateId: state.templateId } : {}) }); closeAfterLaunch(); } catch (error) { setStatus(`Failed: ${error.message || error}`); } }
 
-// Keep the compact configuration inside the main sidepanel and put Save & Return after its fields.
+// Use the same stateful configuration sheets as a full popup view.  Returning commits the
+// current draft so the corresponding main-flow card always reflects the saved selections.
 function prepareDrawerActions() {
   document.querySelectorAll(".sheet > .sheet-head > .back").forEach((back) => {
-    const sheet = back.closest(".sheet");
-    const body = sheet?.querySelector(":scope > .sheet-body");
-    if (!body) return;
-    back.textContent = "Save & Return";
-    back.classList.add("sheet-back-bottom");
-    body.append(back);
+    back.textContent = back.id === "dataModelAttributeBack"
+      ? "← Back to Data Models"
+      : back.id === "dataViewerEditorBack"
+        ? "← Back to Record"
+        : "← Return to Workflow";
+    back.classList.remove("sheet-back-bottom");
   });
 }
 prepareDrawerActions();
@@ -1109,7 +1114,8 @@ document.getElementById("clearImportBtn").addEventListener("click", clearImportS
 document.getElementById("flowImportClearBtn").addEventListener("click", clearImportSelection);
 document.getElementById("dataViewerClearBtn").addEventListener("click", clearDataViewerSelection);
 document.getElementById("flowDataViewerClearBtn").addEventListener("click", clearDataViewerSelection);
-const EXTRA_FLOW_STEPS = new Set(["dataModelAttributes", "source", "destination", "responsys", "verify"]);
+const EXTRA_FLOW_STEP_ORDER = ["dataModelAttributes", "source", "destination", "responsys", "verify"];
+const EXTRA_FLOW_STEPS = new Set(EXTRA_FLOW_STEP_ORDER);
 DEFAULT_FLOW.forEach((step) => document.getElementById(`flow-${step}`).addEventListener("change", (event) => {
   if (event.target.checked && EXTRA_FLOW_STEPS.has(step)) advancedStepsExpanded = false;
   persistDraft();
