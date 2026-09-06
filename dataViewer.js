@@ -2,6 +2,7 @@
   const visible = (element) => Boolean(element?.getClientRects().length);
   const text = (element) => (element?.textContent || "").replace(/\s+/g, " ").trim();
   const normalize = (value) => String(value || "").replace(/\s+/g, "").trim().toLowerCase();
+  const isAuditField = (field) => /^(?:column)?(createdby|createddate|createdts|creationdate|creationts|modifiedby|modifieddate|modifiedts|lastmodifiedby|lastmodifieddate|lastmodifiedts|rowcreatedtimestamp|rowmodifiedtimestamp)$/.test(normalize(field));
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const wait = async (find, label, timeout = 30000) => {
     const end = Date.now() + timeout;
@@ -175,11 +176,15 @@
     const base = `${prefix}-${context.ddmm}`;
     return tableSequence > 1 ? `${base}-${tableSequence - 1}` : base;
   };
+  const canonicalSourceKey = (field) => String(field || "")
+    .replace(/^field-/, "")
+    .replace(/^Column[-_ ]*/i, "");
+  const sourceKeyComparable = (field) => canonicalSourceKey(field).replace(/[^a-z0-9]/gi, "").toLowerCase();
   const sourceKeyFieldNames = (drawer) => [...drawer.querySelectorAll("input[id$='|input'], textarea[id$='|input']")]
     .filter((input) => !input.disabled)
     .map((input) => input.id.replace(/\|input$/, "").replace(/^field-/, ""))
-    .filter((field, index, fields) => /^Source(?:[A-Za-z0-9]+)?ID$/i.test(field) && fields.indexOf(field) === index);
-  const referencedTableFromKey = (field) => String(field || "")
+    .filter((field, index, fields) => /^Source(?:[A-Za-z0-9_]+)?ID$/i.test(canonicalSourceKey(field)) && fields.indexOf(field) === index);
+  const referencedTableFromKey = (field) => String(canonicalSourceKey(field) || "")
     .replace(/^Source/i, "")
     .replace(/ID$/i, "")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
@@ -193,7 +198,7 @@
       ChannelType: "Email", OptInStatus: "In", IsDeliverable: "True", IsActive: "True", CountryCode: "US", Country: "United States",
       Browser: "Chrome", BrowserType: "Desktop", DeviceType: "Desktop", OperatingSystem: "Windows", PlatformKey: "PK-001", PlatformType: "Desktop",
       UserAgent: "Mozilla/5.0", ISP: "Oracle", MobileCarrier: "Oracle", MobileCode: "M1", MobileKeyword: "keyword1",
-      CreatedBy: "Automation User", ModifiedBy: "Automation User", Status: "Active", Type: "Standard",
+      Status: "Active", Type: "Standard",
       AddressLine1: "500 Oracle Parkway", City: "Redwood City", State: "CA", ZipCode: "94065", Description: "Created by CDP Browser Automation",
       Name: "Automation Test Record", Industry: "Technology", JobTitle: "Software Engineer", JobDepartment: "Engineering", JobSpeciality: "Automation",
       JobTitleDescription: "Software engineering and test automation", JobTitleLevel: "2", JobCode: "SE-002", SourceAppID: "APP-001", SourcePushID: "PUSH-001", SourceUserID: "USER-001",
@@ -345,7 +350,7 @@
         context.objectId = sourceObjectId;
         const configuredValues = table.recordConfig?.values || {};
         const allowedFields = Array.isArray(table.enterableFieldIds) ? table.enterableFieldIds.map(normalize) : [];
-        const fields = entryFieldKeys(drawer).filter((field) => !allowedFields.length || allowedFields.includes(normalize(field)));
+        const fields = entryFieldKeys(drawer).filter((field) => !isAuditField(field) && (!allowedFields.length || allowedFields.includes(normalize(field))));
         if (!fields.length) throw new Error(`${table.cdpTable} has no eligible non-system fields in the Add record drawer.`);
         setProgress(`Filling ${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
         const skippedFields = [];
@@ -384,19 +389,20 @@
         await clickDrawerAction("Next");
         audit.actions.push({ action: "Click", target: "Next" });
         setProgress(`Filling ${table.cdpTable} key fields`);
-        await wait(() => findField(drawer, "SourceID"), "the source ID fields", 60000);
+        await wait(() => findField(drawer, "SourceID") || findField(drawer, "Column_SourceID") || sourceKeyFieldNames(drawer).length, "the source ID fields", 60000);
         const keyFields = sourceKeyFieldNames(drawer);
         const currentTableKey = String(table.sourceAttribute || `Source${table.cdpTable.replace(/[^A-Za-z0-9]/g, "")}ID`);
         // Parent IDs are stored by sequence. A child record at sequence 2 uses
         // the parent table's sequence-2 ID, even though all parent records are
         // intentionally created before the child table is selected.
         for (const field of keyFields) {
+          const canonicalField = canonicalSourceKey(field);
           let value;
-          if (/^SourceID$/i.test(field)) value = resolvedSourceId;
-          else if (normalize(field) === normalize(currentTableKey)) value = sourceObjectId;
-          else if (table.cdpTable === "ContactPoint" && /^SourceCustomerID$/i.test(field) && resolvedParentSourceCustomerId && !generatedObjectIds.Customer?.length) value = resolvedParentSourceCustomerId;
+          if (/^SourceID$/i.test(canonicalField)) value = resolvedSourceId;
+          else if (sourceKeyComparable(canonicalField) === sourceKeyComparable(currentTableKey)) value = sourceObjectId;
+          else if (table.cdpTable === "ContactPoint" && /^SourceCustomerID$/i.test(canonicalField) && resolvedParentSourceCustomerId && !generatedObjectIds.Customer?.length) value = resolvedParentSourceCustomerId;
           else {
-            const referencedTable = referencedTableFromKey(field).replace(/\s+/g, "");
+            const referencedTable = referencedTableFromKey(canonicalField).replace(/\s+/g, "");
             value = generatedObjectIds[referencedTable]?.[tableSequence - 1]
               || sourceObjectIdFor(referencedTable, context, tableSequence);
           }

@@ -99,6 +99,25 @@
     };
   }
 
+  async function waitForAttributeDrawerStable() {
+    let lastSignature = "";
+    let unchangedSince = 0;
+    return waitFor(() => {
+      const state = attributeSaveState();
+      const signature = [state.name, state.attributeId, state.dataType, state.invalid, state.saveEnabled, hasVisibleAttributeLoading()].join("|");
+      if (!hasVisibleAttributeLoading()) {
+        if (signature !== lastSignature) {
+          lastSignature = signature;
+          unchangedSince = Date.now();
+        }
+        // JET can expose the fields a little before its value bindings are
+        // attached. Require a stable rendered drawer, instead of a blind wait.
+        if (unchangedSince && Date.now() - unchangedSince >= 1200) return state;
+      }
+      return null;
+    }, "Create attribute drawer bindings to settle", 15000);
+  }
+
   async function setInputValue(input, value) {
     input.focus();
     const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
@@ -220,7 +239,6 @@
       "Data Model object drawer to close after Save",
       60000
     );
-    await sleep(4000);
     await waitFor(
       () => {
         const list = document.querySelector(".oj-cxu-side-nav .data-obj-list");
@@ -241,7 +259,6 @@
     await click(await waitFor(() => objectTab(objectName), `${objectName} data object`));
     // CDP loads the selected object's attributes/details panel asynchronously.
     // Let the panel settle before looking for its Create-attribute control.
-    await sleep(2000);
     await click(await waitFor(addAttributeControl, "Create attribute control"));
     await waitFor(() => {
       const name = document.getElementById("attrNameInput|input");
@@ -250,7 +267,7 @@
       const cancel = namedButton("Cancel");
       return visible(name) && visible(attributeId) && visible(type) && cancel && !cancel.disabled && !hasVisibleAttributeLoading() ? name : null;
     }, "fully rendered Create attribute drawer");
-    await sleep(1000);
+    await waitForAttributeDrawerStable();
     return { opened: true };
   };
 
@@ -286,7 +303,7 @@ window.cdpDataModelSaveAttribute = async () => {
     }, "attribute validation and enabled Save", 60000);
     // The button may become enabled a fraction before JET completes its
     // validation/render pass. Require it to remain usable before saving.
-    await sleep(800);
+    await sleep(250);
     const ready = attributeSaveState();
     if (!ready.saveEnabled || ready.invalid || !ready.name || !ready.attributeId || !ready.dataType) {
       throw new Error("Attribute Save did not remain enabled after validation.");
@@ -298,6 +315,11 @@ window.cdpDataModelSaveAttribute = async () => {
       return !visible(document.getElementById("attrNameInput|input")) || savedMessage;
   }, "attribute save confirmation", 60000);
 
+  // CDP shows its save banner before JET has fully committed the attribute
+  // and regenerated the next drawer's Attribute ID binding. Keep a small
+  // explicit settle window before the existing readiness checks.
+  await sleep(2000);
+
   // A toast can appear before JET has finished closing the drawer and
   // reloading the selected object's detail panel.  Do not let the next
   // attribute reuse this stale drawer.
@@ -306,7 +328,6 @@ window.cdpDataModelSaveAttribute = async () => {
     "attribute drawer to close after Save",
     60000
   );
-  await sleep(4000);
   await waitFor(
     () => {
       const addControl = document.getElementById("attribute-plus-icon");
@@ -356,12 +377,15 @@ window.cdpDataModelSaveAttribute = async () => {
     return visible(control) ? control : null;
   }
 
-  window.cdpDataModelCreateRelationship = async (objectName, parentName) => {
+  window.cdpDataModelCreateRelationship = async (group, objectName, parentName) => {
+    if (!GROUPS.includes(group)) throw new Error(`Unsupported Data Model group: ${group}.`);
     if (!String(objectName || "").trim() || !String(parentName || "").trim()) {
       throw new Error("Relationship requires both a child object and a parent object.");
     }
+    // Relationships are created after all attribute sets. Return to this
+    // object’s group first; otherwise only the last group’s object list exists.
+    await click(await waitFor(() => groupTab(group), `${group} tab`));
     await click(await waitFor(() => objectTab(objectName), `${objectName} data object`));
-    await sleep(2000);
     // The add-relationship affordance is only available in Details.  Using a
     // text-only "Create relationship" lookup could target a stale control on
     // the Attributes view and report a false save.

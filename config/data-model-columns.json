@@ -2,38 +2,38 @@
   "groups": {
     "Profile": [
       { "name": "Email", "dataType": "string" },
-      { "name": "FirstName", "dataType": "string" },
-      { "name": "LastName", "dataType": "string" },
-      { "name": "Age", "dataType": "int" },
-      { "name": "BirthDate", "dataType": "date" }
+      { "name": "CustomerType", "dataType": "string" },
+      { "name": "LifecycleStage", "dataType": "string" },
+      { "name": "LoyaltyTier", "dataType": "string" },
+      { "name": "PreferredChannel", "dataType": "string" }
     ],
     "Behavioral": [
+      { "name": "Email", "dataType": "string" },
       { "name": "EventName", "dataType": "string" },
       { "name": "EventTimestamp", "dataType": "timestamp" },
       { "name": "Channel", "dataType": "string" },
-      { "name": "PageURL", "dataType": "string" },
-      { "name": "EngagementScore", "dataType": "int" }
+      { "name": "CampaignCode", "dataType": "string" }
     ],
     "Transactional": [
+      { "name": "Email", "dataType": "string" },
       { "name": "TransactionID", "dataType": "string" },
       { "name": "TransactionDate", "dataType": "timestamp" },
-      { "name": "TransactionAmount", "dataType": "decimal" },
-      { "name": "CurrencyCode", "dataType": "string" },
-      { "name": "TransactionStatus", "dataType": "string" }
+      { "name": "OrderAmount", "dataType": "decimal" },
+      { "name": "OrderStatus", "dataType": "string" }
     ],
     "Product": [
+      { "name": "Email", "dataType": "string" },
       { "name": "ProductCode", "dataType": "string" },
       { "name": "ProductName", "dataType": "string" },
       { "name": "ProductCategory", "dataType": "string" },
-      { "name": "UnitPrice", "dataType": "decimal" },
-      { "name": "IsActive", "dataType": "boolean" }
+      { "name": "UnitPrice", "dataType": "decimal" }
     ],
     "Other": [
-      { "name": "ReferenceCode", "dataType": "string" },
-      { "name": "Status", "dataType": "string" },
-      { "name": "EffectiveDate", "dataType": "date" },
-      { "name": "ExpiryDate", "dataType": "date" },
-      { "name": "Notes", "dataType": "string" }
+      { "name": "Email", "dataType": "string" },
+      { "name": "AccountName", "dataType": "string" },
+      { "name": "Industry", "dataType": "string" },
+      { "name": "AccountTier", "dataType": "string" },
+      { "name": "RenewalDate", "dataType": "date" }
     ]
   }
 }

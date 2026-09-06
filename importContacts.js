@@ -1,5 +1,5 @@
 (async()=>{
-    const d=new Date(),dateTag=`${String(d.getDate()).padStart(2,"0")}${d.toLocaleString("en-US",{month:"short"}).toUpperCase()}${String(d.getFullYear()).slice(-2)}`,hostKey=location.hostname.split(".")[0].toUpperCase(),jobName=window.__cdpJobConfig?.name||`ImportJob_${dateTag}`,sourceObjectName=`PROFILE_${hostKey}`,C={
+    const d=new Date(),dateTag=`${String(d.getDate()).padStart(2,"0")}${d.toLocaleString("en-US",{month:"short"}).toUpperCase()}${String(d.getFullYear()).slice(-2)}`,hostKey=location.hostname.split(".")[0].toUpperCase(),jobName=window.__cdpJobConfig?.name||`ImportJob_${dateTag}`,sourceObjectName=["CUSTOMER",hostKey,String(window.__cdpJobConfig?.purpose||"").replace(/[^a-z0-9]+/gi,"_").replace(/^_+|_+$/g,"").toUpperCase()].filter(Boolean).join("_"),C={
         description:"Independent import draft validation",source:window.__cdpJobConfig?.sourceName||`OOS-SRC-${dateTag}`,template:"ResponsysProfile",frequency:window.__cdpSchedule?.frequency||"Daily",notify:"test.user@oracle.com"
   },nextRun=(()=>{
         const x=new Date();
@@ -233,14 +233,17 @@
     }
           throw new Error("Timed out waiting for: "+label)
   };
-    const createSourceObjectAndUploadSample=async()=>{
+    const createSourceObjectAndUploadSample=async(sourceConfig={},isAdditional=false)=>{
+          const sourceObjectLabel=sourceConfig.sourceObjectName||sourceObjectName;
+          const sourceActionText=isAdditional?"Add source object":"Create source object";
+          const sampleFileName=sourceConfig.sampleFileName||"cdp_field_mapping.csv";
           const createButton=await wait(()=>{
                 const candidates=[...document.querySelectorAll("oj-button,button,[role='button']")].filter(visible);
-                return candidates.find(x=>normalize(textOf(x)).includes(normalize("Create source object")))||null
-    },"Create source object button");
+                return candidates.find(x=>normalize(textOf(x)).includes(normalize(sourceActionText)))||null
+    },sourceActionText+" button");
           await click(createButton.querySelector?.("button")||createButton);
           const objectNameInput=await wait(()=>document.getElementById("object-name-input|input"),"source object name");
-          await setJetValueAndValidate(objectNameInput,sourceObjectName);
+          await setJetValueAndValidate(objectNameInput,sourceObjectLabel);
           const dialog=objectNameInput.closest("oj-dialog,[role='dialog'],.oj-dialog,.oj-popup")||document;
           const confirmButton=await wait(()=>{
                 const candidates=[...dialog.querySelectorAll("oj-button,button,[role='button']")].filter(visible);
@@ -256,9 +259,9 @@
                 const candidates=[...document.querySelectorAll("oj-file-picker .oj-filepicker-dropzone,oj-file-picker .oj-filepicker-container,oj-file-picker")].filter(visible);
                 return candidates[0]||null
     },"sample CSV file picker");
-          const csvContent=window.__cdpImportConfig?.csvContent;
+          const csvContent=sourceConfig.csvContent||window.__cdpImportConfig?.csvContent;
           if(!csvContent)throw new Error("Import Job sample CSV was not provided.");
-          const file=new File([csvContent],"cdp_field_mapping.csv",{
+          const file=new File([csvContent],sampleFileName,{
             type:"text/csv"
     });
           const filePicker=picker.closest("oj-file-picker")||document.querySelector("oj-file-picker");
@@ -285,7 +288,7 @@
                       dataTransfer:transfer
       }));
                 await sleep(800);
-                accepted=!![...document.querySelectorAll(".file-list .filename")].find(x=>textOf(x)==="cdp_field_mapping.csv");
+                accepted=!![...document.querySelectorAll(".file-list .filename")].find(x=>textOf(x)===sampleFileName);
     }
         catch(_e){
     }
@@ -303,7 +306,7 @@
           }
         }));
                       await sleep(800);
-                      accepted=!![...document.querySelectorAll(".file-list .filename")].find(x=>textOf(x)==="cdp_field_mapping.csv");
+                      accepted=!![...document.querySelectorAll(".file-list .filename")].find(x=>textOf(x)===sampleFileName);
       }
             catch(_e){
       }
@@ -341,7 +344,7 @@
           if(typeof window.runCdpFieldMapping!=="function"){
                 throw new Error("The shared Import Job field mapper was not loaded.");
           }
-          const mappingResult=await window.runCdpFieldMapping(window.__cdpImportConfig?.targetTables,window.__cdpImportConfig?.fieldToTable);
+          const mappingResult=await window.runCdpFieldMapping(sourceConfig.targetTables||window.__cdpImportConfig?.targetTables,sourceConfig.fieldToTable||window.__cdpImportConfig?.fieldToTable);
           console.info("Import field mapping result",mappingResult);
   };
     try{
@@ -354,7 +357,15 @@
     await setJetValueAndValidate(descriptionInput,C.description);
     await chooseSearchWithFallback("job-details-sources|input","Source",C.source);
     await click(await waitForContinueEnabled("job-details-continue-editjob"));
-    await createSourceObjectAndUploadSample();
+    const configuredSources=Array.isArray(window.__cdpImportConfig?.sources)&&window.__cdpImportConfig.sources.length
+      ? window.__cdpImportConfig.sources
+      : [{targetTables:window.__cdpImportConfig?.targetTables,fieldToTable:window.__cdpImportConfig?.fieldToTable,csvContent:window.__cdpImportConfig?.csvContent,sourceObjectName}];
+    for(let index=0;index<configuredSources.length;index+=1){
+          const configuredSource={...configuredSources[index]};
+          configuredSource.sourceObjectName=configuredSource.sourceObjectName||[String(configuredSource.sourceCode||"CUSTOMER").replace(/[^a-z0-9]+/gi,"_").replace(/^_+|_+$/g,"").toUpperCase(),hostKey,String(window.__cdpJobConfig?.purpose||"").replace(/[^a-z0-9]+/gi,"_").replace(/^_+|_+$/g,"").toUpperCase()].filter(Boolean).join("_");
+          configuredSource.sampleFileName=configuredSource.sampleFileName||`cdp_${configuredSource.sourceCode||"field"}_mapping.csv`;
+          await createSourceObjectAndUploadSample(configuredSource,index>0);
+    }
     await waitLong("oj-list-view#fieldMappingList ul[role='grid'][aria-label='FieldMappingData']","field mapping table",120000);
     await waitLong("oj-list-view#fieldMappingList li[role='row']","field mapping rows",120000);
     await clickEnabled("#field-mapping-container oj-button button","Field Mapping Continue");

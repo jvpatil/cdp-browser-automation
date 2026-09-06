@@ -1,6 +1,6 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><style>
-:root{color-scheme:dark;--navy:#0d1b2a;--field:#14213d;--card:#102843;--line:#496887;--bronze:#e5ba73;--text:#fff;--muted:#8d99ae;--green:#9acfa5;--red:#ef938d}*{box-sizing:border-box}body{width:380px;max-height:590px;overflow:auto;margin:0;padding:13px;color:var(--text);background:radial-gradient(circle at 80% 0%,#173c66 0%,transparent 36%),var(--navy);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,select,textarea{font:inherit}button{cursor:pointer}.header{display:flex;align-items:center;justify-content:space-between;margin:2px 2px 10px}.brand{font-weight:750;font-size:15px}.subtle,.hint{color:var(--muted);font-size:11px}.context{padding:9px;border:1px solid var(--line);border-radius:10px;background:#10243d}.context-row,.inline-row{display:flex;align-items:center;gap:7px}.context select{flex:1;min-width:0}.purpose{width:76px;flex:0 0 76px}.context input,.context select,input[type=search]{height:33px;min-width:0;padding:0 8px;border:1px solid var(--line);border-radius:7px;outline:0;color:var(--text);background:var(--field);font-size:12px}.context input:focus,.context select:focus,input[type=search]:focus{border-color:var(--bronze)}.context input::placeholder,input[type=search]::placeholder{color:var(--muted)}.context .hint{margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.link{border:0;padding:0;color:var(--bronze);background:none;font-size:11px;font-weight:700}.tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin:11px 0}.tabs button{height:34px;border:1px solid var(--line);border-radius:8px;color:#cbd5df;background:#10243d;font-size:12px;font-weight:700}.tabs button[aria-selected=true]{border-color:var(--bronze);color:var(--navy);background:linear-gradient(100deg,#e5ba73,#c5a880)}.view[hidden],.sheet[hidden],.data-viewer-editor[hidden],.data-viewer-main[hidden]{display:none}.section-title{margin:11px 2px 6px;color:var(--bronze);font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.card,.flow-step,.history-item{border:1px solid var(--line);border-radius:10px;background:linear-gradient(180deg,#102c4b,#0d2137)}.card+.card{margin-top:7px}.action,.primary,.run{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:42px;padding:9px 11px;border:0;color:var(--text);background:transparent;text-align:left}.action-main{display:flex;align-items:center;gap:8px;min-width:0;font-size:13px;font-weight:650}.icon{width:18px;color:var(--bronze);font-size:16px;text-align:center}.summary{max-width:132px;color:var(--bronze);font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.primary,.run{justify-content:center;border:1px solid var(--bronze);border-radius:9px;color:var(--navy);background:linear-gradient(100deg,#e5ba73,#c5a880);font-size:13px;font-weight:800}.primary{margin-bottom:8px}.run{margin-top:13px}.run:disabled{opacity:.5}.sheet{margin-top:8px}.sheet-head{display:flex;align-items:center;justify-content:space-between;margin:2px 1px 9px}.sheet-head strong{font-size:14px}.back{border:1px solid var(--line);border-radius:7px;padding:5px 8px;color:var(--text);background:#10243d;font-size:11px}.sheet-body{padding:11px;border:1px solid var(--line);border-radius:10px;background:#0c1d30}.choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:9px 0}.choice{display:flex;align-items:center;gap:5px;min-width:0;height:32px;padding:0 8px;border:1px solid #3c5b78;border-radius:7px;color:#d6dee8;background:var(--field);font-size:12px;cursor:pointer}.choice:has(input:checked){border-color:var(--bronze);background:rgba(229,186,115,.16)}.choice input{flex:0 0 auto;width:14px;height:14px;margin:0;accent-color:var(--bronze)}.choice-label,.data-viewer-choice-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.option-hint{margin:-1px 1px 8px;color:var(--muted);font-size:10px}.scheduler{display:grid;gap:7px;margin-top:10px}.scheduler-row{display:grid;grid-template-columns:62px minmax(0,1fr);align-items:center;gap:7px}.scheduler-label{color:#cbd5df;font-size:11px}.scheduler-options{display:flex;min-height:30px;padding:2px;border:1px solid var(--line);border-radius:999px;background:#10243d}.scheduler-options button{flex:1;border:1px solid transparent;border-radius:999px;color:#b8c5d2;background:transparent;font-size:11px}.scheduler-options button[aria-pressed=true]{border-color:var(--bronze);color:#fff;background:rgba(229,186,115,.16);font-weight:700}.scheduler-options button:disabled{opacity:.5}.scheduler-advanced[hidden]{display:none}.flow-step{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:8px;margin-top:7px;padding:9px}.flow-step input{width:15px;height:15px;margin:0;accent-color:var(--bronze)}.flow-step label{font-size:12px;font-weight:700}.flow-step small{max-width:106px;color:var(--bronze);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.flow-step button{border:0;padding:0;color:var(--bronze);background:none;font-size:10px;font-weight:800}.flow-config{margin-top:7px}.flow-preview{margin-top:10px;padding:9px;border:1px solid var(--line);border-radius:8px;color:#d9e3ed;background:#0a1725;font-size:11px;line-height:1.5}.status-card{display:flex;align-items:center;gap:8px;min-height:42px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#102843}.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green)}.status-dot.idle{background:var(--muted)}#status{flex:1;min-width:0;color:#c7d3df;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.stop{padding:5px 8px;border:1px solid #9c5555;border-radius:6px;color:var(--red);background:rgba(140,49,49,.22);font-size:10px;font-weight:800}.stop[hidden]{display:none}.history-item{margin-top:7px;padding:8px 9px}.history-top{display:flex;justify-content:space-between;gap:8px;font-size:11px}.history-item .detail{margin-top:3px;color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.outcome{font-weight:800}.outcome.completed{color:var(--green)}.outcome.failed{color:var(--red)}.outcome.stopped{color:var(--bronze)}.data-viewer-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:9px}.data-viewer-options label{display:grid;gap:4px;color:#cbd5df;font-size:10px;font-weight:700}.data-viewer-options input{height:31px;padding:0 7px;border:1px solid var(--line);border-radius:7px;color:var(--text);background:var(--field);font-size:11px}.dry-run-option{grid-column:1/-1;display:flex!important;align-items:center;gap:7px;padding:7px;border:1px solid var(--line);border-radius:7px;background:#10243d}.dry-run-option input{width:14px;height:14px;padding:0}.data-viewer-edit{display:none;place-items:center;width:25px;height:25px;margin-left:auto;padding:0;border:1px solid #8ab4f8;border-radius:6px;color:#fff;background:#2f6fae}.data-viewer-edit svg{width:15px;height:15px;fill:currentColor}.choice:has(input:checked) .data-viewer-edit{display:grid}.editor-row{display:grid;grid-template-columns:minmax(72px,.8fr) minmax(0,1.2fr) 20px;gap:5px;align-items:start;margin-top:6px}.editor-row input,.editor-row textarea{width:100%;min-width:0;min-height:30px;padding:6px;border:1px solid var(--line);border-radius:6px;color:var(--text);background:var(--field);font-size:11.5px;line-height:1.35}.editor-row textarea{max-height:78px;overflow:auto;resize:vertical}.editor-row button{height:30px;border:0;color:var(--red);background:transparent;font-size:15px}.editor-actions{display:flex;gap:8px;margin-top:12px}.editor-actions button{flex:1;min-height:32px;border:1px solid var(--line);border-radius:7px;color:var(--text);background:#10243d;font-size:11px;font-weight:700}.editor-actions .apply{border-color:var(--bronze);color:var(--navy);background:linear-gradient(100deg,#e5ba73,#c5a880)}
+:root{color-scheme:dark;--navy:#0d1b2a;--field:#14213d;--card:#102843;--line:#496887;--bronze:#e5ba73;--text:#fff;--muted:#8d99ae;--green:#9acfa5;--red:#ef938d}*{box-sizing:border-box}body{width:380px;max-height:590px;overflow:auto;margin:0;padding:13px;color:var(--text);background:radial-gradient(circle at 80% 0%,#173c66 0%,transparent 36%),var(--navy);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,select,textarea{font:inherit}button{cursor:pointer}.header{display:flex;align-items:center;justify-content:space-between;margin:2px 2px 10px}.brand{font-weight:750;font-size:15px}.subtle,.hint{color:var(--muted);font-size:11px}.context{padding:9px;border:1px solid var(--line);border-radius:10px;background:#10243d}.context-row,.inline-row{display:flex;align-items:center;gap:7px}.context select{flex:1;min-width:0}.purpose{width:76px;flex:0 0 76px}.context input,.context select,input[type=search]{height:33px;min-width:0;padding:0 8px;border:1px solid var(--line);border-radius:7px;outline:0;color:var(--text);background:var(--field);font-size:12px}.context input:focus,.context select:focus,input[type=search]:focus{border-color:var(--bronze)}.context input::placeholder,input[type=search]::placeholder{color:var(--muted)}.context .hint{margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.link{border:0;padding:0;color:var(--bronze);background:none;font-size:11px;font-weight:700}.tabs{display:grid;grid-template-columns:repeat(2,1fr);gap:5px;margin:11px 0}.tabs button{height:34px;border:1px solid var(--line);border-radius:8px;color:#cbd5df;background:#10243d;font-size:12px;font-weight:700}.tabs button[aria-selected=true]{border-color:var(--bronze);color:var(--navy);background:linear-gradient(100deg,#e5ba73,#c5a880)}.view[hidden],.sheet[hidden],.data-viewer-editor[hidden],.data-viewer-main[hidden]{display:none}.section-title{margin:11px 2px 6px;color:var(--bronze);font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.card,.flow-step,.history-item{border:1px solid var(--line);border-radius:10px;background:linear-gradient(180deg,#102c4b,#0d2137)}.card+.card{margin-top:7px}.action,.primary,.run{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:42px;padding:9px 11px;border:0;color:var(--text);background:transparent;text-align:left}.action-main{display:flex;align-items:center;gap:8px;min-width:0;font-size:13px;font-weight:650}.icon{width:18px;color:var(--bronze);font-size:16px;text-align:center}.summary{max-width:132px;color:var(--bronze);font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.primary,.run{justify-content:center;border:1px solid var(--bronze);border-radius:9px;color:var(--navy);background:linear-gradient(100deg,#e5ba73,#c5a880);font-size:13px;font-weight:800}.primary{margin-bottom:8px}.run{margin-top:13px}.run:disabled{opacity:.5}.sheet{margin-top:8px}.sheet-head{display:flex;align-items:center;justify-content:space-between;margin:2px 1px 9px}.sheet-head strong{font-size:14px}.back{border:1px solid var(--line);border-radius:7px;padding:5px 8px;color:var(--text);background:#10243d;font-size:11px}.sheet-body{padding:11px;border:1px solid var(--line);border-radius:10px;background:#0c1d30}.choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:9px 0}.choice{display:flex;align-items:center;gap:5px;min-width:0;height:32px;padding:0 8px;border:1px solid #3c5b78;border-radius:7px;color:#d6dee8;background:var(--field);font-size:12px;cursor:pointer}.choice:has(input:checked){border-color:var(--bronze);background:rgba(229,186,115,.16)}.choice input{flex:0 0 auto;width:14px;height:14px;margin:0;accent-color:var(--bronze)}.choice-label,.data-viewer-choice-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.option-hint{margin:-1px 1px 8px;color:var(--muted);font-size:10px}.scheduler{display:grid;gap:7px;margin-top:10px}.scheduler-row{display:grid;grid-template-columns:62px minmax(0,1fr);align-items:center;gap:7px}.scheduler-label{color:#cbd5df;font-size:11px}.scheduler-options{display:flex;min-height:30px;padding:2px;border:1px solid var(--line);border-radius:999px;background:#10243d}.scheduler-options button{flex:1;border:1px solid transparent;border-radius:999px;color:#b8c5d2;background:transparent;font-size:11px}.scheduler-options button[aria-pressed=true]{border-color:var(--bronze);color:#fff;background:rgba(229,186,115,.16);font-weight:700}.scheduler-options button:disabled{opacity:.5}.scheduler-advanced[hidden]{display:none}.flow-step{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:8px;margin-top:7px;padding:9px}.flow-step input{width:15px;height:15px;margin:0;accent-color:var(--bronze)}.flow-step label{font-size:12px;font-weight:700}.flow-step small{max-width:106px;color:var(--bronze);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.flow-step button{border:0;padding:0;color:var(--bronze);background:none;font-size:10px;font-weight:800}.flow-config{margin-top:7px}.flow-preview{margin-top:10px;padding:9px;border:1px solid var(--line);border-radius:8px;color:#d9e3ed;background:#0a1725;font-size:11px;line-height:1.5}.status-card{display:flex;align-items:center;gap:8px;min-height:42px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#102843}.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green)}.status-dot.idle{background:var(--muted)}#status{flex:1;min-width:0;color:#c7d3df;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.stop{padding:5px 8px;border:1px solid #9c5555;border-radius:6px;color:var(--red);background:rgba(140,49,49,.22);font-size:10px;font-weight:800}.stop[hidden]{display:none}.history-item{margin-top:7px;padding:8px 9px}.history-top{display:flex;justify-content:space-between;gap:8px;font-size:11px}.history-item .detail{margin-top:3px;color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.outcome{font-weight:800}.outcome.completed{color:var(--green)}.outcome.failed{color:var(--red)}.outcome.stopped{color:var(--bronze)}.data-viewer-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:9px}.data-viewer-options label{display:grid;gap:4px;color:#cbd5df;font-size:10px;font-weight:700}.data-viewer-options input{height:31px;padding:0 7px;border:1px solid var(--line);border-radius:7px;color:var(--text);background:var(--field);font-size:11px}.dry-run-option{grid-column:1/-1;display:flex!important;align-items:center;gap:7px;padding:7px;border:1px solid var(--line);border-radius:7px;background:#10243d}.dry-run-option input{width:14px;height:14px;padding:0}.data-viewer-edit{display:none;place-items:center;width:25px;height:25px;margin-left:auto;padding:0;border:1px solid #8ab4f8;border-radius:6px;color:#fff;background:#2f6fae}.data-viewer-edit svg{width:15px;height:15px;fill:currentColor}.choice:has(input:checked) .data-viewer-edit{display:grid}.editor-row{display:grid;grid-template-columns:minmax(72px,.8fr) minmax(0,1.2fr) 20px;gap:5px;align-items:start;margin-top:6px}.editor-row input,.editor-row textarea{width:100%;min-width:0;min-height:30px;padding:6px;border:1px solid var(--line);border-radius:6px;color:var(--text);background:var(--field);font-size:11.5px;line-height:1.35}.editor-row textarea{max-height:78px;overflow:auto;resize:vertical}.editor-row button{height:30px;border:0;color:var(--red);background:transparent;font-size:15px}.editor-actions{display:flex;gap:8px;margin-top:12px}.editor-actions button{flex:1;min-height:32px;border:1px solid var(--line);border-radius:7px;color:var(--text);background:#10243d;font-size:11px;font-weight:700}.editor-actions .apply{border-color:var(--bronze);color:var(--navy);background:linear-gradient(100deg,#e5ba73,#c5a880)}
 /* Side Panel layout: keep the workspace visible and let only its content area scroll. */
 html{height:100%;background:#0d1b2a}
 body{width:auto;height:100%;min-height:0;max-height:none;overflow:hidden;display:flex;flex-direction:column;padding:16px;background:#0d1b2a}
@@ -112,10 +112,397 @@ html,body{background:var(--navy);color:var(--text)}
  .jobs-context-title{margin:0 0 6px}.data-tools-title{margin-top:15px;padding-top:10px;border-top:1px solid var(--line)}
 .scheduler-select-row{display:grid;grid-template-columns:62px minmax(0,1fr);align-items:center;gap:7px;color:#cbd5df;font-size:11px}.scheduler-select-row select,.scheduler-select-row input{width:100%;height:30px;min-width:0;padding:0 7px;border:1px solid var(--line);border-radius:7px;outline:0;color:var(--text);background:var(--field);font-size:11px}.scheduler-select-row select:focus,.scheduler-select-row input:focus{border-color:var(--bronze)}
 .preset-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:6px;align-items:center;margin:10px 0 2px}.preset-row select,.preset-row input{width:100%;height:30px;min-width:0;padding:0 7px;border:1px solid var(--line);border-radius:7px;color:var(--text);background:var(--field);font-size:10px}.preset-row button{height:30px;padding:0 7px;border:1px solid var(--line);border-radius:7px;color:#d8b16d;background:#10243d;font-size:10px;font-weight:800}.preset-row button:hover{border-color:var(--bronze)}
+.working-set-context{margin:0 0 10px}.working-set-context strong{flex:1;color:var(--bronze);font-size:11px;letter-spacing:.06em;text-transform:uppercase}.working-set-context select{width:100%;margin-top:7px}</style>
+<style id="drawer-navigation-theme">
+:root {
+  color-scheme: dark;
+  --bg-app: #0f1117;
+  --bg-surface: #181b24;
+  --bg-surface-elevated: #222634;
+  --border-subtle: #2b3040;
+  --border-focus: #3b82f6;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-primary: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-text: #ffffff;
+  --status-scheduled: #38bdf8;
+  --status-success: #10b981;
+  --status-warning: #f59e0b;
+  --status-error: #ef4444;
+  --navy: var(--bg-app);
+  --field: var(--bg-surface-elevated);
+  --card: var(--bg-surface);
+  --line: var(--border-subtle);
+  --bronze: var(--accent-primary);
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --green: var(--status-success);
+  --red: var(--status-error);
+}
+html, body { background: var(--bg-app); color: var(--text-primary); }
+body { width: 100%; min-width: 380px; min-height: 100vh; padding: 12px; background: var(--bg-app); }
+main { padding-bottom: 76px; }
+.tabs { margin: 0 0 9px; gap: 6px; }
+.tabs button { height: 34px; border-color: var(--border-subtle); color: var(--text-secondary); background: var(--bg-surface); }
+.tabs button[aria-selected=true] { border-color: var(--accent-primary); color: var(--accent-text); background: var(--accent-primary); }
+.context, .card, .flow-step, .history-item, .status-card { border-color: var(--border-subtle); background: var(--bg-surface); box-shadow: none; }
+.workflow-context { margin-bottom: 10px; padding: 9px; }
+.context strong { color: var(--text-primary); font-size: 11px; }
+.context input, .context select, input[type=search], .scheduler-select-row select, .scheduler-select-row input, .preset-row select, .preset-row input { border-color: var(--border-subtle); color: var(--text-primary); background: var(--bg-surface-elevated); }
+.context input:focus, .context select:focus, input[type=search]:focus, .scheduler-select-row select:focus, .scheduler-select-row input:focus, .preset-row select:focus, .preset-row input:focus { border-color: var(--border-focus); box-shadow: 0 0 0 1px var(--border-focus); }
+.section-title, .summary, .icon, .link, .clear-choice, .flow-step small, .flow-step button, .back { color: var(--accent-primary); }
+.flow-step { grid-template-columns: 17px minmax(0, 1fr) auto; padding: 10px; border-radius: 8px; }
+.flow-step label { color: var(--text-primary); font-size: 12px; }
+.flow-step small { display: block; max-width: none; margin-top: 3px; color: var(--text-secondary); font-size: 10px; white-space: normal; overflow: visible; line-height: 1.35; }
+.flow-step button { align-self: start; min-height: 26px; padding: 4px 6px; border: 1px solid var(--border-subtle); border-radius: 5px; background: var(--bg-surface-elevated); font-size: 10px; }
+.flow-step button:hover { border-color: var(--accent-primary); background: #1e2f4c; }
+.flow-step input, .choice input { accent-color: var(--accent-primary); }
+.flow-preview { border-color: var(--border-subtle); background: var(--bg-surface); color: var(--text-secondary); }
+.primary, .run { border-color: var(--accent-primary); color: var(--accent-text); background: var(--accent-primary); }
+.primary:hover, .run:hover { border-color: var(--accent-hover); background: var(--accent-hover); }
+.scheduler-options, .back, .dry-run-option, .editor-actions button, .sheet-body, .activity-logs { border-color: var(--border-subtle); background: var(--bg-surface); }
+.scheduler-options button[aria-pressed=true] { border-color: var(--accent-primary); color: var(--accent-text); background: var(--accent-primary); }
+.choice { border-color: var(--border-subtle); color: var(--text-primary); background: var(--bg-surface-elevated); }
+.choice:has(input:checked) { border-color: var(--accent-primary); background: #172b49; }
+.preset-row button { border-color: var(--border-subtle); color: var(--accent-primary); background: var(--bg-surface-elevated); }
+/* Full sidepanel configuration drawer */
+body.drawer-active { padding: 0; }
+body.drawer-active .tabs, body.drawer-active .workflow-context { display: none; }
+body.drawer-active main { padding: 0; overflow: hidden; }
+body.drawer-active .sheet[hidden] { display: none; }
+body.drawer-active .sheet { height: 100%; min-height: 100vh; margin: 0; display: flex; flex-direction: column; background: var(--bg-app); }
+body.drawer-active .sheet-head { flex: 0 0 auto; min-height: 52px; margin: 0; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface); }
+body.drawer-active .sheet-head strong { color: var(--text-primary); font-size: 14px; }
+body.drawer-active .sheet-head .back { padding: 6px 8px; border: 1px solid var(--border-subtle); border-radius: 6px; color: var(--text-secondary); background: var(--bg-surface-elevated); }
+body.drawer-active .sheet-body { flex: 1 1 auto; overflow-y: auto; margin: 0; padding: 12px; border: 0; border-radius: 0; background: var(--bg-app); }
+.drawer-selection-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 11px; }
+.drawer-selection-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 4px 6px 4px 8px; border: 1px solid var(--border-subtle); border-radius: 5px; color: var(--text-secondary); background: var(--bg-surface-elevated); font-size: 10px; }
+.drawer-selection-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-selection-chip button { padding: 0; border: 0; color: var(--text-secondary); background: transparent; font-size: 14px; line-height: 1; }
+.drawer-selection-chip button:hover { color: var(--text-primary); }
+.drawer-preview { margin: 12px 0; padding: 8px 9px; border: 1px solid var(--border-subtle); border-radius: 6px; color: #b9d6ff; background: #111b2c; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.drawer-done { position: sticky; bottom: 0; display: block; width: 100%; min-height: 38px; margin-top: 14px; border: 1px solid var(--accent-primary); border-radius: 7px; color: var(--accent-text); background: var(--accent-primary); font-size: 12px; font-weight: 800; }
+.drawer-done:hover { background: var(--accent-hover); }
+body.drawer-active .sheet-back-bottom { display: none; }
+</style>
+<style id="graphite-step-card-fix">
+:root {
+  --bg-root: #0d0f14;
+  --bg-card: #151821;
+  --bg-elevated: #1e222e;
+  --bg-input: #12141c;
+  --border-subtle: #262b3a;
+  --border-active: #3e465e;
+  --text-main: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-label: #cbd5e1;
+  --btn-primary-bg: #e2e8f0;
+  --btn-primary-text: #090b10;
+  --btn-secondary-bg: #222736;
+  --btn-secondary-text: #e2e8f0;
+  --btn-secondary-border: #333a4d;
+  --accent-blue: #60a5fa;
+  --navy: var(--bg-root);
+  --field: var(--bg-input);
+  --card: var(--bg-card);
+  --line: var(--border-subtle);
+  --bronze: var(--text-label);
+  --text: var(--text-main);
+  --muted: var(--text-secondary);
+}
+html, body, body.drawer-active .sheet { background: var(--bg-root); color: var(--text-main); }
+.section-title { color: var(--text-label); font-size: 11px; font-weight: 700; letter-spacing: .05em; }
+.tabs button { color: var(--text-secondary); background: var(--bg-card); border-color: var(--border-subtle); }
+.tabs button[aria-selected=true] { color: var(--text-main); background: var(--bg-elevated); border-color: var(--border-active); }
+.context, .card, .history-item, .status-card, .sheet-body, .activity-logs { background: var(--bg-card); border-color: var(--border-subtle); }
+.context input, .context select, input[type=search], .scheduler-select-row select, .scheduler-select-row input, .preset-row select, .preset-row input { background: var(--bg-input); border-color: var(--border-subtle); color: var(--text-main); }
+.context input:focus, .context select:focus, input[type=search]:focus, .scheduler-select-row select:focus, .scheduler-select-row input:focus, .preset-row select:focus, .preset-row input:focus { border-color: var(--border-active); box-shadow: 0 0 0 1px var(--border-active); }
+.link, .clear-choice, .summary, .icon, .back, .flow-step small, .flow-step button { color: var(--text-label); }
+.flow-step { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg-card); }
+.flow-step-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.flow-step-title { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-main); font-size: 13px; font-weight: 600; }
+.flow-step-title input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent-blue); }
+.flow-step-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-step-top > button { flex: 0 0 auto; margin-left: auto; padding: 3px 8px; border: 1px solid var(--btn-secondary-border); border-radius: 4px; color: var(--btn-secondary-text); background: var(--btn-secondary-bg); font-size: 11px; font-weight: 600; }
+.flow-step-top > button:hover { border-color: #46516a; color: #fff; background: #2d3448; }
+.flow-step > small { display: block; max-width: none; padding-left: 23px; color: var(--text-secondary); font-size: 11px; font-weight: 400; line-height: 1.35; white-space: normal; overflow: visible; }
+.choice, .scheduler-options, .back, .dry-run-option, .editor-actions button { background: var(--bg-elevated); border-color: var(--border-subtle); color: var(--text-label); }
+.choice:has(input:checked), .scheduler-options button[aria-pressed=true] { border-color: var(--border-active); background: #202a3a; color: var(--text-main); }
+.choice input { accent-color: var(--accent-blue); }
+.primary, .run { border: 0; color: var(--btn-primary-text); background: var(--btn-primary-bg); font-weight: 700; }
+.primary:hover, .run:hover { background: #f1f5f9; }
+.run.api-load { border: 1px solid var(--btn-secondary-border); color: var(--btn-secondary-text); background: var(--bg-elevated); }
+.run.api-load:hover { background: #2d3448; }
+.drawer-done { border: 0; color: #fff; background: #2563eb; }
+.drawer-done:hover { background: #1d4ed8; }
+.drawer-preview { color: var(--text-label); background: var(--bg-input); border-color: var(--border-subtle); }
+
+.activity-tabs button { color: var(--text-secondary); background: var(--bg-card); border-color: var(--border-subtle); }
+.activity-tabs button[aria-selected=true] { color: var(--text-main); background: var(--bg-elevated); border-color: var(--border-active); }
+.editor-actions .apply { border: 0; color: var(--btn-primary-text); background: var(--btn-primary-bg); }
+.editor-actions .apply:hover { background: #f1f5f9; }
+.data-model-attribute-badge.configured { border-color: var(--border-active); color: var(--text-label); background: var(--bg-elevated); }
+.data-viewer-edit { border-color: var(--border-active); background: var(--btn-secondary-bg); color: var(--text-main); }
+
+/* Full-width two-row workflow cards: no centred content or wrapped metadata. */
+.step-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background-color: #141721;
+  border: 1px solid #252a3a;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.step-header { display: flex; flex-direction: row; align-items: center; justify-content: space-between; width: 100%; }
+.step-title-group { display: inline-flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }
+.step-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: #f8fafc; text-align: left; }
+.btn-edit { margin-left: auto; flex-shrink: 0; font-size: 11px; font-weight: 500; padding: 3px 10px; background-color: #1e2330; color: #cbd5e1; border: 1px solid #333a4d; border-radius: 4px; cursor: pointer; transition: background .15s ease; }
+.btn-edit:hover { background-color: #2b3245; color: #ffffff; }
+.step-meta { display: block; width: 100%; min-width: 0; margin-top: 4px; padding-left: 24px; color: #94a3b8; font-size: 11px; font-weight: 400; line-height: 1.4; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+:root {
+  --surface-base: #090a0f; --surface-card: #12151e; --surface-pill: #1a1e2b; --surface-input: #0f121a;
+  --border-card: #1e2333; --border-pill: #283046; --border-focus: #475569;
+  --text-title: #f8fafc; --text-muted: #94a3b8; --text-dim: #64748b; --text-label: #cbd5e1;
+  --btn-primary-bg: #f8fafc; --btn-primary-fg: #090a0f; --btn-secondary-bg: #1e2333; --btn-secondary-fg: #cbd5e1; --btn-secondary-border: #2e364f;
+}
+html, body, body.drawer-active .sheet { background: var(--surface-base); }
+.context.workflow-context { padding: 5px 0 9px; border: 0; border-bottom: 1px solid var(--border-card); border-radius: 0; background: transparent; }
+.flow-preview { padding: 6px 0; border: 0; border-radius: 0; background: transparent; color: var(--text-dim); }
+.step-card { gap: 6px; background: var(--surface-card); border-color: var(--border-card); }
+.step-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; padding-left: 24px; }
+.pill { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border-pill); border-radius: 4px; color: var(--text-muted); background: var(--surface-pill); font-size: 11px; font-weight: 500; }
+.btn-edit { background: var(--btn-secondary-bg); border-color: var(--btn-secondary-border); color: var(--btn-secondary-fg); }
+.btn-edit:hover { background: #283046; color: #ffffff; }
+.tabs button { background: transparent; color: var(--text-dim); border-color: transparent; }
+.tabs button[aria-selected=true] { background: var(--btn-secondary-bg); color: #ffffff; border-color: var(--btn-secondary-border); }
+.primary, .run { background: var(--btn-primary-bg); color: var(--btn-primary-fg); border: 0; font-weight: 600; }
+.primary:hover, .run:hover { background: #e2e8f0; }
+.run.api-load { background: transparent; color: var(--btn-secondary-fg); border: 1px solid #334155; }
+.run.api-load:hover { background: var(--btn-secondary-bg); }
+.clear-choice { color: var(--text-dim); }
+.clear-choice:hover { color: #fca5a5; }
+
+/* High-glare contrast: semantic metadata, selected tiles, and segmented controls. */
+.pill { padding: 2px 8px; font-size: 11px; font-weight: 600; letter-spacing: .02em; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.pill-entity { border: 1px solid #0284c7; color: #7dd3fc; background: rgba(14,165,233,.15); }
+.pill-timing { border: 1px solid #d97706; color: #fde047; background: rgba(245,158,11,.14); }
+.pill-neutral { border: 1px solid #64748b; color: #f8fafc; background: rgba(255,255,255,.08); }
+.choice { background: #12151e; border-color: #283044; transition: background .15s ease-in-out, border-color .15s ease-in-out, box-shadow .15s ease-in-out; }
+.choice:hover { border-color: #475569; background: #181d2a; }
+.choice .choice-label, .choice .data-viewer-choice-name { color: #94a3b8; font-weight: 500; }
+.choice:has(input:checked) { border: 1.5px solid #38bdf8; background: rgba(14,165,233,.18); box-shadow: 0 0 10px rgba(56,189,248,.15); }
+.choice:has(input:checked) .choice-label, .choice:has(input:checked) .data-viewer-choice-name { color: #ffffff; font-weight: 700; }
+.choice:has(input:checked) input[type="checkbox"] { accent-color: #0284c7; }
+.scheduler-options { gap: 2px; padding: 2px; border-color: #22293a; border-radius: 8px; background: #0d1017; }
+.scheduler-options button { padding: 6px 8px; color: #64748b; font-size: 11px; font-weight: 500; border: 1px solid transparent; border-radius: 6px; background: transparent; }
+.scheduler-options button:hover:not(:disabled) { color: #cbd5e1; }
+.scheduler-options button[aria-pressed=true] { border-color: #38bdf8; color: #f8fafc; background: #1e2538; font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+.scheduler-options button:disabled { opacity: .35; cursor: not-allowed; color: #475569; }
+.drawer-selection-chip { border-color: #38bdf8; color: #ffffff; background: #0369a1; }
+.drawer-selection-chip button { color: #ffffff; }
+.drawer-selection-chip button:hover { color: #e0f2fe; }
+
+/* Readable unselected choices and no legacy gold active state. */
+.choice { border-color: #3b465e; background: #12151e; }
+.choice .choice-label, .choice .data-viewer-choice-name { color: #d5ddea; font-weight: 600; }
+.choice input[type="checkbox"] { accent-color: #94a3b8; }
+.choice:has(input:checked) { border-color: #38bdf8 !important; background: rgba(14,165,233,.18) !important; box-shadow: 0 0 10px rgba(56,189,248,.15); }
+.choice:has(input:checked) .choice-label, .choice:has(input:checked) .data-viewer-choice-name { color: #ffffff; }
+.context input::placeholder, input[type=search]::placeholder { color: #b8c5d8; opacity: 1; }
+.tabs button[aria-selected=true] { border-color: #475569; color: #ffffff; background: #1e2333; }
+
+/* Cyan / dark-slate console system — final component layer. */
+:root {
+  --bg-app: #07090e; --bg-card: #0e131f; --bg-card-hover: #131929; --bg-card-active: #0b1524; --bg-control: #0a0d14;
+  --border-subtle: #1c2438; --border-card: #20293d; --brand-cyan: #38bdf8; --brand-cyan-glow: rgba(56,189,248,.12); --brand-cyan-border: #0ea5e9;
+  --pill-cyan-bg: rgba(14,165,233,.12); --pill-cyan-border: #0284c7; --pill-cyan-text: #7dd3fc;
+  --pill-amber-bg: rgba(245,158,11,.10); --pill-amber-border: #b45309; --pill-amber-text: #fde047;
+  --pill-gray-bg: rgba(255,255,255,.05); --pill-gray-border: #334155; --pill-gray-text: #cbd5e1;
+  --text-primary: #f8fafc; --text-secondary: #94a3b8; --text-dim: #64748b;
+}
+html, body, body.drawer-active .sheet { color: var(--text-primary); background: var(--bg-app); }
+.tabs { gap:6px; margin:0 0 10px; }
+.tabs button { height:38px; border:1px solid var(--border-subtle); border-radius:7px; color:var(--text-secondary); background:transparent; }
+.tabs button[aria-selected=true] { border:1.5px solid var(--brand-cyan); color:#fff; background:var(--brand-cyan-glow); }
+.activity-count { display:inline-grid; place-items:center; min-width:16px; height:16px; margin-left:4px; padding:0 4px; border-radius:999px; color:#031321; background:var(--brand-cyan); font-size:9px; font-weight:800; }
+.context.workflow-context { background:transparent; border-color:var(--border-subtle); }
+.context input, .context select, input[type=search], .scheduler-select-row select, .scheduler-select-row input, .preset-row select, .preset-row input { border-color:var(--border-subtle); color:var(--text-primary); background:var(--bg-control); }
+.manage-icon { display:grid; place-items:center; width:27px; height:27px; border:1px solid var(--border-subtle); border-radius:5px; color:var(--text-secondary); background:var(--bg-control); font-size:14px; }
+.step-card { border-color:var(--border-card); border-radius:10px; background:var(--bg-card); }
+.step-card:has(input:checked) { border:1.5px solid var(--brand-cyan); background:var(--bg-card-active); }
+.step-icon { display:grid; place-items:center; flex:0 0 32px; width:32px; height:32px; border:1px solid #2a3850; border-radius:9px; color:var(--brand-cyan); background:#0a0f19; font-size:16px; font-weight:800; }
+.step-title-group { gap:8px; }
+.step-title { color:var(--text-primary); }
+.step-pills { padding-left:40px; }
+.pill-entity { border-color:var(--pill-cyan-border); color:var(--pill-cyan-text); background:var(--pill-cyan-bg); }
+.pill-timing { border-color:var(--pill-amber-border); color:var(--pill-amber-text); background:var(--pill-amber-bg); }
+.pill-neutral { border-color:var(--pill-gray-border); color:var(--pill-gray-text); background:var(--pill-gray-bg); }
+.btn-edit { border-color:#34425b; color:#d9e4ef; background:#121a28; }
+.btn-edit:hover { border-color:var(--brand-cyan-border); color:#fff; background:var(--bg-card-hover); }
+.flow-preview, #flowHint { color:var(--text-dim); }
+.primary, .run { min-height:44px; border:0; color:#031122; background:linear-gradient(180deg,#7ec2ff 0%,#4ea5ff 100%); box-shadow:0 5px 16px rgba(56,189,248,.16); }
+.run:hover, .primary:hover { background:linear-gradient(180deg,#9ad0ff 0%,#5aaeff 100%); }
+.drawer-done { border:0; color:#031122; background:linear-gradient(180deg,#7ec2ff 0%,#4ea5ff 100%); }
+.run.api-load { color:#cbd5e1; background:transparent; border:1px solid #334155; box-shadow:none; }
+.run.api-load:hover { border-color:var(--brand-cyan-border); color:#fff; background:var(--bg-card-hover); }
+.drawer-selection-chip { border-color:var(--brand-cyan); color:var(--pill-cyan-text); background:var(--pill-cyan-bg); }
+.drawer-selection-chip button { color:var(--pill-cyan-text); }
+.choice { border-color:#283044; color:var(--text-secondary); background:#12151e; }
+.choice .choice-label, .choice .data-viewer-choice-name { color:var(--text-secondary); }
+.choice:has(input:checked) { border:1.5px solid var(--brand-cyan) !important; background:rgba(14,165,233,.18) !important; box-shadow:0 0 10px rgba(56,189,248,.15); }
+.choice:has(input:checked) .choice-label, .choice:has(input:checked) .data-viewer-choice-name { color:#fff; font-weight:700; }
+.scheduler-options { border-color:var(--border-subtle); background:var(--bg-control); }
+.scheduler-options button { color:var(--text-dim); }
+.scheduler-options button[aria-pressed=true] { border-color:var(--brand-cyan); color:#fff; background:var(--bg-card-active); }
+
+/* Monochromatic slate-gray theme based on the supplied palette. */
+:root {
+  --slate-950: #16202a;
+  --slate-900: #263340;
+  --slate-800: #36404c;
+  --slate-700: #536373;
+  --slate-600: #6d8196;
+  --slate-400: #a8bed8;
+  --slate-100: #edf3fa;
+  --slate-50: #f7f9fc;
+  --bg-app: var(--slate-950);
+  --bg-card: var(--slate-900);
+  --bg-card-hover: var(--slate-800);
+  --bg-card-active: #314252;
+  --bg-control: #1d2935;
+  --border-subtle: #45576a;
+  --border-card: #536373;
+  --brand-cyan: var(--slate-400);
+  --brand-cyan-glow: rgba(168,190,216,.15);
+  --brand-cyan-border: var(--slate-400);
+  --pill-cyan-bg: rgba(168,190,216,.15);
+  --pill-cyan-border: #8fa9c5;
+  --pill-cyan-text: var(--slate-50);
+  --pill-amber-bg: rgba(109,129,150,.28);
+  --pill-amber-border: #8299af;
+  --pill-amber-text: var(--slate-50);
+  --pill-gray-bg: rgba(255,255,255,.08);
+  --pill-gray-border: #6d8196;
+  --pill-gray-text: var(--slate-50);
+  --text-primary: var(--slate-50);
+  --text-secondary: #d0dce8;
+  --text-dim: #a4b4c5;
+}
+html, body, body.drawer-active .sheet { color:var(--slate-50); background:var(--slate-950); }
+.tabs button { color:#c5d2df; border-color:#45576a; background:#1d2935; }
+.tabs button[aria-selected=true] { color:#17212c; border-color:var(--slate-400); background:var(--slate-400); }
+.activity-count { color:#17212c; background:var(--slate-50); }
+.context.workflow-context { border-color:#45576a; }
+.context input, .context select, input[type=search], .scheduler-select-row select, .scheduler-select-row input, .preset-row select, .preset-row input { color:var(--slate-50); border-color:#536373; background:#1d2935; }
+.step-card { border-color:#536373; background:var(--slate-900); }
+.step-card:has(input:checked) { border-color:var(--slate-400); background:#314252; }
+.step-icon { color:var(--slate-50); border-color:#6d8196; background:var(--slate-800); }
+.btn-edit { color:var(--slate-50); border-color:#6d8196; background:var(--slate-800); }
+.btn-edit:hover { border-color:var(--slate-400); color:#17212c; background:var(--slate-400); }
+.pill-entity { border-color:#8fa9c5; color:var(--slate-50); background:rgba(168,190,216,.15); }
+.pill-timing { border-color:#8299af; color:var(--slate-50); background:rgba(109,129,150,.28); }
+.pill-neutral { border-color:#6d8196; color:var(--slate-50); background:rgba(255,255,255,.08); }
+.primary, .run, .drawer-done { color:#17212c; background:linear-gradient(180deg,#dce8f4 0%,#a8bed8 100%); box-shadow:0 5px 16px rgba(0,0,0,.22); }
+.primary:hover, .run:hover, .drawer-done:hover { background:linear-gradient(180deg,#f7f9fc 0%,#b9cce1 100%); }
+.run.api-load { color:var(--slate-50); border-color:#6d8196; background:transparent; }
+.run.api-load:hover { border-color:var(--slate-400); background:var(--slate-800); }
+.drawer-selection-chip { color:var(--slate-50); border-color:var(--slate-400); background:#536373; }
+.drawer-selection-chip button { color:var(--slate-50); }
+.choice { border-color:#536373; color:#d0dce8; background:#1d2935; }
+.choice .choice-label, .choice .data-viewer-choice-name { color:#d0dce8; }
+.choice:hover { border-color:#8299af; background:#263340; }
+.choice:has(input:checked) { border-color:var(--slate-400) !important; background:#314252 !important; box-shadow:0 0 10px rgba(168,190,216,.16); }
+.choice:has(input:checked) input[type="checkbox"] { accent-color:#a8bed8; }
+.scheduler-options { border-color:#45576a; background:#16202a; }
+.scheduler-options button { color:#b3c2d2; }
+.scheduler-options button[aria-pressed=true] { border-color:var(--slate-400); color:var(--slate-50); background:#536373; }
+.manage-icon { color:var(--slate-50); border-color:#536373; background:#263340; }
+.section-title, .link, .clear-choice, .summary, .icon { color:#d0dce8; }
+
+/* Restored original Oxford navy + golden-brown / mustard theme. */
+:root {
+  --navy: #0d1b2a; --field: #14213d; --card: #102843; --line: #496887;
+  --bronze: #e5ba73; --text: #ffffff; --muted: #8d99ae; --green: #9acfa5; --red: #ef938d;
+  --bg-app: #0d1b2a; --bg-card: #102843; --bg-card-hover: #163655; --bg-card-active: #142c48; --bg-control: #14213d;
+  --border-subtle: #496887; --border-card: #496887; --brand-cyan: #e5ba73; --brand-cyan-glow: rgba(229,186,115,.16); --brand-cyan-border: #e5ba73;
+  --text-primary: #ffffff; --text-secondary: #cbd5df; --text-dim: #8d99ae;
+}
+html, body, body.drawer-active .sheet { color:#fff; background:radial-gradient(circle at 80% 0%,#173c66 0%,transparent 36%),#0d1b2a; }
+.tabs button { color:#cbd5df; border-color:#496887; background:#10243d; }
+.tabs button[aria-selected=true] { color:#0d1b2a; border-color:#e5ba73; background:linear-gradient(100deg,#e5ba73,#c5a880); }
+.activity-count { color:#0d1b2a; background:#e5ba73; }
+.context.workflow-context { border-color:#496887; }
+.context input, .context select, input[type=search], .scheduler-select-row select, .scheduler-select-row input, .preset-row select, .preset-row input { color:#fff; border-color:#496887; background:#14213d; }
+.step-card { border-color:#496887; background:linear-gradient(180deg,#102c4b,#0d2137); }
+.step-card:has(input:checked) { border-color:#e5ba73; background:#142c48; }
+.step-icon { color:#e5ba73; border-color:#496887; background:#10243d; }
+.btn-edit { color:#fff; border-color:#496887; background:#10243d; }
+.btn-edit:hover { border-color:#e5ba73; color:#0d1b2a; background:#e5ba73; }
+.pill-entity { border-color:#e5ba73; color:#fff4dd; background:rgba(229,186,115,.16); }
+.pill-timing { border-color:#c59d60; color:#f6d99e; background:rgba(197,157,96,.16); }
+.pill-neutral { border-color:#6c8298; color:#e4edf5; background:rgba(255,255,255,.07); }
+.primary, .run, .drawer-done { color:#0d1b2a; background:linear-gradient(100deg,#e5ba73,#c5a880); box-shadow:0 5px 16px rgba(0,0,0,.22); }
+.primary:hover, .run:hover, .drawer-done:hover { background:linear-gradient(100deg,#efd08f,#d4b577); }
+.run.api-load { color:#e5ba73; border-color:#e5ba73; background:transparent; }
+.run.api-load:hover { color:#fff; border-color:#e5ba73; background:#163655; }
+.drawer-selection-chip { color:#fff4dd; border-color:#e5ba73; background:#3a3123; }
+.drawer-selection-chip button { color:#fff4dd; }
+.choice { border-color:#3c5b78; color:#d6dee8; background:#14213d; }
+.choice .choice-label, .choice .data-viewer-choice-name { color:#d6dee8; }
+.choice:hover { border-color:#6f8daa; background:#17304d; }
+.choice:has(input:checked) { border-color:#e5ba73 !important; background:rgba(229,186,115,.16) !important; box-shadow:0 0 10px rgba(229,186,115,.12); }
+.choice:has(input:checked) input[type="checkbox"] { accent-color:#e5ba73; }
+.scheduler-options { border-color:#496887; background:#10243d; }
+.scheduler-options button { color:#b8c5d2; }
+.scheduler-options button[aria-pressed=true] { border-color:#e5ba73; color:#fff; background:rgba(229,186,115,.16); }
+.manage-icon { color:#e5ba73; border-color:#496887; background:#10243d; }
+.section-title, .link, .clear-choice, .summary, .icon { color:#e5ba73; }
+
+/* Morning compact Workflow / inline configuration styling. */
+body { width:auto; height:100%; min-height:0; max-height:none; overflow:hidden; display:flex; flex-direction:column; padding:16px; color:var(--text); background:#0d1b2a; }
+main { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:0 1px 16px; }
+.tabs { display:grid; grid-template-columns:repeat(2,1fr); gap:5px; margin:11px 0; }
+.tabs button { height:34px; border:1px solid #496887; border-radius:8px; color:#cbd5df; background:#10243d; font-size:12px; font-weight:700; }
+.tabs button[aria-selected=true] { border-color:#e5ba73; color:#0d1b2a; background:linear-gradient(100deg,#e5ba73,#c5a880); }
+.workflow-context { display:block !important; padding:9px; border:1px solid #496887; border-radius:10px; background:#10243d; }
+.context input,.context select,input[type=search],.scheduler-select-row select,.scheduler-select-row input,.preset-row select,.preset-row input { color:#fff; border-color:#496887; background:#14213d; }
+.view[hidden],.sheet[hidden] { display:none !important; }
+body.drawer-active { padding:16px; }
+body.drawer-active .tabs, body.drawer-active .workflow-context { display:grid; }
+body.drawer-active .workflow-context { display:block; }
+body.drawer-active main { padding:0 1px 16px; overflow-y:auto; }
+body.drawer-active .sheet { display:block; height:auto; min-height:0; margin-top:8px; background:transparent; }
+body.drawer-active .sheet[hidden] { display:none !important; }
+body.drawer-active .sheet-head { display:none; }
+body.drawer-active .sheet-body { display:block; overflow:visible; margin:0; padding:11px; border:1px solid #496887; border-radius:10px; background:#0c1d30; }
+.flow-step { display:grid; grid-template-columns:18px minmax(0,1fr) auto; align-items:center; gap:8px; margin-top:7px; padding:9px; border:1px solid #496887; border-radius:10px; background:linear-gradient(180deg,#102c4b,#0d2137); }
+.flow-step input { width:15px; height:15px; margin:0; accent-color:#e5ba73; }
+.flow-step label { font-size:12px; font-weight:700; color:#fff; }
+.flow-step small { max-width:106px; color:#e5ba73; font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.flow-step button { border:0; padding:0; color:#e5ba73; background:none; font-size:10px; font-weight:800; }
+.step-card,.step-header,.step-icon,.step-pills,.pill { all:revert; }
+.flow-preview { margin-top:10px; padding:9px; border:1px solid #496887; border-radius:8px; color:#d9e3ed; background:#0a1725; font-size:11px; line-height:1.6; white-space:pre-wrap; }
+.primary,.run,.drawer-done { min-height:42px; border:1px solid #e5ba73; border-radius:9px; color:#0d1b2a; background:linear-gradient(100deg,#e5ba73,#c5a880); box-shadow:none; }
+.choice { border-color:#3c5b78; color:#d6dee8; background:#14213d; }
+.choice:has(input:checked) { border-color:#e5ba73 !important; background:rgba(229,186,115,.16) !important; box-shadow:none; }
+.scheduler-options { border-color:#496887; background:#10243d; }
+.scheduler-options button[aria-pressed=true] { border-color:#e5ba73; color:#fff; background:rgba(229,186,115,.16); }
+.drawer-selection-chips,.drawer-preview,.drawer-done { display:none !important; }
+.sheet-back-bottom { display:block !important; margin:13px 0 0 auto; border:1px solid #496887; border-radius:7px; padding:5px 8px; color:#e5ba73; background:#10243d; font-size:11px; }
 </style></head><body>
-<nav class="tabs" aria-label="Popup views"><button type="button" data-view="run" aria-selected="true">Run</button><button type="button" data-view="flow" aria-selected="false">Flow</button><button type="button" data-view="activity" aria-selected="false">Activity</button></nav>
+<nav class="tabs" aria-label="Popup views"><button type="button" data-view="flow" aria-selected="true">Workflow</button><button type="button" data-view="activity" aria-selected="false">Activity</button></nav>
+<section class="context workflow-context"><div class="context-row"><strong>Scope &amp; workflow defaults</strong><button type="button" class="link" id="workingSetRefreshBtn">Refresh</button></div><select id="workingSet" aria-label="Working set"><option value="static:customer">Customer</option></select><div class="inline-row"><select id="transferTemplate" aria-label="Transfer template"><option value="">Transfer template (when needed)</option></select><input id="connectionPurpose" class="purpose" maxlength="28" placeholder="Purpose" aria-label="Connection purpose"><button class="link manage-icon" id="manageTemplatesBtn" title="Manage templates" aria-label="Manage templates">↗</button></div><div class="scheduler-options" aria-label="Scheduler experience"><button type="button" id="tenantSchedulerNew" aria-pressed="true">New schedule</button><button type="button" id="tenantSchedulerLegacy" aria-pressed="false">Legacy</button></div><div id="workingSetHint" class="hint" hidden></div><div id="templateSummary" class="hint" hidden></div><div id="tenantSchedulerHint" class="hint" hidden></div></section>
 <main>
-<section class="view" id="view-run"><div class="section-title">Jobs &amp; Connections</div><section class="context"><div class="section-title jobs-context-title">Connection template</div><div class="context-row"><select id="transferTemplate" aria-label="Transfer template"><option value="">Select transfer template</option></select><input id="connectionPurpose" class="purpose" maxlength="28" placeholder="Purpose" aria-label="Connection purpose"><button class="link" id="manageTemplatesBtn">Manage</button></div><div id="templateSummary" class="hint">Choose a template for connection and job runs.</div></section><button class="primary" id="runE2EBtn">↝ Run Sanity Flow</button>
+<section class="view" id="view-run" hidden><div class="section-title">Quick actions</div>
 <div class="card"><button class="action" id="sourceBtn"><span class="action-main"><span class="icon">◌</span>Create Source</span><span class="summary">Template</span></button></div>
 <div class="card"><button class="action" id="destinationBtn"><span class="action-main"><span class="icon">◎</span>Create Destination</span><span class="summary">Template</span></button></div>
 <div class="card"><button class="action" data-open-sheet="responsys"><span class="action-main"><span class="icon">⇣</span>Responsys Import</span><span class="summary" id="responsysScheduleLabel">Scheduled · Daily</span></button></div>
@@ -128,28 +515,30 @@ html,body{background:var(--navy);color:var(--text)}
 <div class="card"><button class="action" data-open-sheet="dataModelAttributes"><span class="action-main"><span class="icon">＋</span>Add New Attributes</span><span class="summary" id="dataModelAttributesValue">Select type and object</span></button></div>
 </section>
 
-<section class="view" id="view-flow" hidden><div class="section-title">Build a flow</div>
+<section class="view" id="view-flow"><div class="section-title">Workflow</div><div class="hint">Save a preset for a repeatable flow. For a one-time task, select only that step and run it.</div><div class="preset-row" data-preset-row="flow"></div><div class="section-title">Steps</div>
 <div class="flow-step"><input id="flow-dataModel" type="checkbox"><label for="flow-dataModel">Data Models</label><small id="flowDataModelValue">Select types</small><button type="button" data-open-sheet="dataModel" data-flow-config="dataModel">Configure</button></div>
+<div class="flow-step"><input id="flow-dataViewer" type="checkbox"><label for="flow-dataViewer">Add data</label><small id="flowDataViewerValue">Customer</small><button type="button" data-open-sheet="flowDataViewer" data-flow-config="dataViewer">Configure</button></div>
+<div class="flow-step"><input id="flow-export" type="checkbox"><label for="flow-export">Export</label><small id="flowExportValue">Customer</small><button type="button" data-open-sheet="flowExport" data-flow-config="export">Configure</button></div>
+<div class="flow-step"><input id="flow-import" type="checkbox"><label for="flow-import">Import</label><small id="flowImportCount">Select tables</small><button type="button" data-open-sheet="flowImport" data-flow-config="import">Configure</button></div>
+<div class="flow-step"><input id="flow-publish" type="checkbox"><label for="flow-publish">Publish</label><small>Optional</small></div>
+<button type="button" class="link" id="flowAddStepBtn" aria-expanded="false" aria-controls="flowAdvancedSteps">+ Add step</button>
+<div id="flowAdvancedSteps" hidden>
 <div class="flow-step"><input id="flow-dataModelAttributes" type="checkbox"><label for="flow-dataModelAttributes">Add New Attributes</label><small id="flowDataModelAttributesValue">Select type and object</small><button type="button" data-open-sheet="dataModelAttributes" data-flow-config="dataModelAttributes">Configure</button></div>
-<div class="flow-step"><input id="flow-dataViewer" type="checkbox"><label for="flow-dataViewer">Data Viewer Records</label><small id="flowDataViewerValue">Customer</small><button type="button" data-open-sheet="flowDataViewer" data-flow-config="dataViewer">Configure</button></div>
 <div class="flow-step"><input id="flow-source" type="checkbox"><label for="flow-source">Create Source</label><small>Template</small></div>
 <div class="flow-step"><input id="flow-destination" type="checkbox"><label for="flow-destination">Create Destination</label><small>Template</small></div>
-<div class="flow-step"><input id="flow-export" type="checkbox"><label for="flow-export">Create Export Job</label><small id="flowExportValue">Customer</small><button type="button" data-open-sheet="flowExport" data-flow-config="export">Configure</button></div>
-<div class="flow-step"><input id="flow-import" type="checkbox"><label for="flow-import">Create Import Job</label><small id="flowImportCount">Select tables</small><button type="button" data-open-sheet="flowImport" data-flow-config="import">Configure</button></div>
-<div class="flow-step"><input id="flow-responsys" type="checkbox"><label for="flow-responsys">Create Responsys Import</label><small id="flowResponsysScheduleLabel">Scheduled · Daily</small><button type="button" data-open-sheet="flowResponsys" data-flow-config="responsys">Configure</button></div>
-<div class="flow-step"><input id="flow-publish" type="checkbox"><label for="flow-publish">Publish created jobs</label><small>Optional</small></div>
-<div class="flow-step"><input id="flow-verify" type="checkbox"><label for="flow-verify">Verify Published</label><small>Optional</small></div>
-<div id="flowHint" class="hint"></div><div id="flowPreview" class="flow-preview"></div><div class="preset-row" data-preset-row="flow"></div><button class="run" id="runCustomFlowBtn">▶ Run flow</button></section>
+<div class="flow-step"><input id="flow-responsys" type="checkbox"><label for="flow-responsys">Responsys Import</label><small id="flowResponsysScheduleLabel">Scheduled · Daily</small><button type="button" data-open-sheet="flowResponsys" data-flow-config="responsys">Configure</button></div>
+<div class="flow-step"><input id="flow-verify" type="checkbox"><label for="flow-verify">Verify Published</label><small>Optional</small></div></div>
+<div id="flowHint" class="hint"></div><div id="flowPreview" class="flow-preview"></div><button class="run" id="runCustomFlowBtn">▶ Run workflow</button></section>
 
 <section class="view" id="view-activity" hidden><div class="section-title">Active run</div><div class="status-card"><span class="status-dot idle" id="statusDot"></span><span id="status" role="status" aria-live="polite">No automation running</span><button class="stop" id="stopE2EBtn" hidden>■ Stop</button></div><div class="activity-tabs" role="tablist" aria-label="Activity details"><button type="button" data-activity-section="runs" aria-selected="true">Runs</button><button type="button" data-activity-section="logs" aria-selected="false">Logs</button></div><div id="activityRunsPanel"><div class="section-title">Recent runs</div><div id="runHistory" class="hint">No completed runs yet.</div></div><div id="activityLogsPanel" hidden><div class="section-title">Run log</div><div id="activityLogs" class="activity-logs">Choose View log from a recent run.</div></div></section>
 
 <section class="sheet" id="sheet-responsys" hidden><div class="sheet-head"><strong>Responsys Import</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="scheduler" data-scheduler="responsys"></div><div class="preset-row" data-preset-row="responsys"></div><button class="run" id="runResponsysBtn">▶ Run Responsys Import</button></div></section>
-<section class="sheet" id="sheet-import" hidden><div class="sheet-head"><strong>Import Job</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="inline-row"><input id="quickImportSearch" type="search" placeholder="Search tables"><button type="button" class="clear-choice" id="clearImportBtn">Clear</button></div><div id="quickImportTables" class="choices"></div><div id="quickImportHint" class="option-hint" hidden></div><div class="scheduler" data-scheduler="quickImport"></div><div class="preset-row" data-preset-row="import"></div><button class="run" id="runQuickImportBtn">▶ Run Import Job</button></div></section>
+<section class="sheet" id="sheet-import" hidden><div class="sheet-head"><strong>Import Job</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="inline-row"><input id="quickImportSearch" type="search" placeholder="Search tables"><button type="button" class="clear-choice" id="clearImportBtn">Clear</button></div><div id="quickImportTables" class="choices"></div><div id="quickImportHint" class="option-hint" hidden></div><div class="scheduler-options" data-mapping-mode><button type="button" data-mode="combined">One job · Combined</button><button type="button" data-mode="separate">One job · Separate</button><button type="button" data-mode="separateJobs">Separate jobs</button></div><div class="scheduler" data-scheduler="quickImport"></div><div class="preset-row" data-preset-row="import"></div><button class="run" id="runQuickImportBtn">▶ Run Import Job</button></div></section>
 <section class="sheet" id="sheet-export" hidden><div class="sheet-head"><strong>Export Job</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><input id="quickExportSearch" type="search" placeholder="Search data objects"><div id="quickExportPayloads" class="choices"></div><div id="quickExportHint" class="option-hint" hidden></div><div class="scheduler" data-scheduler="quickExport"></div><div class="preset-row" data-preset-row="export"></div><button class="run" id="runQuickExportBtn">▶ Run Export Job</button></div></section>
 <section class="sheet" id="sheet-dataModel" hidden><div class="sheet-head"><strong>Data Models</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div id="dataModelGroups" class="choices"></div><div id="dataModelParentRelationships" class="data-model-parent-list"></div><label class="dry-run-option"><input id="dataModelDryRun" type="checkbox">Dry run — discard changes</label><div class="hint">Use the small + at the right of a type to configure attributes. Choose a parent only when the new object should be related to Customer, Account, or another object.</div><button class="run" id="runDataModelBtn">▶ Save Data Model Objects</button></div></section>
 <section class="sheet" id="sheet-dataModelAttributes" hidden><div class="sheet-head"><strong id="dataModelAttributeSheetTitle">Add New Attributes</strong><button class="back" id="dataModelAttributeBack">Back</button></div><div class="sheet-body"><label class="data-model-target-label">Object group<select id="dataModelAttributeGroup" aria-label="Data Model object group"></select></label><label class="data-model-target-label" id="dataModelAttributeObjectTarget">Existing object name<input id="dataModelAttributeObjectName" type="text" placeholder="For example: Profile_26D_23Jul26"></label><div class="hint" id="dataModelAttributeConfigNote" hidden>Configure this type, select Apply, then configure another type or run the final Data Model test.</div><div id="dataModelAttributeColumns" class="data-model-columns"></div><button class="link" type="button" id="removeDataModelCreationAttributesBtn" hidden>Remove attributes from this run</button><div class="hint">Enter only new attributes for the existing object. JSON accepts { "LoyaltyTier": "string" }, [{ "name": "LoyaltyTier", "dataType": "string" }], or { "columns": [...] }.</div><button class="run" type="button" id="applyDataModelCreationAttributesBtn" hidden>Apply</button><button class="run" id="runDataModelAttributesBtn">▶ Add New Attributes</button></div></section>
-<section class="sheet" id="sheet-dataViewer" hidden><div class="sheet-head"><strong>Data Viewer Record</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body data-viewer-main" id="dataViewerMain"><div class="inline-row"><input id="dataViewerSearch" type="search" placeholder="Search custom or DW tables"><button type="button" class="clear-choice" id="dataViewerRefreshBtn">Refresh</button><button type="button" class="clear-choice" id="dataViewerClearBtn">Clear</button></div><div class="hint" id="dataViewerLiveHint">Custom objects appear first. Refresh uses the current CDP tenant.</div><div id="dataViewerTables" class="choices"></div><div id="dataViewerHint" class="option-hint" hidden></div><div class="data-viewer-options"><label>Records per table<input id="dataViewerRecordsPerTable" type="text" inputmode="numeric" placeholder="1"></label><label>Source ID<input id="dataViewerSourceId" type="text" placeholder="UI"></label><label id="dataViewerParentCustomerLabel" hidden>Parent Source Customer ID<input id="dataViewerParentCustomerId" type="text" placeholder="Optional"></label><label class="dry-run-option"><input id="dataViewerDryRun" type="checkbox">Dry run — discard changes</label></div><button class="run" id="runDataViewerBtn">▶ Save Data Viewer Record</button></div><div class="sheet-body data-viewer-editor" id="dataViewerEditor" hidden><div class="sheet-head"><strong id="dataViewerEditorTitle">Record values</strong><button class="back" type="button" id="dataViewerEditorBack">Back</button></div><div id="dataViewerEditorValues"></div><button type="button" class="link" id="dataViewerAddValue">+ Add field</button><div id="dataViewerEditorRelationships"></div><button type="button" class="link" id="dataViewerAddRelationship">+ Add relationship</button><div class="editor-actions"><button type="button" id="dataViewerUseDefaults">Use Defaults</button><button type="button" class="apply" id="dataViewerApplyEditor">Apply for this run</button></div></div></section>
-<section class="sheet" id="sheet-flowDataViewer" hidden><div class="sheet-head"><strong>Flow: Data Viewer</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="flow-config" id="flowDataViewerConfig"><div class="inline-row"><input id="flowDataViewerSearch" type="search" placeholder="Search tables"><button type="button" class="clear-choice" id="flowDataViewerClearBtn">Clear</button></div><div id="flowDataViewerTables" class="choices"></div><div id="flowDataViewerHint" class="option-hint" hidden></div></div></div></section>
+<section class="sheet" id="sheet-dataViewer" hidden><div class="sheet-head"><strong>Data Viewer Record</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body data-viewer-main" id="dataViewerMain"><div class="inline-row"><input id="dataViewerSearch" type="search" placeholder="Search custom or DW tables"><button type="button" class="clear-choice" id="dataViewerRefreshBtn">Refresh</button><button type="button" class="clear-choice" id="dataViewerClearBtn">Clear</button></div><div class="hint" id="dataViewerLiveHint">Custom objects appear first. Refresh uses the current CDP tenant.</div><div id="dataViewerTables" class="choices"></div><div id="dataViewerHint" class="option-hint" hidden></div><div class="data-viewer-options"><label>Records per table<input id="dataViewerRecordsPerTable" type="text" inputmode="numeric" placeholder="1"></label><label>Source ID<input id="dataViewerSourceId" type="text" placeholder="UI"></label><label id="dataViewerParentCustomerLabel" hidden>Parent Source Customer ID<input id="dataViewerParentCustomerId" type="text" placeholder="Optional"></label><label class="dry-run-option"><input id="dataViewerDryRun" type="checkbox">Dry run — discard changes</label></div><button class="run" id="runDataViewerBtn">▶ Save Data Viewer Record</button><button class="run api-load" id="runApiCustomRecordsBtn">⇧ Load selected custom records via API</button></div><div class="sheet-body data-viewer-editor" id="dataViewerEditor" hidden><div class="sheet-head"><strong id="dataViewerEditorTitle">Record values</strong><button class="back" type="button" id="dataViewerEditorBack">Back</button></div><div id="dataViewerEditorValues"></div><button type="button" class="link" id="dataViewerAddValue">+ Add field</button><div id="dataViewerEditorRelationships"></div><button type="button" class="link" id="dataViewerAddRelationship">+ Add relationship</button><div class="editor-actions"><button type="button" id="dataViewerUseDefaults">Use Defaults</button><button type="button" class="apply" id="dataViewerApplyEditor">Apply for this run</button></div></div></section>
+<section class="sheet" id="sheet-flowDataViewer" hidden><div class="sheet-head"><strong>Flow: Data Viewer</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="flow-config" id="flowDataViewerConfig"><div class="inline-row"><input id="flowDataViewerSearch" type="search" placeholder="Search tables"><button type="button" class="clear-choice" id="flowDataViewerClearBtn">Clear</button></div><div id="flowDataViewerTables" class="choices"></div><div id="flowDataViewerHint" class="option-hint" hidden></div><div class="data-viewer-options"><label>Records per table<input id="flowDataViewerRecordsPerTable" type="text" inputmode="numeric" placeholder="1"></label></div><button class="run api-load" type="button" id="runFlowApiCustomRecordsBtn">⇧ Load selected custom records via API</button></div></div></section>
 <section class="sheet" id="sheet-flowExport" hidden><div class="sheet-head"><strong>Flow: Export</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="flow-config" id="flowExportConfig"><input id="flowExportSearch" type="search" placeholder="Search data objects"><div id="flowExportPayloads" class="choices"></div><div id="flowExportHint" class="option-hint" hidden></div><div class="scheduler" data-scheduler="flowExport"></div></div></div></section>
-<section class="sheet" id="sheet-flowImport" hidden><div class="sheet-head"><strong>Flow: Import</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="flow-config" id="flowImportConfig"><div class="inline-row"><input id="flowImportSearch" type="search" placeholder="Search tables"><button type="button" class="clear-choice" id="flowImportClearBtn">Clear</button></div><div id="flowImportTables" class="choices"></div><div id="flowImportHint" class="option-hint" hidden></div><div class="scheduler" data-scheduler="flowImport"></div></div></div></section><section class="sheet" id="sheet-flowResponsys" hidden><div class="sheet-head"><strong>Flow: Responsys Import</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="scheduler" data-scheduler="flowResponsys"></div></div></section>
+<section class="sheet" id="sheet-flowImport" hidden><div class="sheet-head"><strong>Flow: Import</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="flow-config" id="flowImportConfig"><div class="inline-row"><input id="flowImportSearch" type="search" placeholder="Search tables"><button type="button" class="clear-choice" id="flowImportClearBtn">Clear</button></div><div id="flowImportTables" class="choices"></div><div id="flowImportHint" class="option-hint" hidden></div><div class="scheduler-options" data-mapping-mode><button type="button" data-mode="combined">One job · Combined</button><button type="button" data-mode="separate">One job · Separate</button><button type="button" data-mode="separateJobs">Separate jobs</button></div><div class="scheduler" data-scheduler="flowImport"></div></div></div></section><section class="sheet" id="sheet-flowResponsys" hidden><div class="sheet-head"><strong>Flow: Responsys Import</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="scheduler" data-scheduler="flowResponsys"></div></div></section>
 </main><script src="labelPatch.js"></script><script src="popup.js"></script></body></html>

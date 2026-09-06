@@ -197,8 +197,13 @@ async function loadLiveDataViewerFields(tabId, table) {
     const fieldId = String(field?.fieldId || field?.id || field?.name || "").trim();
     if (!fieldId) continue;
     const rawSystemAttribute = field?.systemAttribute;
+    const displayName = String(
+      field?.displayName || field?.label || field?.resourceName || field?.name ||
+      fieldId.replace(/_c$/i, "")
+    ).trim();
     unique.set(fieldId, {
       fieldId,
+      displayName: displayName || fieldId,
       dataType: String(field?.dataType || field?.type || "string").toLowerCase(),
       systemAttribute: rawSystemAttribute === true || /^true$/i.test(String(rawSystemAttribute || ""))
     });
@@ -216,10 +221,10 @@ function parentTableFromMetadataFields(fields = []) {
 const E2E_IMPORT_FALLBACK = {
   targetTables: ["Customer", "ContactPoint"],
   fieldToTable: {
-    sourcecustomerid: ["Customer", "ContactPoint"],
+    sourcecustomerid: ["Customer", "ContactPoint"], email: ["Customer", "ContactPoint"],
     firstname: ["Customer"], lastname: ["Customer"], gender: ["Customer"],
     birthdate: ["Customer"], jobtitle: ["Customer"],
-    sourcecontactpointid: ["ContactPoint"], email: ["ContactPoint"],
+    sourcecontactpointid: ["ContactPoint"],
     mobilephone: ["ContactPoint"], optinstatus: ["ContactPoint"], isdeliverable: ["ContactPoint"]
   },
   csvContent: "sourcecustomerid,firstname,lastname,gender,birthdate,jobtitle,sourcecontactpointid,email,mobilephone,optinstatus,isdeliverable\n1,Sachin,Tendulkar,M,07/10/26,Sales Executive,cp-1,jagan.test01@yahoo.com,16504522260,In,TRUE\n"
@@ -260,6 +265,25 @@ function csvCell(value, delimiter) {
     : text;
 }
 
+function isAuditImportField(field) {
+  const name = String(field?.displayName || field?.fieldId || field?.header || field || "")
+    .replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return /^(?:column)?(createdby|createddate|createdts|creationdate|creationts|modifiedby|modifieddate|modifiedts|lastmodifiedby|lastmodifieddate|lastmodifiedts|rowcreatedtimestamp|rowmodifiedtimestamp)$/.test(name);
+}
+
+function importFieldKey(field) {
+  return String(field?.displayName || field?.fieldId || field?.header || field || "")
+    .replace(/_c$/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function isDerivedImportField(field, availableFields = []) {
+  const key = importFieldKey(field);
+  if (key === "id" || key === "tenantid") return true;
+  if (!key.endsWith("id") || key.startsWith("source")) return false;
+  const keys = new Set(availableFields.map(importFieldKey));
+  return keys.has(`source${key}`);
+}
+
 async function loadCsvFields(table) {
   if (!table.csvFile) throw new Error(`${table.label} has no sample CSV configured. Add its csvFile in config/tables.json before creating an Import job.`);
   const response = await fetch(chrome.runtime.getURL(table.csvFile));
@@ -271,7 +295,8 @@ async function loadCsvFields(table) {
   if (!headers.length || headers.length !== values.length || headers.some((header) => !header)) {
     throw new Error(`${table.csvFile} has invalid headers or sample values.`);
   }
-  return headers.map((header, index) => ({ header, value: values[index], table: table.cdpTable }));
+  const csvFields = headers.map((header, index) => ({ header, value: values[index], table: table.cdpTable }));
+  return csvFields.filter((field) => !isAuditImportField(field.header) && !isDerivedImportField(field, csvFields));
 }
 
 async function buildImportConfig(tableIds, delimiter = ",") {
@@ -302,6 +327,122 @@ async function buildImportConfig(tableIds, delimiter = ",") {
   };
 }
 
+function customObjectCode(table) {
+  const value = String(table?.label || table?.cdpTable || table?.tableId || "").toLowerCase();
+  if (value.includes("profile")) return "PROFILE";
+  if (value.includes("behavior")) return "BEH";
+  if (value.includes("transaction")) return "TXN";
+  if (value.includes("product")) return "PRODUCT";
+  return "OTH";
+}
+const CUSTOM_IMPORT_SOURCE_ORDER = ["PROFILE", "BEH", "TXN", "PRODUCT", "OTH"];
+
+function importHeaderForField(field) {
+  // CDP Import maps to display labels, not Data Viewer's internal Field IDs.
+  return String(field?.displayName || field?.fieldId || "")
+    .replace(/_c$/i, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
+function sourceKeySampleValue(field, table) {
+  const id = String(field?.displayName || field?.fieldId || "");
+  const related = id.replace(/^source/i, "").replace(/id$/i, "").replace(/_c$/i, "").replace(/[^a-z0-9]+/gi, "");
+  const normalized = related.toLowerCase();
+  const code = normalized === "customer" ? "CU"
+    : normalized === "account" ? "AC"
+      : normalized === "contactpoint" ? "CP"
+        : normalized === "address" ? "AD"
+          : normalized === "product" ? "PR"
+            : normalized === "profile" ? "PF"
+              : String(table?.label || related || "OB").replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "OB";
+  return code + "-1001";
+}
+
+function importSampleValueForField(field, table) {
+  const id = String(field?.displayName || field?.fieldId || "");
+  const type = String(field?.dataType || "string").toLowerCase();
+  if (/^sourceid$/i.test(id)) return "UI";
+  if (/^source.+id$/i.test(id)) return sourceKeySampleValue(field, table);
+  if (/email/i.test(id)) return "automation.test@oracle.com";
+  if (/date/i.test(id) && type !== "timestamp") return new Date().toISOString().slice(0, 10);
+  if (/timestamp|\bts\b/i.test(id) || type === "timestamp") return new Date().toISOString().slice(0, 19);
+  if (/amount|score|count|number/i.test(id) || ["int", "bigint", "decimal"].includes(type)) return "1";
+  if (type === "boolean") return "true";
+  return "Sample Value";
+}
+
+function downstreamImportFields() {
+  // Every generated custom-object source also creates the minimal Customer and
+  // ContactPoint records needed by downstream profile/activation scenarios.
+  return [
+    { header: "sourceid", value: "UI", targets: ["Customer", "ContactPoint"] },
+    { header: "sourcecustomerid", value: "CU-1001", targets: ["Customer", "ContactPoint"] },
+    { header: "email", value: "automation.test@oracle.com", targets: ["Customer", "ContactPoint"] },
+    { header: "sourcecontactpointid", value: "CP-1001", targets: ["ContactPoint"] },
+    { header: "OptInStatus", value: "In", targets: ["ContactPoint"] },
+    { header: "isdeliverable", value: "true", targets: ["ContactPoint"] }
+  ];
+}
+
+async function buildCustomImportConfig(tabId, tables, delimiter = ",", mappingMode = "combined") {
+  const separator = csvDelimiter(delimiter);
+  const selected = (tables || [])
+    .filter((table) => table?.isCustom && table?.tableId && table?.cdpTable)
+    .sort((left, right) => CUSTOM_IMPORT_SOURCE_ORDER.indexOf(customObjectCode(left)) - CUSTOM_IMPORT_SOURCE_ORDER.indexOf(customObjectCode(right)));
+  if (!selected.length) throw new Error("Select at least one published custom object.");
+  const sources = [];
+  for (const table of selected) {
+    const allFields = await loadLiveDataViewerFields(tabId, table);
+    const required = new Set(["sourceid", String(table.sourceAttribute || "").toLowerCase()]);
+    for (const field of allFields) {
+      if (/^source.+id$/i.test(field.fieldId)) required.add(String(field.fieldId).toLowerCase());
+    }
+    const mappingFields = allFields.filter((field) =>
+      (!field.systemAttribute || required.has(String(field.fieldId).toLowerCase())) &&
+      !isAuditImportField(field) &&
+      !isDerivedImportField(field, allFields)
+    );
+    if (!mappingFields.length) throw new Error(`CDP did not return mappable fields for ${table.label}.`);
+    const entriesByHeader = new Map();
+    for (const field of mappingFields) {
+      const header = importHeaderForField(field);
+      if (entriesByHeader.has(header)) throw new Error(`Custom object ${table.label} has duplicate Import display headers.`);
+      entriesByHeader.set(header, {
+        header,
+        value: importSampleValueForField(field, table),
+        targets: [table.cdpTable]
+      });
+    }
+    for (const downstream of downstreamImportFields()) {
+      const existing = entriesByHeader.get(downstream.header);
+      if (existing) existing.targets = [...new Set([...existing.targets, ...downstream.targets])];
+      else entriesByHeader.set(downstream.header, { ...downstream });
+    }
+    const entries = [...entriesByHeader.values()];
+    sources.push({
+      table,
+      sourceCode: customObjectCode(table),
+      targetTables: [...new Set(entries.flatMap((entry) => entry.targets))],
+      fieldToTable: Object.fromEntries(entries.map((entry) => [entry.header, entry.targets])),
+      parentBridge: "Customer + ContactPoint",
+      mappingEntries: entries,
+      csvContent: `${entries.map((entry) => csvCell(entry.header, separator)).join(separator)}\n${entries.map((entry) => csvCell(entry.value, separator)).join(separator)}\n`
+    });
+  }
+  if (mappingMode !== "separate" && sources.length > 1) {
+    const entriesByHeader = new Map();
+    for (const source of sources) for (const entry of source.mappingEntries || []) {
+      const existing = entriesByHeader.get(entry.header);
+      if (existing) existing.targets = [...new Set([...existing.targets, ...entry.targets])];
+      else entriesByHeader.set(entry.header, { ...entry, targets: [...entry.targets] });
+    }
+    const entries = [...entriesByHeader.values()];
+    return { sources: [{ sourceCode: "COMBINED", targetTables: [...new Set(entries.flatMap((entry) => entry.targets))], fieldToTable: Object.fromEntries(entries.map((entry) => [entry.header, entry.targets])), parentBridge: "Customer + ContactPoint", csvContent: entries.map((entry) => csvCell(entry.header, separator)).join(separator) + "\n" + entries.map((entry) => csvCell(entry.value, separator)).join(separator) + "\n" }] };
+  }
+  return { sources };
+}
+
 function runStamp() {
   const now = new Date();
   const part = (value) => String(value).padStart(2, "0");
@@ -328,7 +469,7 @@ async function nextConnectionSequence(templateId) {
   const dateTag = dateTagForName();
   // CDP is the authority for collisions. A local counter can be advanced by
   // an interrupted attempt, so always begin with the unsuffixed base name.
-  return { dateTag, ordinal: 1 };
+  return { dateTag, entityTag: entityNameTag(), ordinal: 1 };
 }
 
 async function rememberConnectionSequence(templateId, sequence) {
@@ -356,6 +497,12 @@ function dateTagForName(date = new Date()) {
   return `${date.getFullYear()}${part(date.getMonth() + 1)}${part(date.getDate())}_${part(date.getHours())}${part(date.getMinutes())}${part(date.getSeconds())}`;
 }
 
+function entityNameTag(date = new Date()) {
+  const part = (value) => String(value).padStart(2, "0");
+  const month = date.toLocaleString("en-US", { month: "short" });
+  return `${part(date.getDate())}${month}_${part(date.getHours())}${part(date.getMinutes())}`;
+}
+
 function templateShortName(template, providerCode) {
   const parts = String(template.name || "Transfer").split(/[-_\s]+/).filter(Boolean);
   if (parts.length && parts[0].toUpperCase() === providerCode) parts.shift();
@@ -363,25 +510,38 @@ function templateShortName(template, providerCode) {
   return shortName || "Transfer";
 }
 
+function normalizedNamePart(value, fallback = "") {
+  return String(value || "")
+    .replace(/[^a-z0-9]+/gi, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase() || fallback;
+}
+
+function sharedJobTag(sequence = null) {
+  return String(sequence?.jobTag || sequence?.entityTag || entityNameTag()).toUpperCase();
+}
+
+function sharedConnectionTime(sequence = null) {
+  const tag = String(sequence?.entityTag || entityNameTag());
+  const match = tag.match(/_(\d{4})$/);
+  return match ? match[1] : tag.replace(/[^0-9]/g, "").slice(-4);
+}
+
 function transferJobName(template, connection, operation, sequence) {
-  const provider = connectionProviderCode(connection.type);
-  const purpose = String(template.connectionPurpose || "")
-    .replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 28);
-  const dateTag = sequence?.dateTag || dateTagForName();
-  const actualConnectionSuffix = String(connection?.name || "").match(/_(\d{2})$/)?.[1];
-  const repeat = actualConnectionSuffix
-    ? `_${actualConnectionSuffix}`
-    : Number(sequence?.ordinal || 1) > 1 ? `_${String(sequence.ordinal).padStart(2, "0")}` : "";
-  return [operation, provider, purpose, templateShortName(template, provider), `${dateTag}${repeat}`].filter(Boolean).join("_");
+  const provider = normalizedNamePart(connectionProviderCode(connection?.type), "CDP");
+  const purpose = normalizedNamePart(template?.connectionPurpose);
+  const operationCode = normalizedNamePart(operation, "JOB");
+  return [operationCode, provider, purpose, sharedJobTag(sequence)].filter(Boolean).join("_");
 }
 
 function connectionRuntime(template, side, sequence = null) {
   const connection = template[side];
-  const purpose = String(template.connectionPurpose || "")
-    .replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 28);
-  const dateTag = sequence?.dateTag || dateTagForName();
+  const provider = normalizedNamePart(connectionProviderCode(connection.type), "CDP");
+  const purpose = normalizedNamePart(template.connectionPurpose);
+  const time = sharedConnectionTime(sequence);
   const ordinal = Number(sequence?.ordinal || 1);
-  const name = [connectionProviderCode(connection.type), purpose, `${dateTag}${ordinal > 1 ? `_${String(ordinal).padStart(2, "0")}` : ""}`].filter(Boolean).join("_");
+  const suffix = ordinal > 1 ? "_" + String(ordinal).padStart(2, "0") : "";
+  const name = [provider, purpose, time + suffix].filter(Boolean).join("_");
   return {
     side,
     type: connection.type,
@@ -392,29 +552,42 @@ function connectionRuntime(template, side, sequence = null) {
 }
 
 function transferPurposeCode(template) {
-  return String(template.connectionPurpose || "")
-    .replace(/[^a-z0-9]+/gi, "_")
-    .split("_").filter(Boolean).join("_").slice(0, 28);
+  return normalizedNamePart(template?.connectionPurpose);
 }
 
 function responsysSourceRuntime(template, sequence = null) {
   const runtime = connectionRuntime(template, "source", sequence);
-  const provider = connectionProviderCode(runtime.type);
-  const dateTag = sequence?.dateTag || dateTagForName();
+  const provider = normalizedNamePart(connectionProviderCode(runtime.type), "CDP");
+  const purpose = transferPurposeCode(template);
+  const time = sharedConnectionTime(sequence);
   const ordinal = Number(sequence?.ordinal || 1);
-  const stamp = dateTag + (ordinal > 1 ? "_" + String(ordinal).padStart(2, "0") : "");
-  runtime.name = [provider, transferPurposeCode(template), "Responsys", stamp].filter(Boolean).join("_");
+  const suffix = ordinal > 1 ? "_" + String(ordinal).padStart(2, "0") : "";
+  runtime.name = [provider, purpose, "RESPONSYS", time + suffix].filter(Boolean).join("_");
   return runtime;
 }
 
 function responsysImportJobName(template, connection, sequence) {
-  const provider = connectionProviderCode(connection.type);
-  const dateTag = sequence?.dateTag || dateTagForName();
-  const ordinal = Number(sequence?.ordinal || 1);
-  const stamp = dateTag + (ordinal > 1 ? "_" + String(ordinal).padStart(2, "0") : "");
-  return ["Import", "Responsys", provider, transferPurposeCode(template), stamp].filter(Boolean).join("_");
+  return ["IMP", "RESPONSYS", transferPurposeCode(template), sharedJobTag(sequence)].filter(Boolean).join("_");
 }
 
+function jobObjectCode(request) {
+  if (request.variant === "responsys") return "RESPONSYS";
+  if (request.kind === "export") {
+    return request.customTable ? customObjectCode(request.customTable) : normalizedNamePart(request.payloadName, "OBJECT");
+  }
+  const customTables = request.customTables || [];
+  const tableIds = request.tableIds || [];
+  if (customTables.length === 1 && tableIds.length === 0) return customObjectCode(customTables[0]);
+  if (customTables.length + tableIds.length === 1) return normalizedNamePart(customTables[0]?.label || tableIds[0], "OBJECT");
+  return "COMBINED";
+}
+
+function jobNameForRequest(request) {
+  const prefix = request.kind === "export" ? "EXP" : "IMP";
+  return [prefix, jobObjectCode(request), transferPurposeCode(request.template), sharedJobTag(request.connectionSequence)]
+    .filter(Boolean)
+    .join("_");
+}
 function jobRuntime(template, side) {
   const stamp = runStamp();
   const prefix = `${template.name || "CDP"}`.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 28) || "CDP";
@@ -726,7 +899,7 @@ async function typeJetConnectionName(tabId, value) {
   return typeJetInput(tabId, "source-name-input|input", value, "Connection Name");
 }
 
-async function typeJetInput(tabId, inputId, value, label = "input", commitKey = "Tab") {
+async function typeJetInput(tabId, inputId, value, label = "input", commitKey = "Tab", keyDelayMs = 0) {
   await chrome.scripting.executeScript({
     target: { tabId }, world: "MAIN", args: [inputId, label],
     func: (targetId, inputLabel) => {
@@ -756,6 +929,7 @@ async function typeJetInput(tabId, inputId, value, label = "input", commitKey = 
       await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...event });
       await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "char", ...event, text: character, unmodifiedText: character });
       await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...event });
+      if (keyDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, keyDelayMs));
     }
     // JET requires a trusted completion key. Most form inputs commit on Tab;
     // the Data Model object search intentionally filters only on Enter.
@@ -1344,28 +1518,51 @@ async function dataModelAttributeState(tabId) {
 }
 
 async function commitJetDataModelAttributeName(tabId, attributeName) {
-  await typeJetInput(tabId, "attrNameInput|input", attributeName, "Attribute name");
   const expectedName = String(attributeName || "").trim().toLowerCase();
+  // Use the original full-value entry method once the drawer is stable. The
+  // drawer stability check—not per-character slowing—keeps JET from binding
+  // the generated ID to the first character only.
+  const typeAttributeName = () => typeJetInput(tabId, "attrNameInput|input", attributeName, "Attribute name");
+  await typeAttributeName();
+  let retriedAttributeCommit = false;
+  let latest = {};
+  const idMatchesName = (attributeId) => {
+    const nameKey = expectedName.replace(/[^a-z0-9]/g, "");
+    const idKey = String(attributeId || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    // CDP may append _c, but the generated ID must begin with the whole Name.
+    return Boolean(nameKey) && idKey.startsWith(nameKey);
+  };
   for (let attempt = 0; attempt < 84; attempt += 1) {
     const state = await dataModelAttributeState(tabId);
+    latest = state;
     const actualName = String(state.name || "").trim().toLowerCase();
-    if (
-      actualName === expectedName &&
-      String(state.attributeId || "").trim() &&
-      !state.invalid
-    ) {
+    const hasCompleteAttributeId = idMatchesName(state.attributeId);
+    if (actualName === expectedName && hasCompleteAttributeId && !state.invalid) {
       return { ...state, name: attributeName };
     }
-    if (state.invalid) {
-      return { ...state, name: attributeName, skipped: true, reason: "Attribute name is already unavailable in CDP." };
+    // Oracle JET can drop trailing keystrokes or generate the ID from only the
+    // first character while the just-closed drawer is being reconciled. Once
+    // the drawer has settled, re-enter the complete value so JET regenerates
+    // the ID from the final Name rather than the initial keystroke.
+    if ((actualName !== expectedName || !hasCompleteAttributeId) && attempt >= 12 && !retriedAttributeCommit) {
+      retriedAttributeCommit = true;
+      await typeAttributeName();
+      continue;
+    }
+    // Only a specific duplicate response means this name must be skipped. The
+    // generic character-rule tooltip is transient while JET validates a name.
+    if (actualName === expectedName && state.invalid && /already exists|duplicate|unavailable/i.test(state.messages || "")) {
+      return { ...state, name: attributeName, skipped: true, reason: state.messages || "Attribute name is already unavailable in CDP." };
     }
     await new Promise((resolve) => setTimeout(resolve, 180));
   }
-  const state = await dataModelAttributeState(tabId);
-  if (state.invalid) {
-    return { ...state, name: attributeName, skipped: true, reason: state.messages || "Attribute name is already unavailable in CDP." };
+  const actualName = String(latest.name || "").trim();
+  if (actualName.toLowerCase() === expectedName && idMatchesName(latest.attributeId)) {
+    // The generated ID is authoritative; the subsequent Save readiness check
+    // still ensures CDP has cleared any stale validation state.
+    return { ...latest, name: attributeName };
   }
-  throw new Error(`CDP did not generate an Attribute ID for ${attributeName}${state.messages ? `: ${state.messages}` : ""}`);
+  throw new Error(`CDP did not generate an Attribute ID for ${attributeName}${latest.messages ? `: ${latest.messages}` : ""}`);
 }
 
 async function commitJetConnectionName(tabId, connectionConfig) {
@@ -1555,7 +1752,7 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
   if (filename === "exportJob.js") {
     const catalog = await loadTableCatalog();
     const payload = exportPayloadName || "Customer";
-    if (!catalog.exportPayloads.includes(payload)) throw new Error(`Unsupported export payload: ${payload}.`);
+    if (!jobConfig?.customTable && !catalog.exportPayloads.includes(payload)) throw new Error(`Unsupported export payload: ${payload}.`);
   }
 
   const tab = await chrome.tabs.get(tabId);
@@ -1674,7 +1871,9 @@ async function runTask(tabId, filename, monitor, schedule, importConfig, exportP
     }
 
     if (filename === "importContacts.js") {
-      if (!importConfig?.csvContent || !Array.isArray(importConfig.targetTables) || !importConfig.fieldToTable) importConfig = E2E_IMPORT_FALLBACK;
+      const hasSingleMapping = Boolean(importConfig?.csvContent && Array.isArray(importConfig.targetTables) && importConfig.fieldToTable);
+      const hasMultipleMappings = Array.isArray(importConfig?.sources) && importConfig.sources.length > 0;
+      if (!hasSingleMapping && !hasMultipleMappings) importConfig = E2E_IMPORT_FALLBACK;
       await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
@@ -1792,7 +1991,7 @@ function normalizeJobRunRequest(request = {}) {
   if (!request.runId) throw new Error("A job run requires a run ID.");
   if (!request.template) throw new Error("A job run requires a transfer template.");
   if (kind === "export" && !String(request.payloadName || "").trim()) throw new Error("Select an Export payload.");
-  if (kind === "import" && variant === "generic" && (!Array.isArray(request.tableIds) || !request.tableIds.length)) throw new Error("Select at least one Import table.");
+  if (kind === "import" && variant === "generic" && (!Array.isArray(request.tableIds) || !request.tableIds.length) && (!Array.isArray(request.customTables) || !request.customTables.length)) throw new Error("Select at least one Import table.");
   return {
     origin: request.origin || "independent",
     kind,
@@ -1808,6 +2007,9 @@ function normalizeJobRunRequest(request = {}) {
     payloadType: kind === "export" ? normalizeExportPayloadType(request.payloadType) : "data-object",
     payloadName: request.payloadName || "Customer",
     tableIds: Array.isArray(request.tableIds) ? [...request.tableIds] : [],
+    customTables: Array.isArray(request.customTables) ? request.customTables.filter((table) => table?.isCustom && table?.tableId && table?.cdpTable) : [],
+    customTable: request.customTable?.isCustom && request.customTable?.tableId && request.customTable?.cdpTable ? request.customTable : null,
+    mappingMode: request.mappingMode === "separate" ? "separate" : "combined",
     jobName: request.jobName || "",
     description: request.description || "",
     notification: request.notification || "",
@@ -1822,22 +2024,22 @@ function buildJobRuntimeConfig(request) {
   const connection = request.connection;
   const operation = isExport ? "Export" : "Import";
   return isExport ? {
-    name: request.jobName || transferJobName(request.template, connection, operation, request.connectionSequence),
+    name: request.jobName || jobNameForRequest(request),
     description: request.description || request.template.description || `${request.template.name} export`,
     destinationName: connection.name,
+    // The page script adds the live host key between the table and Purpose.
     fileName: "",
+    fileNameCode: jobObjectCode(request),
     compression: request.template.fileContract?.compression || "none",
     fileContract: request.template.fileContract || {},
     filterRecords: request.filterRecords,
     payloadType: request.payloadType,
-    notification: request.notification || ""
+    notification: request.notification || "", customTable: request.customTable || null, purpose: String(request.template.connectionPurpose || "")
   } : {
-    name: request.jobName || (request.variant === "responsys"
-      ? responsysImportJobName(request.template, connection, request.connectionSequence)
-      : transferJobName(request.template, connection, operation, request.connectionSequence)),
+    name: request.jobName || jobNameForRequest(request),
     description: request.description || request.template.description || request.template.name + " import",
     sourceName: connection.name,
-    sourceObjectName: "",
+    sourceObjectName: "", purpose: String(request.template.connectionPurpose || ""),
     notification: request.notification || "",
     filePattern: request.template.fileContract?.filePattern || "",
     fileContract: request.template.fileContract || {}
@@ -1851,19 +2053,47 @@ async function runImportJobRequest(tabId, rawRequest) {
   let importConfig;
   if (request.variant === "generic") {
     try {
-      importConfig = await buildImportConfig(request.tableIds, request.template.fileContract?.delimiter);
+      const sources = [];
+      if (request.tableIds.length) {
+        sources.push({
+          ...(await buildImportConfig(request.tableIds, request.template.fileContract?.delimiter)),
+          sourceCode: request.tableIds.length === 1
+            ? normalizedNamePart(request.tableIds[0], "CUSTOMER")
+            : "COMBINED"
+        });
+      }
+      if (request.customTables.length) {
+        const customImport = await buildCustomImportConfig(tabId, request.customTables, request.template.fileContract?.delimiter, request.mappingMode);
+        sources.push(...customImport.sources);
+      }
+      importConfig = {
+        sources
+      };
     } catch (error) {
       if (!request.allowImportFallback) throw error;
       console.warn("Could not load editable Import CSV files; using bundled fallback.", error);
-      importConfig = importFallbackConfig(request.template.fileContract?.delimiter);
+      const fallback = importFallbackConfig(request.template.fileContract?.delimiter);
+      importConfig = {
+        ...fallback,
+        sources: (fallback.sources || [fallback]).map((source) => ({
+          ...source,
+          sourceCode: source.sourceCode || "CUSTOMER"
+        }))
+      };
     }
   }
   const jobConfig = buildJobRuntimeConfig(request);
-  await appendRunLog(`Import runner: ${request.variant} · ${request.tableIds.join(", ") || "Responsys Profile"}.`, "info", "Import", "Configure");
+  const importObjects = [...request.tableIds, ...request.customTables.map((table) => table.label || table.cdpTable)];
+  await appendRunLog(`Import runner: ${request.variant} · ${importObjects.join(", ") || "Responsys Profile"}.`, "info", "Import", "Configure");
   await appendRunLog(`Job name = ${jobConfig.name}; Source = ${jobConfig.sourceName || "—"}.`, "info", "Import", "Plan");
   if (request.variant === "generic") {
-    const headerCount = String(importConfig?.csvContent || "").split(/\r?\n/, 1)[0].split(",").filter(Boolean).length;
-    await appendRunLog(`Tables = ${request.tableIds.join(", ")}; generated mapping CSV = ${headerCount} fields.`, "info", "Import", "Map");
+    const mappingSources = importConfig.sources || [importConfig];
+    const sourceCount = mappingSources.length;
+    const headerCount = mappingSources.reduce((total, source) => total + String(source.csvContent || "").split(/\r?\n/, 1)[0].split(",").filter(Boolean).length, 0);
+    await appendRunLog(`Tables = ${importObjects.join(", ")}; ${sourceCount} generated mapping source${sourceCount === 1 ? "" : "s"} = ${headerCount} fields.`, "info", "Import", "Map");
+    for (const source of mappingSources.filter((item) => item.parentBridge)) {
+      await appendRunLog(`Parent bridge: ${source.table?.label || source.table?.cdpTable} → ${source.parentBridge} using shared source keys.`, "info", "Import", "Map");
+    }
   }
   await appendRunLog(`File contract = ${jobConfig.fileContract?.fileFormat || "CSV"} · ${jobConfig.fileContract?.charset || "UTF-8"} · ${jobConfig.fileContract?.csvParser || "RFC 4180"} · ${jobConfig.fileContract?.delimiter || "Comma"}.`, "info", "Import", "Configure");
   await appendRunLog(`Import scheduler: ${request.schedule.schedulerUi === "new" ? `New · ${request.schedule.frequency} · ${request.schedule.timeMode}` : `Legacy · ${request.schedule.mode} · ${request.schedule.frequency}`}.`, "info", "Scheduler · Import", "Configure");
@@ -1874,11 +2104,29 @@ async function runImportJobRequest(tabId, rawRequest) {
   return { request: { ...request, jobName: jobConfig.name }, saved };
 }
 
+async function runImportJobBatch(tabId, rawRequest) {
+  const entries = [
+    ...(rawRequest.tableIds || []).map((tableId) => ({ tableIds: [tableId], customTables: [], label: tableId })),
+    ...(rawRequest.customTables || []).map((table) => ({ tableIds: [], customTables: [table], label: table.label || table.cdpTable }))
+  ];
+  const results = [];
+  for (const entry of entries) {
+    const jobName = rawRequest.jobName || jobNameForRequest({
+      ...rawRequest,
+      kind: "import",
+      ...entry,
+      mappingMode: "combined"
+    });
+    results.push(await runImportJobRequest(tabId, { ...rawRequest, ...entry, mappingMode: "combined", jobName }));
+  }
+  return { ...results[results.length - 1], results };
+}
+
 async function runExportJobRequest(tabId, rawRequest) {
   const request = normalizeJobRunRequest({ ...rawRequest, kind: "export" });
   const task = TASKS["exportJob.js"];
   const catalog = await loadTableCatalog();
-  if (!catalog.exportPayloads.includes(request.payloadName)) throw new Error(`Unsupported export payload: ${request.payloadName}.`);
+  if (!request.customTable && !catalog.exportPayloads.includes(request.payloadName)) throw new Error(`Unsupported export payload: ${request.payloadName}.`);
   const jobConfig = buildJobRuntimeConfig(request);
   await appendRunLog(`Export runner: ${request.payloadName}.`, "info", "Export", "Configure");
   await appendRunLog(`Job name = ${jobConfig.name}; Destination = ${jobConfig.destinationName || "—"}.`, "info", "Export", "Plan");
@@ -1890,6 +2138,22 @@ async function runExportJobRequest(tabId, rawRequest) {
   await waitForStep(tabId, "Export Job", task.saveSelector, request.runId, request.monitor?.stepId || "exportJob.js");
   const saved = request.runMetadata ? await captureCreatedEntity(tabId, request.runMetadata, "exportJob.js") : null;
   return { request: { ...request, jobName: jobConfig.name }, saved };
+}
+
+async function runExportJobBatch(tabId, rawRequest) {
+  const payloads = [...new Set(rawRequest.exportPayloads || [rawRequest.payloadName || "Customer"])];
+  const results = [];
+  for (const payloadName of payloads) {
+    const customTable = (rawRequest.customTables || []).find((table) => table.label === payloadName) || (rawRequest.customTable?.label === payloadName ? rawRequest.customTable : null);
+    const generatedName = rawRequest.jobName || jobNameForRequest({
+      ...rawRequest,
+      kind: "export",
+      payloadName,
+      customTable
+    });
+    results.push(await runExportJobRequest(tabId, { ...rawRequest, payloadName, customTable, jobName: generatedName }));
+  }
+  return { ...results[results.length - 1], results };
 }
 
 async function saveRunSnapshot(snapshot) {
@@ -1988,11 +2252,11 @@ async function runDataViewerStep(tabId, flow, runId) {
 const DATA_MODEL_GROUPS = ["Profile", "Behavioral", "Transactional", "Product", "Other"];
 const DATA_MODEL_ATTRIBUTE_TYPES = new Set(["string", "int", "bigint", "decimal", "date", "timestamp", "boolean"]);
 
-function dataModelDryRunName(group, purpose = "") {
+function dataModelDryRunName(group, purpose = "", entityTimestamp = entityNameTag()) {
   // This is never saved. Keep the visible name aligned with jobs/connections
   // so the drawer is easy to identify while a test is running.
   const cleanPurpose = String(purpose || "").replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 28);
-  return [group, cleanPurpose, dateTagForName()].filter(Boolean).join("_").slice(0, 50);
+  return [group, cleanPurpose, entityTimestamp].filter(Boolean).join("_").slice(0, 50);
 }
 
 function normalizedDataModelColumnName(value) {
@@ -2025,7 +2289,7 @@ async function dataModelColumnsForGroup(group, columnOverrides = {}) {
   return validateDataModelColumns(configured, group);
 }
 
-async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {} } = {}) {
+async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {}, entityTimestamp = entityNameTag() } = {}) {
   const tab = await chrome.tabs.get(tabId);
   const task = TASKS["dataModel.js"];
   await navigateAndWait(tabId, navigationUrl(tab.url, task.path, task.root));
@@ -2036,6 +2300,7 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
   const selectedGroups = [...new Set(groups)].filter((group) => DATA_MODEL_GROUPS.includes(group));
   if (!selectedGroups.length) throw new Error("Select at least one Data Model object group.");
   const createdObjects = {};
+  const configuredAttributeGroups = new Set((attributeGroups.length ? attributeGroups : (addAttributes ? selectedGroups : [])).filter((group) => DATA_MODEL_GROUPS.includes(group)));
   for (const group of selectedGroups) {
     assertSequenceActive(tabId, runId, "Data Model dry run");
     await appendRunLog(`${group}: opening Create data object.`, "info", `Data Model · ${group}`, "Click");
@@ -2045,7 +2310,7 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
         target: { tabId }, world: "MAIN", args: [group],
         func: async (selectedGroup) => window.cdpDataModelOpenGroup(selectedGroup)
       });
-      const name = dataModelDryRunName(group, purpose);
+      const name = dataModelDryRunName(group, purpose, entityTimestamp);
       const generated = await commitJetDataModelObjectName(tabId, name);
       if (generated.skipped) {
         await appendRunLog(`Skipped: ${generated.name}. ${generated.reason}`, "warn", `Data Model · ${group}`, "Skip");
@@ -2071,6 +2336,34 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
         saved = true;
         createdObjects[group] = generated.name;
         await appendRunLog("Object saved successfully.", "info", `Data Model · ${group}`, "Save");
+        // Complete this object while its group/detail context is active.
+        if (configuredAttributeGroups.has(group)) {
+          assertSequenceActive(tabId, runId, "Data Model attribute creation");
+          await appendRunLog("Adding configured " + group + " attributes to " + generated.name + ".", "info", "Data Model · " + group, "Attributes");
+          await runDataModelAttributesStep(tabId, runId, {
+            group,
+            objectName: generated.name,
+            columnOverrides,
+            reuseCurrentPage: true
+          });
+        }
+
+        const parentName = String(parentByGroup?.[group] || "").trim();
+        if (parentName) {
+          if (parentName.toLowerCase() === generated.name.toLowerCase()) {
+            throw new Error(group + " cannot be its own parent object.");
+          }
+          assertSequenceActive(tabId, runId, "Data Model relationship creation");
+          await appendRunLog("Creating relationship: " + generated.name + " → " + parentName + ".", "info", "Relationship · " + group, "Plan");
+          const [{ result: relationshipResult }] = await chrome.scripting.executeScript({
+            target: { tabId }, world: "MAIN", args: [group, generated.name, parentName],
+            func: async (selectedGroup, childObjectName, relationshipParentName) => window.cdpDataModelCreateRelationship(selectedGroup, childObjectName, relationshipParentName)
+          });
+          if (!relationshipResult?.saved || !relationshipResult?.verified) {
+            throw new Error("CDP did not verify the relationship " + generated.name + " → " + parentName + ".");
+          }
+          await appendRunLog("Relationship verified: " + generated.name + " → " + parentName + ".", "info", "Relationship · " + group, "Save");
+        }
       }
     } finally {
       if (!saved) {
@@ -2079,34 +2372,6 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
           func: async () => window.cdpDataModelCancel?.()
         }).catch(() => undefined);
       }
-    }
-  }
-  const configuredAttributeGroups = new Set((attributeGroups.length ? attributeGroups : (addAttributes ? selectedGroups : [])).filter((group) => DATA_MODEL_GROUPS.includes(group)));
-  if (saveObjects && configuredAttributeGroups.size) {
-    for (const [group, objectName] of Object.entries(createdObjects)) {
-      if (!configuredAttributeGroups.has(group)) continue;
-      assertSequenceActive(tabId, runId, "Data Model attribute creation");
-      await appendRunLog(`Adding configured ${group} attributes to ${objectName}.`, "info", `Data Model · ${group}`, "Attributes");
-      await runDataModelAttributesStep(tabId, runId, { group, objectName, columnOverrides });
-    }
-  }
-  if (saveObjects) {
-    for (const [group, objectName] of Object.entries(createdObjects)) {
-      const parentName = String(parentByGroup?.[group] || "").trim();
-      if (!parentName) continue;
-      if (parentName.toLowerCase() === objectName.toLowerCase()) {
-        throw new Error(`${group} cannot be its own parent object.`);
-      }
-      assertSequenceActive(tabId, runId, "Data Model relationship creation");
-      await appendRunLog(`Creating relationship: ${objectName} → ${parentName}.`, "info", `Relationship · ${group}`, "Plan");
-      const [{ result: relationshipResult }] = await chrome.scripting.executeScript({
-        target: { tabId }, world: "MAIN", args: [objectName, parentName],
-        func: async (childObjectName, relationshipParentName) => window.cdpDataModelCreateRelationship(childObjectName, relationshipParentName)
-      });
-      if (!relationshipResult?.saved || !relationshipResult?.verified) {
-        throw new Error(`CDP did not verify the relationship ${objectName} → ${parentName}.`);
-      }
-      await appendRunLog(`Relationship verified: ${objectName} → ${parentName}.`, "info", `Relationship · ${group}`, "Save");
     }
   }
   await appendRunLog(saveObjects ? "Selected Data Model objects were saved." : "Selected Data Model groups validated without saving objects.");
@@ -2139,14 +2404,16 @@ async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, s
   }
 }
 
-async function runDataModelAttributesStep(tabId, runId, { group, objectName, columnOverrides = {} } = {}) {
+async function runDataModelAttributesStep(tabId, runId, { group, objectName, columnOverrides = {}, reuseCurrentPage = false } = {}) {
   if (!DATA_MODEL_GROUPS.includes(group)) throw new Error("Select a valid Data Model object group.");
   const targetObjectName = String(objectName || "").trim();
   if (!targetObjectName) throw new Error("Enter the existing Data Model object name.");
   const columns = await dataModelColumnsForGroup(group, columnOverrides);
-  const tab = await chrome.tabs.get(tabId);
   const task = TASKS["dataModel.js"];
-  await navigateAndWait(tabId, navigationUrl(tab.url, task.path, task.root));
+  if (!reuseCurrentPage) {
+    const tab = await chrome.tabs.get(tabId);
+    await navigateAndWait(tabId, navigationUrl(tab.url, task.path, task.root));
+  }
   await activatePageAutomationRun(tabId, runId);
   await waitForPageElement(tabId, task.readySelector, 60000);
   await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["dataModel.js"] });
@@ -2236,11 +2503,16 @@ async function runDataModelAttributes(tabId, options = {}) {
 
 async function runConfiguredFlow(tabId, flow = {}) {
   if (activeSequences.has(tabId)) throw new Error("An E2E flow is already running in this tab.");
+  const entityTimestamp = entityNameTag();
   const selectedSteps = new Set(flow.steps || ["dataViewer", "source", "destination", "export", "import", "publish", "verify"]);
   const usesTransfer = [...selectedSteps].some((step) => ["source", "destination", "export", "import", "responsys"].includes(step));
   const selectedTemplate = usesTransfer ? await selectedTransferTemplate(flow.templateId) : null;
   const template = selectedTemplate ? { ...selectedTemplate, connectionPurpose: flow.connectionPurpose || "" } : null;
   const connectionSequence = template ? await nextConnectionSequence(template.id) : 0;
+  if (template) {
+    connectionSequence.entityTag = entityTimestamp;
+    connectionSequence.jobTag = entityTimestamp.toUpperCase();
+  }
   const sourceConfig = template ? connectionRuntime(template, "source", connectionSequence) : null;
   // Responsys uses its own file and mapping contract, so it always creates a
   // dedicated Source instead of reusing the generic Import Source.
@@ -2266,7 +2538,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
   if (!stepDefinitions.length && !selectedSteps.has("publish") && !selectedSteps.has("verify")) {
     throw new Error("Select at least one flow step.");
   }
-  if (selectedSteps.has("import") && !(flow.importTableIds || ["customer", "contactPoint"]).length) {
+  if (selectedSteps.has("import") && !(flow.importTableIds || []).length && !(flow.importCustomTables || []).length) {
     throw new Error("Select at least one import table.");
   }
 
@@ -2308,7 +2580,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
     for (const step of stepDefinitions) {
       await setE2EStatus(`Running: ${step.label}`, tabId);
       if (step.id === "dataModel") {
-        const result = await runDataModelStep(tabId, runId, { purpose: flow.connectionPurpose || "", groups: flow.dataModelGroups, saveObjects: Boolean(flow.saveDataModelObjects), attributeGroups: flow.dataModelAttributeGroups || [], addAttributes: Boolean(flow.addDataModelAttributes), columnOverrides: flow.dataModelColumnOverrides || {}, parentByGroup: flow.dataModelParents || {} });
+        const result = await runDataModelStep(tabId, runId, { purpose: flow.connectionPurpose || "", groups: flow.dataModelGroups, saveObjects: Boolean(flow.saveDataModelObjects), attributeGroups: flow.dataModelAttributeGroups || [], addAttributes: Boolean(flow.addDataModelAttributes), columnOverrides: flow.dataModelColumnOverrides || {}, parentByGroup: flow.dataModelParents || {}, entityTimestamp });
         Object.assign(createdDataModelObjects, result.createdObjects || {});
         continue;
       }
@@ -2338,7 +2610,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
       if (step.id === "export" || step.id === "import" || step.id === "responsys") {
         const monitor = { runId, stepId: step.filename, saveSelector: step.saveSelector };
         const result = step.id === "export"
-          ? await runExportJobRequest(tabId, {
+          ? await runExportJobBatch(tabId, {
             origin: flow.origin || "custom-flow",
             runId,
             template,
@@ -2348,13 +2620,16 @@ async function runConfiguredFlow(tabId, flow = {}) {
             filterRecords: flow.exportFilterRecords,
             payloadType: flow.exportPayloadType,
             payloadName: flow.exportPayloadName || "Customer",
+            exportPayloads: flow.exportPayloads || [flow.exportPayloadName || "Customer"],
+            customTables: flow.exportCustomTables || [],
+            customTable: flow.exportCustomTable || null,
             jobName: flow.exportJobName,
             description: flow.exportDescription,
             notification: flow.notification,
             monitor,
             runMetadata
           })
-          : await runImportJobRequest(tabId, {
+          : await (flow.importMappingMode === "separateJobs" ? runImportJobBatch : runImportJobRequest)(tabId, {
             origin: flow.origin || "custom-flow",
             runId,
             template,
@@ -2362,7 +2637,9 @@ async function runConfiguredFlow(tabId, flow = {}) {
             connection: step.id === "responsys" ? responsysSourceConfig : sourceConfig,
             schedule,
             variant: step.id === "responsys" ? "responsys" : (flow.importVariant || "generic"),
-            tableIds: step.id === "responsys" ? [] : (flow.importTableIds || ["customer", "contactPoint"]),
+            tableIds: step.id === "responsys" ? [] : (flow.importTableIds || (flow.importCustomTables?.length ? [] : ["customer", "contactPoint"])),
+            customTables: step.id === "responsys" ? [] : (flow.importCustomTables || []),
+            mappingMode: flow.importMappingMode || "combined",
             jobName: flow.importJobName,
             description: flow.importDescription,
             notification: flow.notification,
@@ -2589,6 +2866,168 @@ async function resolveDataViewerTables(tabId, selections, overrides = {}, parent
 }
 
 
+function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}) {
+  const fieldId = String(field?.fieldId || "");
+  const displayName = String(field?.displayName || fieldId);
+  const configured = recordConfig.values?.[fieldId] ?? recordConfig.values?.[displayName];
+  const configuredValue = typeof configured === "object" && configured !== null ? configured.value : configured;
+  if (configuredValue !== undefined && configuredValue !== "") return String(configuredValue)
+    .replace(/\{\{sourceId\}\}/g, sourceId)
+    .replace(/\{\{sequence\}\}/g, String(sequence));
+  const normalized = importFieldKey(field);
+  const timestampDate = new Date(Date.now() + (sequence - 1) * 60_000);
+  const date = timestampDate.toISOString().slice(0, 10);
+  const timestamp = timestampDate.toISOString().slice(0, 19);
+  const pick = (values) => values[(sequence - 1) % values.length];
+  const semanticValues = {
+    firstname: ["Jagan", "Anika", "Rahul", "Meera", "Arjun"],
+    middlename: ["Kumar", "Devi", "Raj", "Priya", "Singh"],
+    lastname: ["Patil", "Sharma", "Nair", "Iyer", "Rao"],
+    customertype: ["B2B", "B2C"], preferredchannel: ["Email", "SMS", "Push"],
+    channel: ["Email", "SMS", "Push", "Web"], channeltype: ["Email", "SMS", "Push"],
+    lifecyclestage: ["Prospect", "Lead", "Customer", "Advocate"], loyaltytier: ["Gold", "Silver", "Platinum"],
+    industry: ["Technology", "Financial Services", "Retail", "Healthcare"], status: ["Active", "Qualified", "Engaged"],
+    primarylanguage: ["English", "Hindi", "Spanish"], country: ["United States", "India", "United Kingdom"],
+    countrycode: ["US", "IN", "GB"], region: ["North America", "Asia Pacific", "Europe"],
+    city: ["Redwood City", "Bengaluru", "London"], state: ["CA", "KA", "London"], zipcode: ["94065", "560001", "EC1A1BB"],
+    postalcode: ["94065", "560001", "EC1A1BB"], addressline1: ["500 Oracle Parkway", "100 Innovation Drive", "1 Cloud Street"],
+    companyname: ["Oracle", "Acme Technologies", "Northwind Traders"], organizationname: ["Oracle", "Acme Technologies", "Northwind Traders"],
+    jobtitle: ["Software Engineer", "Marketing Manager", "Product Analyst", "Sales Director"],
+    jobdepartment: ["Engineering", "Marketing", "Product", "Sales"], jobspeciality: ["Automation", "Demand Generation", "Analytics", "Enterprise Sales"],
+    productname: ["Oracle Cloud Subscription", "Oracle CX Platform", "Oracle Analytics Cloud"],
+    productcode: ["OCI-STD-001", "OCX-PRM-002", "OAC-ENT-003"], productcategory: ["Cloud Services", "Customer Experience", "Analytics"],
+    currencycode: ["USD", "INR", "GBP"], transactionstatus: ["Completed", "Processing", "Approved"],
+    eventname: ["Product Viewed", "Form Submitted", "Webinar Registered", "Content Downloaded", "Demo Requested"],
+    campaigncode: ["CMP-AUTO-1001", "CMP-AUTO-1002", "CMP-AUTO-1003", "CMP-AUTO-1004", "CMP-AUTO-1005"],
+    pageurl: ["https://www.oracle.com/cloud/", "https://www.oracle.com/cx/", "https://www.oracle.com/analytics/"],
+    browser: ["Chrome", "Safari", "Firefox"], browsertype: ["Desktop", "Mobile"], devicetype: ["Desktop", "Mobile"],
+    operatingsystem: ["macOS", "Windows", "iOS"], platformtype: ["Web", "Mobile App"], isp: ["Oracle", "Comcast", "Airtel"],
+    gender: ["M", "F"], prefix: ["Mr", "Ms"], suffix: ["Jr", "Sr"], title: ["Mr", "Ms"],
+    description: ["Automation test record", "API-loaded test record", "CDP validation record"]
+  };
+  if (normalized === "sourceid") return "CDP";
+  if (/^source.+id$/i.test(fieldId)) {
+    const base = sourceKeySampleValue(field, table);
+    return sequence > 1 ? base + "-" + (sequence - 1) : base;
+  }
+  if (normalized === "optinstatus" || normalized === "optin") return "In";
+  if (normalized === "isdeliverable") return true;
+  if (normalized === "email") return "automation.test" + (sequence > 1 ? "." + sequence : "") + "@oracle.com";
+  if (normalized === "campaigncode") return "CMP-AUTO-" + String(1000 + sequence);
+  if (normalized === "productcode") return "PRD-AUTO-" + String(1000 + sequence);
+  if (semanticValues[normalized]) return pick(semanticValues[normalized]);
+  if (/timestamp|(?:ts|dt)$/i.test(displayName) || String(field?.dataType || "").toLowerCase() === "timestamp") return timestamp;
+  if (/date/i.test(displayName)) return date;
+  if (/^(is|has).+|deliverable|active|consent|enabled/i.test(displayName) || String(field?.dataType || "").toLowerCase() === "boolean") return true;
+  if (/age/i.test(displayName)) return 24 + sequence;
+  if (/amount|revenue|score|count|number|rank|level|quantity/i.test(displayName) || ["int", "bigint", "decimal", "number"].includes(String(field?.dataType || "").toLowerCase())) return 100 + sequence;
+  const readableField = displayName.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").trim();
+  return "Automation " + (readableField || "Record") + " " + sequence;
+}
+
+function metadataTenantId(response) {
+  const visited = new Set();
+  const find = (value) => {
+    if (!value || typeof value !== "object" || visited.has(value)) return null;
+    visited.add(value);
+    if (!Array.isArray(value) && Number.isFinite(Number(value.tenantId))) return Number(value.tenantId);
+    for (const child of Array.isArray(value) ? value : Object.values(value)) {
+      const result = find(child);
+      if (result) return result;
+    }
+    return null;
+  };
+  return find(response);
+}
+
+async function postCustomRecordsToCdp(tabId, payload, tenantId) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    args: [payload, tenantId],
+    func: async (body, resolvedTenantId) => {
+      const tenantKey = String(location.hostname || "").split(".")[0];
+      if (!tenantKey) throw new Error("Could not determine the CDP tenant from the active tab.");
+      const appId = "urn_opc_resource_fusion_" + tenantKey + "_unity_APPID";
+      const csrfCookie = document.cookie.split(/;\s*/).find((item) => /^XSRF-TOKEN/i.test(item));
+      const csrfToken = csrfCookie ? decodeURIComponent(csrfCookie.slice(csrfCookie.indexOf("=") + 1)) : "";
+      const headers = {
+        Accept: "application/json, text/javascript, */*; q=0.01",
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-RESOURCE-SERVICE-INSTANCE-IDENTITY-APPNAME": appId,
+        "x-cxu-tenantId": appId,
+        "x-mcps-tenantkey": tenantKey,
+        "x-platform": "KEYSTONE"
+      };
+      if (resolvedTenantId) headers["x-mcps-tenantId"] = String(resolvedTenantId);
+      if (csrfToken) headers["X-Csrf-Token"] = csrfToken;
+      const response = await fetch(location.origin + "/api-stream/v1/" + tenantKey + "/data/streams", {
+        method: "POST",
+        credentials: "same-origin",
+        headers,
+        body: JSON.stringify(body)
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error("CDP API load failed (" + response.status + "): " + text.slice(0, 500));
+      try { return { status: response.status, body: text ? JSON.parse(text) : null }; }
+      catch (_error) { return { status: response.status, body: text || null }; }
+    }
+  });
+  return result;
+}
+
+async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, sourceId = "UI", saveRecords = true, dataViewerOverrides = {} } = {}) {
+  if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
+  if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
+  const runId = crypto.randomUUID();
+  let failed = false;
+  activeSequences.set(tabId, { runId, cancelled: false, status: "Running: API Load Custom Records" });
+  await setE2EStatus("Running: API Load Custom Records", tabId);
+  try {
+    const tables = await resolveDataViewerTables(tabId, tableIds, dataViewerOverrides);
+    const customTables = tables.filter((table) => table.isCustom);
+    if (!customTables.length) throw new Error("API Load Custom Records supports custom objects only.");
+    // resolveDataViewerTables may add a related standard parent for FK planning.
+    // The stream request intentionally contains only the user-selected custom objects.
+    const payload = {};
+    let resolvedTenantId = null;
+    for (const table of customTables) {
+      const metadata = await fetchCdpMetadata(tabId, "tables/" + encodeURIComponent(table.tableId || table.id));
+      resolvedTenantId ||= metadataTenantId(metadata);
+      const fields = table.liveFields?.filter((field) => !field.systemAttribute && !isAuditImportField(field) && !isDerivedImportField(field, table.liveFields)) || [];
+      if (!fields.length) throw new Error("CDP did not return writable fields for " + table.label + ".");
+      const records = [];
+      for (let sequence = 1; sequence <= recordsPerTable; sequence += 1) {
+        const record = {};
+        for (const field of fields) record[field.fieldId] = apiRecordFieldValue(field, table, "CDP", sequence, table.recordConfig);
+        records.push(record);
+      }
+      payload[table.cdpTable] = records;
+      await appendRunLog("Prepared " + records.length + " API record" + (records.length === 1 ? "" : "s") + " with " + fields.length + " writable fields.", "info", table.label, "Prepare");
+    }
+    if (!saveRecords) {
+      await appendRunLog("Dry run: API request was not sent.", "info", "API Load", "Dry run");
+      return { payload, dryRun: true };
+    }
+    const response = await postCustomRecordsToCdp(tabId, payload, resolvedTenantId);
+    await appendRunLog("CDP stream API accepted " + customTables.length + " custom object payload" + (customTables.length === 1 ? "" : "s") + " (HTTP " + response.status + ").", "info", "API Load", "Save");
+    return response;
+  } catch (error) {
+    failed = true;
+    await setE2EStatus("Failed: API Load Custom Records — " + (error.message || error), tabId);
+    throw error;
+  } finally {
+    const cancelled = activeSequences.get(tabId)?.runId === runId && activeSequences.get(tabId)?.cancelled;
+    if (activeSequences.get(tabId)?.runId === runId) activeSequences.delete(tabId);
+    if (!failed) await setE2EStatus("", tabId);
+    if (failed) await finalizeRunHistory("failed");
+    else if (cancelled) await finalizeRunHistory("stopped");
+    else await finalizeRunHistory("completed");
+    await clearFlowDraft();
+  }
+}
+
 async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false, dataViewerOverrides = {} } = {}) {
   if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
@@ -2780,6 +3219,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
     return true;
   }
+  if (message?.type === "run-api-custom-records") {
+    runApiCustomRecords(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, sourceId: message.sourceId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
   if (message?.type === "run-data-viewer") {
     runDataViewer(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, sourceId: message.sourceId, parentSourceCustomerId: message.parentSourceCustomerId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
       .then(() => sendResponse({ ok: true }))
@@ -2793,6 +3238,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       connectionPurpose: message.connectionPurpose,
       steps: ["import"],
       importTableIds: message.tableIds,
+      importCustomTables: message.customTables || [],
       importSchedule: message.schedule,
       staggerJobs: false
     })
@@ -2815,6 +3261,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       connectionPurpose: message.connectionPurpose,
       steps: [isExport ? "export" : (isResponsys ? "responsys" : "import")],
       exportPayloadName: message.exportPayloadName || "Customer",
+      exportCustomTable: message.customTable || null,
       exportFilterRecords: message.filterRecords || message.filterRec || "UPDATED",
       exportPayloadType: message.exportPayloadType || message.payloadType || "data-object",
       importTableIds: isResponsys ? ["customer"] : (message.tableIds || ["customer"]),
