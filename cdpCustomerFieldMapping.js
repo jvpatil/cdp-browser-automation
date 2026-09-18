@@ -1,6 +1,6 @@
 // Shared field mapper for every table-based Import Job. The caller supplies the
 // CDP data objects that correspond to the selected sample CSV.
-window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
+window.runCdpFieldMapping = async function (targetTables, fieldToTable, mappingOptions = {}) {
     try {
         const sleep = ms => new Promise(r => setTimeout(r, ms));
         const DELAY = {
@@ -54,11 +54,20 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
         // sourcecustomerid     -> sourcecustomerid
         // source_customer_id   -> sourcecustomerid
         // Source Customer ID   -> sourcecustomerid
+        // Column - SourceID    -> columnsourceid
         // Account ID           -> accountid
         const normalizeName = s => (s || "")
             .toLowerCase()
             .replace(/[_\-\s]+/g, "")
             .replace(/[^a-z0-9]/g, "");
+        const comparisonKeys = value => {
+            const raw = String(value || "").trim();
+            const keys = new Set([normalizeName(raw)]);
+            // Export retains physical `*_c` IDs; CDP can show the target
+            // attribute without that suffix. This is comparison-only.
+            if (/_c$/i.test(raw)) keys.add(normalizeName(raw.replace(/_c$/i, "")));
+            return keys;
+        };
 
         const isSelected = el => {
             if (!el) return false;
@@ -76,6 +85,35 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
         const FIELD_TO_TABLE = fieldToTable && typeof fieldToTable === "object"
             ? fieldToTable
             : (() => { throw new Error("No CSV field-to-table mapping was supplied for Import Job mapping."); })();
+        // CDP may add a trailing underscore or alter the case of the source
+        // field shown in the mapping row. Resolve the generated header using
+        // the exact same canonical key used for target attributes.
+        const FIELD_TO_TABLE_BY_KEY = new Map();
+        for (const [field, tables] of Object.entries(FIELD_TO_TABLE)) {
+            for (const key of comparisonKeys(field)) FIELD_TO_TABLE_BY_KEY.set(key, tables);
+        }
+        const TARGET_ATTRIBUTES = mappingOptions.fieldTargetAttributes && typeof mappingOptions.fieldTargetAttributes === "object"
+            ? mappingOptions.fieldTargetAttributes
+            : {};
+        const STATIC_TRANSFORMS = mappingOptions.fieldStaticTransforms && typeof mappingOptions.fieldStaticTransforms === "object"
+            ? mappingOptions.fieldStaticTransforms
+            : {};
+
+        const ruleForSource = (rules, sourceKey) => {
+            const direct = rules[sourceKey];
+            if (direct) return direct;
+            const sourceKeys = comparisonKeys(sourceKey);
+            return Object.entries(rules).find(([key]) => [...comparisonKeys(key)].some((candidate) => sourceKeys.has(candidate)))?.[1] || {};
+        };
+        const targetNamesFor = (sourceKey, tableName) => {
+            const override = ruleForSource(TARGET_ATTRIBUTES, sourceKey);
+            const names = override[tableName];
+            return Array.isArray(names) && names.length ? names : [sourceKey];
+        };
+        const staticTransformsFor = (sourceKey, tableName) => {
+            const sourceRules = ruleForSource(STATIC_TRANSFORMS, sourceKey);
+            return sourceRules[tableName] && typeof sourceRules[tableName] === "object" ? sourceRules[tableName] : {};
+        };
 
         const getVisibleRows = () => {
             return Array.from(
@@ -211,14 +249,28 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
         };
 
         const loadDropdownForTable = async (comboInput, tableName) => {
-            const searchText = `|${tableName}`;
+            // CDP/JET does not consistently return custom-object attributes
+            // for a programmatic full-name search. Its normal UI reliably
+            // returns them for the stable object-family prefix; we still
+            // require the exact full data-object group below.
+            const prefix = String(tableName || '').split('_').slice(0, 2).join('_') || tableName;
+            const searchText = `|${prefix}`;
 
             comboInput.focus();
             comboInput.select();
             await sleep(DELAY.focus);
 
-            comboInput.value = searchText;
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            if (setter) setter.call(comboInput, '');
+            else comboInput.value = '';
             comboInput.dispatchEvent(new Event('input', { bubbles: true }));
+            comboInput.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Backspace' }));
+            await sleep(DELAY.focus);
+            if (setter) setter.call(comboInput, searchText);
+            else comboInput.value = searchText;
+            comboInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: searchText.at(-1) }));
+            comboInput.dispatchEvent(new Event('input', { bubbles: true }));
+            comboInput.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: searchText.at(-1) }));
 
             await sleep(DELAY.searchLoad);
 
@@ -239,7 +291,109 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
                 return listbox && findTableGroup(listbox, tableName);
             }, TABLE_LOAD_TIMEOUT, 80);
 
+            if (!loaded && listbox) {
+                const lookupDebug = {
+                    tableName,
+                    searchText,
+                    listboxId,
+                    optgroupLabels: [...listbox.querySelectorAll("oj-optgroup")].map((group) => group.getAttribute("label") || ""),
+                    visibleAttributeNames: [...listbox.querySelectorAll(".data-object-name")].map((cell) => cell.textContent.trim())
+                };
+                console.info("[CDP mapping] table lookup failed", lookupDebug);
+                console.info("[CDP mapping] table lookup JSON " + JSON.stringify(lookupDebug));
+            }
+
             return loaded ? listbox : null;
+        };
+
+        const visible = el => Boolean(el && el.isConnected && el.getClientRects().length);
+
+        const setInputValue = (input, value) => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+            if (setter) setter.call(input, value);
+            else input.value = value;
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: String(value).slice(-1) }));
+        };
+
+        const transformLinkFor = (row, targetName) => {
+            const targetKey = normalizeName(targetName);
+            return [...row.querySelectorAll(".schema-attribute-transform")].find(link => {
+                let node = link.parentElement;
+                // The mapping card contains its attribute name and Transform
+                // link. Do not inspect the whole source row or another card
+                // can make every link appear to match.
+                for (let level = 0; node && node !== row && level < 5; level += 1, node = node.parentElement) {
+                    if (normalizeName(node.textContent).includes(targetKey)) return true;
+                }
+                return false;
+            }) || null;
+        };
+
+        const optionByText = (text) => [...document.querySelectorAll("li[role=row], [role=option], oj-option")]
+            .find(option => visible(option) && normalizeName(option.textContent) === normalizeName(text));
+
+        const applyStaticTransform = async (row, targetName, staticValue) => {
+            const transformLink = await (async () => {
+                await waitFor(() => transformLinkFor(row, targetName), 5000, 100);
+                return transformLinkFor(row, targetName);
+            })();
+            if (!transformLink) {
+                console.warn(`[CDP mapping] ${targetName}: Transform link was unavailable.`);
+                return false;
+            }
+            realClick(transformLink);
+            const dialogReady = await waitFor(() => visible(document.querySelector("#transformation-modal")), 5000, 100);
+            const dialog = document.querySelector("#transformation-modal");
+            if (!dialogReady || !dialog) {
+                console.warn(`[CDP mapping] ${targetName}: Transform dialog did not open.`);
+                return false;
+            }
+            const typeInput = dialog.querySelector(".transform-type-select input[role=combobox]");
+            if (!typeInput) {
+                console.warn(`[CDP mapping] ${targetName}: Transformation type selector was unavailable.`);
+                return false;
+            }
+            realClick(typeInput);
+            const staticType = await (async () => {
+                await waitFor(() => optionByText("Static/Lookup"), 3000, 75);
+                return optionByText("Static/Lookup");
+            })();
+            if (!staticType) {
+                console.warn(`[CDP mapping] ${targetName}: Static/Lookup was unavailable.`);
+                return false;
+            }
+            realClick(staticType);
+            await sleep(DELAY.renderExtra);
+
+            // Static/Lookup renders an Equals selector and then its editable
+            // value input. Select Equals if JET has not already made it the
+            // default; this keeps the static literal independent of CSV data.
+            const staticSelector = dialog.querySelector(".static-transform-dropdown input[role=combobox]");
+            if (staticSelector && !dialog.querySelector("input[id^='value-input-']")) {
+                realClick(staticSelector);
+                await waitFor(() => optionByText("Equals"), 2000, 75);
+                const equals = optionByText("Equals");
+                if (equals) realClick(equals);
+            }
+            const valueInputReady = await waitFor(() => visible(dialog.querySelector("input[id^='value-input-'], input.trans-editable-field:not([readonly])")), 4000, 75);
+            const valueInput = dialog.querySelector("input[id^='value-input-'], input.trans-editable-field:not([readonly])");
+            if (!valueInputReady || !valueInput) {
+                console.warn(`[CDP mapping] ${targetName}: Static value input was unavailable.`);
+                return false;
+            }
+            setInputValue(valueInput, staticValue);
+            await sleep(DELAY.focus);
+            const apply = dialog.querySelector("#applyButton button, button[aria-labelledby^='applyButton']");
+            if (!apply || apply.disabled) {
+                console.warn(`[CDP mapping] ${targetName}: Transform Apply button was unavailable.`);
+                return false;
+            }
+            realClick(apply);
+            await waitFor(() => !visible(document.querySelector("#transformation-modal")), 4000, 100);
+            console.info(`[CDP mapping] ${targetName}: applied static value ${staticValue}.`);
+            return true;
         };
 
         const processRow = async row => {
@@ -255,7 +409,19 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
             // the later CDP-attribute comparison is formatting-tolerant.
             const sourceKey = cleanedValue;
             const normalizedSourceKey = normalizeName(sourceKey);
-            const mappedTables = FIELD_TO_TABLE[sourceKey];
+            const sourceComparisonKeys = comparisonKeys(sourceKey);
+            const mappedTables = FIELD_TO_TABLE[sourceKey] || [...sourceComparisonKeys].map((key) => FIELD_TO_TABLE_BY_KEY.get(key)).find(Boolean);
+            const debugSourceKey = /^source/i.test(normalizedSourceKey);
+            if (debugSourceKey) {
+                console.info("[CDP mapping] source row", {
+                    rawValue: row.querySelector('[id^="row_"]')?.getAttribute("value") || "",
+                    cleanedValue,
+                    sourceKey,
+                    normalizedSourceKey,
+                    configuredTargets: mappedTables || [],
+                    fieldToTable: FIELD_TO_TABLE
+                });
+            }
             if (!Array.isArray(mappedTables) || !mappedTables.length) {
                 console.warn(`Skipping CSV field "${cleanedValue}": no configured target table.`);
                 return false;
@@ -285,83 +451,86 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
             }
 
             let mapped = false;
+            const pendingStaticTransforms = [];
 
             for (const tableName of tablesForField) {
 
                 console.log(`   → Processing table: ${tableName}`);
 
-                const listbox = await loadDropdownForTable(comboInput, tableName);
+                const desiredTargets = targetNamesFor(sourceKey, tableName);
+                const staticForTable = staticTransformsFor(sourceKey, tableName);
+                let matchedCount = 0;
 
-                if (!listbox) {
-                    console.warn(`Skipping ${tableName} for CSV field "${cleanedValue}": data object did not load.`);
-                    continue;
-                }
-
-                const groupContainer = findTableGroup(listbox, tableName);
-
-                if (!groupContainer) {
-                    console.warn(`Skipping ${tableName} for CSV field "${cleanedValue}": data object is unavailable.`);
-                    continue;
-                }
-
-                const childUL = groupContainer.querySelector('ul.oj-listbox-result-sub');
-
-                if (!childUL) {
-                    console.warn(`Skipping ${tableName} for CSV field "${cleanedValue}": attributes are unavailable.`);
-                    continue;
-                }
-
-                const columnRows = childUL.querySelectorAll('li.oj-listbox-result-selectable');
-
-                if (!columnRows.length) {
-                    console.warn(`Skipping ${tableName} for CSV field "${cleanedValue}": no selectable attributes.`);
-                    continue;
-                }
-
-                let matched = false;
-
-                for (const colRow of columnRows) {
-
-                    const columnSpan = colRow.querySelector('.data-object-name');
-                    if (!columnSpan) continue;
-
-                    const columnTextRaw = columnSpan.textContent.trim();
-                    const columnKey = normalizeName(columnTextRaw);
-
-                    // Exact normalized match only.
-                    // sourcecustomerid matches Source Customer ID.
-                    // accountid matches Account ID.
-                    // accountid does NOT match Source Account ID.
-                    if (columnKey !== normalizedSourceKey) {
+                for (const desiredTarget of desiredTargets) {
+                    // Selecting an option can cause Oracle JET to replace the
+                    // listbox DOM. Reload it for every target so a multi-map
+                    // such as SourceCustomerID → SourceContactPointID does
+                    // not inspect stale option elements after the first pick.
+                    const listbox = await loadDropdownForTable(comboInput, tableName);
+                    const groupContainer = listbox && findTableGroup(listbox, tableName);
+                    const childUL = groupContainer?.querySelector('ul.oj-listbox-result-sub');
+                    const columnRows = childUL?.querySelectorAll('li.oj-listbox-result-selectable') || [];
+                    if (!columnRows.length) {
+                        console.warn(`Skipping ${tableName}.${desiredTarget} for CSV field "${cleanedValue}": data object attributes are unavailable.`);
                         continue;
                     }
+                    const normalizedDesiredTarget = normalizeName(desiredTarget);
+                    const desiredComparisonKeys = comparisonKeys(desiredTarget);
+                    let matched = false;
+                    for (const colRow of columnRows) {
+                        const columnNameCell = colRow.querySelector('.data-object-name');
+                        if (!columnNameCell) continue;
 
-                    if (isSelected(colRow)) {
-                        console.log(
-                            `      → ${tableName}: already selected exact match "${columnTextRaw}"`
-                        );
+                        const columnTextRaw = columnNameCell.textContent.trim();
+                        const columnKey = normalizeName(columnTextRaw);
+                        // CDP displays custom-object system fields as
+                        // "Column - Source…". Retain that as a comparison
+                        // alias only; generated CSV headers remain real
+                        // export headers such as sourceid.
+                        const columnHeaderAlias = columnKey.replace(/^column/, "");
+                        if (debugSourceKey) {
+                            console.info("[CDP mapping] target candidate", {
+                                sourceKey,
+                                normalizedSourceKey,
+                                desiredTarget,
+                                normalizedDesiredTarget,
+                                tableName,
+                                columnTextRaw,
+                                columnKey,
+                                columnHeaderAlias,
+                                directMatch: desiredComparisonKeys.has(columnKey),
+                                aliasMatch: desiredComparisonKeys.has(columnHeaderAlias),
+                                selected: isSelected(colRow)
+                            });
+                        }
+                        if (!desiredComparisonKeys.has(columnKey) && !desiredComparisonKeys.has(columnHeaderAlias)) continue;
 
+                        if (!isSelected(colRow)) {
+                            const clickTarget = colRow.querySelector('oj-option') || colRow.querySelector('.oj-listbox-result-label') || colRow;
+                            realClick(clickTarget);
+                            await sleep(DELAY.afterSelect);
+                        }
+                        if (debugSourceKey) {
+                            console.info("[CDP mapping] selected target", {
+                                sourceKey,
+                                tableName,
+                                desiredTarget,
+                                columnTextRaw,
+                                selectedAfterClick: isSelected(colRow)
+                            });
+                        }
+                        console.log(`      ✔ ${tableName}: Selected exact match "${columnTextRaw}"`);
                         matched = true;
+                        matchedCount += 1;
+                        if (Object.prototype.hasOwnProperty.call(staticForTable, desiredTarget)) {
+                            pendingStaticTransforms.push({ targetName: desiredTarget, value: staticForTable[desiredTarget] });
+                        }
                         break;
                     }
-
-                    const clickTarget =
-                        colRow.querySelector('oj-option') ||
-                        colRow.querySelector('.oj-listbox-result-label') ||
-                        colRow;
-
-                    realClick(clickTarget);
-
-                    console.log(
-                        `      ✔ ${tableName}: Selected exact match "${columnTextRaw}"`
-                    );
-
-                    matched = true;
-                    await sleep(DELAY.afterSelect);
-                    break;
+                    if (!matched) console.warn(`Skipping ${tableName}.${desiredTarget} for CSV field "${cleanedValue}": no matching attribute.`);
                 }
 
-                if (!matched) {
+                if (!matchedCount) {
                     console.warn(`Skipping ${tableName} for CSV field "${cleanedValue}": no matching attribute.`);
                     continue;
                 }
@@ -378,6 +547,10 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable) {
             if (okButton) {
                 realClick(okButton);
                 await sleep(DELAY.ok);
+            }
+
+            for (const transform of pendingStaticTransforms) {
+                await applyStaticTransform(row, transform.targetName, transform.value);
             }
 
             return mapped;

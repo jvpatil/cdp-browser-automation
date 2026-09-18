@@ -344,7 +344,7 @@
           if(typeof window.runCdpFieldMapping!=="function"){
                 throw new Error("The shared Import Job field mapper was not loaded.");
           }
-          const mappingResult=await window.runCdpFieldMapping(sourceConfig.targetTables||window.__cdpImportConfig?.targetTables,sourceConfig.fieldToTable||window.__cdpImportConfig?.fieldToTable);
+          const mappingResult=await window.runCdpFieldMapping(sourceConfig.targetTables||window.__cdpImportConfig?.targetTables,sourceConfig.fieldToTable||window.__cdpImportConfig?.fieldToTable,{fieldTargetAttributes:sourceConfig.fieldTargetAttributes||window.__cdpImportConfig?.fieldTargetAttributes,fieldStaticTransforms:sourceConfig.fieldStaticTransforms||window.__cdpImportConfig?.fieldStaticTransforms});
           console.info("Import field mapping result",mappingResult);
   };
     try{

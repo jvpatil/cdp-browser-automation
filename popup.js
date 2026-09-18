@@ -6,6 +6,7 @@ let DATA_VIEWER_LIVE_FIELDS = {};
 let DATA_VIEWER_RECORD_DEFAULTS = { tables: {} };
 let DATA_MODEL_COLUMN_DEFAULTS = { groups: {} };
 let dataViewerEditorDraft = null;
+let dataViewerEditorReturnSheet = "";
 let catalogReady = false;
 let activeView = "flow";
 let attributeEditorForCreationGroup = "";
@@ -37,12 +38,18 @@ const DATA_VIEWER_SAFE_ORDER = ["Customer", "Account", "Product", "Address", "Co
 const DATA_VIEWER_PINNED_TABLES = ["Customer", "ContactPoint", "Account"];
 const JOB_PICKER_PINNED_OPTIONS = ["Customer", "ContactPoint", "Account"];
 const DATA_MODEL_GROUPS = ["Profile", "Behavioral", "Transactional", "Product", "Other"];
+const FUSION_USER_DEFAULTS = {
+  cdp_admin: { firstName: "cdp", lastName: "admin", email: "jagannath.patil@oracle.com", userName: "cdp_admin", roles: ["ORA_FMK_CUSTOMER_DATA_PLATFORM_ADMINISTRATOR_JOB", "ORA_FMK_CUSTOMER_DATA_PLATFORM_MANAGER_JOB", "ORA_FMK_CUSTOMER_DATA_PLATFORM_SPECIALIST_JOB"] },
+  fmk_user: { firstName: "fmk", lastName: "user", email: "jagannath.patil@oracle.com", userName: "fmk_user", roles: ["ORA_FMK_MARKETING_MANAGER_JOB", "ORA_FMK_MARKETING_ADMINISTRATOR_JOB", "ORA_FMK_MARKETING_SPECIALIST_JOB"] },
+  cdp_user: { firstName: "cdp", lastName: "user", email: "jagannath.patil@oracle.com", userName: "cdp_user", roles: ["ORA_FMK_CUSTOMER_DATA_PLATFORM_ADMINISTRATOR_JOB", "ORA_FMK_CUSTOMER_DATA_PLATFORM_MANAGER_JOB", "ORA_FMK_CUSTOMER_DATA_PLATFORM_SPECIALIST_JOB"] },
+  fmk_cdp_user: { firstName: "fmk_cdp", lastName: "user", email: "jagannath.patil@oracle.com", userName: "fmk_cdp_user", roles: ["ORA_FMK_CUSTOMER_DATA_PLATFORM_ADMINISTRATOR_JOB", "ORA_FMK_CUSTOMER_DATA_PLATFORM_MANAGER_JOB", "ORA_FMK_CUSTOMER_DATA_PLATFORM_SPECIALIST_JOB", "ORA_FMK_MARKETING_MANAGER_JOB", "ORA_FMK_MARKETING_ADMINISTRATOR_JOB", "ORA_FMK_MARKETING_SPECIALIST_JOB"] }
+};
 const DEFAULT_DATA_MODEL_PARENTS = Object.fromEntries(DATA_MODEL_GROUPS.map((group) => [group, { kind: "Customer", objectName: "" }]));
 const state = {
   // A Custom Flow includes Import by default. Keep Customer selected on a
   // first-use popup so its primary Run action is immediately actionable.
   // Users can still clear this selection or choose any catalog table.
-  workingSetKey: "static:customer", schedulerUi: "new", schedulerTenant: "", importSettings: { customer: true }, importCustomSettings: {}, importMappingMode: "combined", exportPayloadName: "Customer", exportPayloads: ["Customer"], dataViewerSettings: { Customer: true, ContactPoint: true }, dataViewerOptions: { recordsPerTable: "", sourceId: "", parentSourceCustomerId: "", contactPointExplicitlyUnselected: false, dryRun: false }, dataViewerOverrides: {}, dataModelSettings: { Profile: true }, dataModelOptions: { dryRun: false }, dataModelAttributeEnabled: { Profile: true }, dataModelParents: Object.fromEntries(DATA_MODEL_GROUPS.map((group) => [group, { kind: "Customer", objectName: "" }])), dataModelAttributeGroup: "Profile", dataModelAttributeObjectName: "", dataModelAttributeColumns: {}, templateId: "", connectionPurpose: "", templates: [], schedulers: {
+  workingSetKey: "static:customer", schedulerUi: "new", schedulerTenant: "", importSettings: { customer: true }, importCustomSettings: {}, importMappingMode: "separateJobs", syncImportWithExport: true, transferRoutes: {}, singleImportTemplateId: "", exportPayloadName: "Customer", exportPayloads: ["Customer"], dataViewerSettings: { Customer: true, ContactPoint: true }, dataViewerOptions: { recordsPerTable: "", startingIndex: "", sourceId: "", parentSourceCustomerId: "", contactPointExplicitlyUnselected: false, dryRun: false }, dataViewerOverrides: {}, dataModelSettings: { Profile: true }, dataModelOptions: { dryRun: false }, dataModelAttributeEnabled: { Profile: true }, dataModelParents: Object.fromEntries(DATA_MODEL_GROUPS.map((group) => [group, { kind: "Customer", objectName: "" }])), dataModelAttributeGroup: "Profile", dataModelAttributeObjectName: "", dataModelAttributeColumns: {}, templateId: "", connectionPurpose: "", templates: [], schedulers: {
     responsys: defaultScheduler("responsys"), quickImport: defaultScheduler("quickImport"), quickExport: defaultScheduler("quickExport"), flowImport: defaultScheduler("flowImport"), flowExport: defaultScheduler("flowExport"), flowResponsys: defaultScheduler("flowResponsys")
   }
 };
@@ -58,9 +65,14 @@ function jobPresetConfig(kind) {
 }
 function flowPresetConfig() {
   return {
+    templateId: state.templateId,
     steps: selectedFlowSteps(),
     importTableIds: selectedTableIds(),
     importCustomTables: selectedImportCustomTables(),
+    importMappingMode: state.importMappingMode,
+    syncImportWithExport: state.syncImportWithExport,
+    transferRoutes: cloneConfig(state.transferRoutes),
+    singleImportTemplateId: state.singleImportTemplateId,
     exportPayloadName: state.exportPayloadName,
     exportCustomTable: selectedExportCustomTable(),
     exportSchedule: cloneConfig(schedulerConfig("flowExport")),
@@ -90,9 +102,14 @@ function applyPresetConfig(config) {
     state.schedulers.quickExport = schedulerWithTenantUi("quickExport", config.schedule);
   }
   if (!config.kind && Array.isArray(config.steps)) {
+    if (state.templates.some((template) => template.id === config.templateId && template.kind !== "direct")) state.templateId = config.templateId;
     DEFAULT_FLOW.forEach((step) => { document.getElementById(`flow-${step}`).checked = config.steps.includes(step); });
     state.importSettings = Object.fromEntries((config.importTableIds || []).map((id) => [id, true]));
     state.importCustomSettings = Object.fromEntries((config.importCustomTables || []).map((table) => [table.id, true]));
+    state.importMappingMode = ["combined", "separate", "separateJobs"].includes(config.importMappingMode) ? config.importMappingMode : "separateJobs";
+    state.syncImportWithExport = config.syncImportWithExport !== false;
+    state.transferRoutes = config.transferRoutes && typeof config.transferRoutes === "object" ? config.transferRoutes : {};
+    state.singleImportTemplateId = config.singleImportTemplateId || state.templateId;
     if (EXPORT_PAYLOAD_OPTIONS.includes(config.exportPayloadName) || LIVE_CUSTOM_TABLES.some((table) => table.label === config.exportCustomTable?.label)) state.exportPayloadName = config.exportCustomTable?.label || config.exportPayloadName;
     state.schedulers.flowExport = schedulerWithTenantUi("flowExport", config.exportSchedule);
     state.schedulers.flowImport = schedulerWithTenantUi("flowImport", config.importSchedule);
@@ -105,6 +122,7 @@ function applyPresetConfig(config) {
     state.dataModelAttributeObjectName = "";
     state.dataModelAttributeColumns = config.dataModelColumnOverrides || {};
   }
+  if (!config.kind && state.syncImportWithExport) syncImportSelectionsFromExport();
   renderTemplates(); renderAll(); persistDraft();
 }
 async function persistPresets() { await chrome.storage.local.set({ jobPresets, flowPresets }); }
@@ -182,8 +200,20 @@ const connectionPurposeInput = document.getElementById("connectionPurpose");
 const templateSummaryEl = document.getElementById("templateSummary");
 
 function selectedTemplate() { return state.templates.find((template) => template.id === state.templateId); }
-function renderTemplates() { const selected = selectedTemplate(); templateSelect.replaceChildren(new Option(state.templates.length ? "Select transfer template" : "Create a template", ""), ...state.templates.map((template) => new Option(template.name, template.id))); templateSelect.value = state.templateId; templateSummaryEl.textContent = selected ? `${selected.sourceType} → ${selected.destinationType} · ${selected.format} · ${selected.compression}` : "A Source and Destination template is required for connection and job runs."; }
-async function loadTemplates() { const result = await chrome.runtime.sendMessage({ type: "template-list" }); state.templates = result.templates || []; const { lastTemplateId } = await chrome.storage.local.get({ lastTemplateId: "" }); state.templateId = state.templates.some((template) => template.id === lastTemplateId) ? lastTemplateId : state.templates[0]?.id || ""; renderTemplates(); }
+function renderTemplates() { const choices = fileTemplates(); if (state.templateId && !choices.some((template) => template.id === state.templateId)) state.templateId = ""; const selected = selectedTemplate(); templateSelect.replaceChildren(new Option(choices.length ? "Select transfer template" : "Create a template", ""), ...choices.map((template) => new Option(template.name, template.id))); templateSelect.value = state.templateId; templateSummaryEl.textContent = selected ? `${selected.sourceType} → ${selected.destinationType} · ${selected.format} · ${selected.compression}` : "A Source and Destination template is required for connection and job runs."; }
+function defaultTransferTemplateId() {
+  const choices = fileTemplates();
+  return choices.find((template) => /^oos[ _-]?csv$/i.test(String(template.name || "")))?.id
+    || choices.find((template) => /oos|oracle object storage/i.test(`${template.name || ""} ${template.sourceType || template.source?.type || ""} ${template.destinationType || template.destination?.type || ""}`) && /^csv$/i.test(String(template.format || "csv")))?.id
+    || "";
+}
+async function loadTemplates() {
+  const result = await chrome.runtime.sendMessage({ type: "template-list" });
+  state.templates = result.templates || [];
+  state.templateId = defaultTransferTemplateId();
+  state.singleImportTemplateId = state.templateId;
+  renderTemplates();
+}
 
 async function loadCatalog() {
   const response = await fetch(chrome.runtime.getURL("config/tables.json"));
@@ -233,12 +263,22 @@ function dataViewerDefaultValue(field) {
   const id = String(field?.fieldId || "");
   const type = String(field?.dataType || "string").toLowerCase();
   if (/email/i.test(id)) return "jagannath.patil@oracle.com";
+  if (/eventname/i.test(id)) return "Product Demo Requested";
+  if (/productname/i.test(id)) return "Oracle CX Unity";
+  if (/productcategory/i.test(id)) return "Customer Experience";
+  if (/companyname/i.test(id)) return "Northwind Enterprise";
   if (/date/i.test(id) && type !== "timestamp") return new Date().toISOString().slice(0, 10);
   if (/timestamp|\bts\b/i.test(id) || type === "timestamp") return new Date().toISOString().slice(0, 19);
   if (/bool|active|deliverable|optin/i.test(id) || type === "boolean") return "True";
   if (/age|count|number|amount|score/i.test(id) || ["int", "bigint", "decimal"].includes(type)) return "1";
-  if (/name/i.test(id)) return "Automation Test";
-  return "Sample Value";
+  if (/name/i.test(id)) return "Northwind Enterprise";
+  if (/description|comment|note/i.test(id)) return "Business record for customer engagement";
+  return "Business value";
+}
+
+function isEditorAuditField(field) {
+  const name = String(field?.displayName || field?.fieldId || field || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return /^(?:column)?(createdby|createddate|createdts|creationdate|creationts|modifiedby|modifieddate|modifiedts|lastmodifiedby|lastmodifieddate|lastmodifiedts|rowcreatedtimestamp|rowmodifiedtimestamp)$/.test(name);
 }
 
 async function loadDataViewerLiveFields(table) {
@@ -246,7 +286,7 @@ async function loadDataViewerLiveFields(table) {
   const tabId = await activeTab();
   const response = await chrome.runtime.sendMessage({ type: "get-live-data-viewer-fields", tabId, table });
   if (!response?.ok) throw new Error(response?.error || "CDP did not return columns for " + table.label + ".");
-  const fields = (response.fields || []).filter((field) => !field.systemAttribute);
+  const fields = (response.fields || []).filter((field) => !isEditorAuditField(field) && (!field.systemAttribute || /^source(?:[a-z0-9_]+)?id$/i.test(String(field.fieldId || ""))));
   DATA_VIEWER_LIVE_FIELDS[table.id] = fields;
   return fields;
 }
@@ -287,6 +327,8 @@ function applyWorkingSet(table) {
   state.dataViewerSettings = { [table.isCustom ? table.id : table.label]: true };
   state.dataViewerOptions.contactPointExplicitlyUnselected = table.label === "Customer";
   state.exportPayloadName = table.label;
+  state.exportPayloads = [table.label];
+  syncImportSelectionsFromExport();
   persistDraft();
   renderAll();
 }
@@ -294,11 +336,10 @@ function renderWorkingSet() {
   const select = document.getElementById("select-primary-object");
   const options = workingSetOptions();
   if (!select || !options.length) return;
-  const selected = selectedWorkingSet() || options.find((table) => table.workingSetKey === "static:customer") || options[0];
-  if (!selectedWorkingSet()) state.workingSetKey = selected.workingSetKey;
-  select.replaceChildren(...options.map((table) => new Option(table.label, table.workingSetKey)));
+  const selected = selectedWorkingSet();
+  select.replaceChildren(new Option("Select target object", ""), ...options.map((table) => new Option(table.label, table.workingSetKey)));
   select.value = state.workingSetKey;
-  document.getElementById("workingSetHint").textContent = selected.isCustom
+  document.getElementById("workingSetHint").textContent = !selected ? "Choose a target object to start a workflow." : selected.isCustom
     ? `${selected.label} is the Flow default. Configure a task to add more objects.`
     : `${selected.label} is the Flow default. Configure a task to add more objects.`;
 }
@@ -315,6 +356,13 @@ function selectedExportPayloads() {
   if (Array.isArray(state.exportPayloads)) return state.exportPayloads.filter((name) => available.has(name));
   return state.exportPayloadName && available.has(state.exportPayloadName) ? [state.exportPayloadName] : [];
 }
+function fileTemplates() { return state.templates.filter((template) => template.kind !== "direct"); }
+function importIsDrivenByExport() { return Boolean(state.syncImportWithExport && document.getElementById("flow-export")?.checked); }
+function syncImportSelectionsFromExport() { if (!importIsDrivenByExport()) return; const labels = new Set(selectedExportPayloads()); state.importSettings = {}; state.importCustomSettings = {}; for (const table of importPickerTables()) if (labels.has(table.label)) setImportSelected(table, true); }
+function selectedTransferLabels() { return [...new Set([...selectedExportPayloads(), ...selectedImportEntries().map((table) => table.label)])]; }
+function routeTemplateId(label) { const route = state.transferRoutes[label]; return fileTemplates().some((template) => template.id === route) ? route : state.templateId; }
+function renderTransferRoutes() { const panel = document.getElementById("transferRoutes"), templates = fileTemplates(), labels = selectedTransferLabels(); panel.hidden = !labels.length || !templates.length; panel.replaceChildren(); if (panel.hidden) return; const title = document.createElement("strong"); title.textContent = "Transfer routes"; panel.append(title); for (const label of labels) { const row = document.createElement("label"), select = document.createElement("select"); row.textContent = label; select.setAttribute("aria-label", `${label} transfer template`); select.append(...templates.map((template) => new Option(template.name, template.id))); select.value = routeTemplateId(label); select.addEventListener("change", () => { state.transferRoutes[label] = select.value; persistDraft(); renderAll(); }); row.append(select); panel.append(row); } }
+function renderImportTemplateControls() { const sync = document.getElementById("syncImportWithExport"), field = document.getElementById("singleImportTemplateField"), select = document.getElementById("singleImportTemplateId"), templates = fileTemplates(); sync.checked = state.syncImportWithExport; sync.disabled = !document.getElementById("flow-export")?.checked; sync.closest("label").classList.toggle("is-disabled", sync.disabled); select.replaceChildren(...templates.map((template) => new Option(template.name, template.id))); if (!templates.some((template) => template.id === state.singleImportTemplateId)) state.singleImportTemplateId = state.templateId; select.value = state.singleImportTemplateId; field.hidden = state.importMappingMode === "separateJobs"; }
 function selectedExportCustomTable() { return LIVE_CUSTOM_TABLES.find((table) => table.label === selectedExportPayloads()[0]) || null; }
 function exportSummary() { const values = selectedExportPayloads(); return !values.length ? "Select tables" : values[0] + (values.length > 1 ? " +" + (values.length - 1) : ""); }
 function selectedDataViewerTables() {
@@ -391,10 +439,14 @@ function dataModelColumnOverridesForRun(groups = selectedDataModelGroups()) {
 function dataModelAttributeSummary() { return state.dataModelAttributeObjectName.trim() ? `${state.dataModelAttributeGroup} · ${state.dataModelAttributeObjectName.trim()}` : "Select type and object"; }
 function dataViewerRunOptions() {
   const rawCount = state.dataViewerOptions.recordsPerTable.trim();
+  const rawStartingIndex = String(state.dataViewerOptions.startingIndex || "").trim();
   if (rawCount && !/^[1-9]\d*$/.test(rawCount)) throw new Error("Records per table must be a positive whole number.");
+  if (rawStartingIndex && !/^[1-9]\d{0,2}$/.test(rawStartingIndex)) throw new Error("API start index must be a whole number from 1 through 999.");
   const recordsPerTable = rawCount ? Number(rawCount) : 1;
+  const startingIndex = rawStartingIndex ? Number(rawStartingIndex) : 1;
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
-  return { recordsPerTable, sourceId: state.dataViewerOptions.sourceId.trim() || "UI", parentSourceCustomerId: state.dataViewerOptions.parentSourceCustomerId.trim(), saveRecords: !state.dataViewerOptions.dryRun, dataViewerOverrides: state.dataViewerOverrides };
+  if (startingIndex + recordsPerTable - 1 > 999) throw new Error("API start index plus records per table cannot exceed 999.");
+  return { recordsPerTable, startingIndex, sourceId: state.dataViewerOptions.sourceId.trim() || "CDP", parentSourceCustomerId: state.dataViewerOptions.parentSourceCustomerId.trim(), saveRecords: !state.dataViewerOptions.dryRun, dataViewerOverrides: state.dataViewerOverrides };
 }
 function selectionMetadata(items, detail = "") {
   const names = items.map((item) => typeof item === "string" ? item : item.label);
@@ -446,7 +498,7 @@ function snapshotSummary(snapshot) {
   if (!snapshot) return "";
   const jobs = (snapshot.jobs || []).map((job) => {
     const selection = job.kind === "export" ? job.payloadName : (job.tableIds || []).join(", ");
-    return [job.name, selection, job.scheduler ? scheduleSummary(job.scheduler) : ""].filter(Boolean).join(" · ");
+    return [job.name, selection, job.templateName ? `Template: ${job.templateName}` : "", job.scheduler ? scheduleSummary(job.scheduler) : ""].filter(Boolean).join(" · ");
   });
   const template = snapshot.template?.name || snapshot.templateId || "";
   const connections = Object.entries(snapshot.connections || {}).map(([kind, name]) => `${kind}: ${name}`);
@@ -545,7 +597,7 @@ function drawerPreview(kind) {
   const tag = (state.connectionPurpose || "PURPOSE").trim().replace(/[^a-z0-9]/gi, "_").toUpperCase() || "PURPOSE";
   const selected = drawerSelectionFor(kind).map((item) => item.label);
   if (kind === "export") return selected.map((label) => `EXP_${label.replace(/[^a-z0-9]/gi, "_").toUpperCase()}_${tag}_DDMMM_HHMI`).join("\n");
-  if (kind === "import") return selected.map((item) => `IMP_${item.label.replace(/[^a-z0-9]/gi, "_").toUpperCase()}_${tag}_DDMMM_HHMI`).join("\n");
+  if (kind === "import") return selected.map((label) => `IMP_${label.replace(/[^a-z0-9]/gi, "_").toUpperCase()}_${tag}_DDMMM_HHMI`).join("\n");
   return "";
 }
 function renderDrawerContext(sheet) {
@@ -716,10 +768,27 @@ function renderSchedulers() {
   document.getElementById("responsysScheduleLabel").textContent = schedulerSummary(state.schedulers.responsys);
   setStepPills("flowResponsysScheduleLabel", schedulePills(state.schedulers.flowResponsys));
 }
-function tableChoice(table) {
+function renderFilteredSelectAll(containerId, { allItems, scopedItems, isSelected, applySelection, disabled = false }) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.parentElement.querySelector(`[data-select-all-for="${containerId}"]`)?.remove();
+  const scope = scopedItems || [];
+  const control = document.createElement("label"); control.className = "choice-select-all"; control.dataset.selectAllFor = containerId;
+  const input = document.createElement("input"); input.type = "checkbox";
+  const selectedCount = scope.filter(isSelected).length;
+  input.checked = scope.length > 0 && selectedCount === scope.length;
+  input.indeterminate = selectedCount > 0 && selectedCount < scope.length;
+  input.disabled = disabled || !scope.length;
+  const text = document.createElement("span"); text.textContent = "Select all";
+  const scopeText = document.createElement("span"); scopeText.className = "scope"; scopeText.textContent = scope.length ? `(${scope.length})` : "(none)";
+  input.addEventListener("change", () => applySelection(scope, input.checked));
+  control.append(input, text, scopeText);
+  container.before(control);
+}
+function tableChoice(table, locked = false) {
   const label = document.createElement("label"); label.className = "choice";
-  const input = document.createElement("input"); input.type = "checkbox"; input.checked = isImportSelected(table);
-  input.addEventListener("change", () => { setImportSelected(table, input.checked); persistDraft(); renderAll(); });
+  const input = document.createElement("input"); input.type = "checkbox"; input.checked = isImportSelected(table); input.disabled = locked;
+  input.addEventListener("change", () => { if (importIsDrivenByExport()) syncImportSelectionsFromExport(); else setImportSelected(table, input.checked); persistDraft(); renderAll(); });
   const text = document.createElement("span"); text.className = "choice-label"; text.textContent = table.label; text.title = table.label;
   label.append(input, text); return label;
 }
@@ -727,10 +796,18 @@ function renderTableChoices() {
   const filter = document.getElementById("quickImportSearch").value.trim().toLowerCase();
   const tables = quickVisibleOptions(importPickerTables(), isImportSelected, filter, JOB_PICKER_PINNED_OPTIONS);
   document.getElementById("quickImportTables").replaceChildren(...tables.map(tableChoice));
+  renderFilteredSelectAll("quickImportTables", {
+    allItems: importPickerTables(), scopedItems: filter ? tables : importPickerTables(), isSelected: isImportSelected,
+    applySelection: (items, selected) => { items.forEach((table) => setImportSelected(table, selected)); persistDraft(); renderAll(); }
+  });
   renderOptionHint("quickImportHint", importPickerTables().length, tables, filter);
   const flowFilter = document.getElementById("flowImportSearch").value.trim().toLowerCase();
   const flowTables = quickVisibleOptions(importPickerTables(), isImportSelected, flowFilter, JOB_PICKER_PINNED_OPTIONS);
-  document.getElementById("flowImportTables").replaceChildren(...flowTables.map(tableChoice));
+  document.getElementById("flowImportTables").replaceChildren(...flowTables.map((table) => tableChoice(table, importIsDrivenByExport())));
+  renderFilteredSelectAll("flowImportTables", {
+    allItems: importPickerTables(), scopedItems: flowFilter ? flowTables : importPickerTables(), isSelected: isImportSelected, disabled: importIsDrivenByExport(),
+    applySelection: (items, selected) => { if (importIsDrivenByExport()) return; items.forEach((table) => setImportSelected(table, selected)); persistDraft(); renderAll(); }
+  });
   renderOptionHint("flowImportHint", importPickerTables().length, flowTables, flowFilter);
   document.getElementById("quickImportCount").textContent = importSummary();
   setStepPills("flowImportCount", tablePills(selectedImportEntries(), ""));
@@ -763,6 +840,12 @@ function renderDataViewerEditor() {
   document.getElementById("dataViewerEditorRelationships").replaceChildren(...dataViewerEditorDraft.relationships.map((row) => editorRow(row, true)));
 }
 async function openDataViewerEditor(table) {
+  const openedFromFlow = !document.getElementById("sheet-flowDataViewer").hidden;
+  dataViewerEditorReturnSheet = openedFromFlow ? "flowDataViewer" : "";
+  if (openedFromFlow) {
+    document.getElementById("sheet-flowDataViewer").hidden = true;
+    document.getElementById("sheet-dataViewer").hidden = false;
+  }
   dataViewerEditorDraft = copyRecordTemplate(table);
   document.getElementById("dataViewerMain").hidden = true;
   document.getElementById("dataViewerEditor").hidden = false;
@@ -782,6 +865,16 @@ function closeDataViewerEditor() {
   dataViewerEditorDraft = null;
   document.getElementById("dataViewerEditor").hidden = true;
   document.getElementById("dataViewerMain").hidden = false;
+  if (dataViewerEditorReturnSheet === "flowDataViewer") {
+    document.getElementById("sheet-dataViewer").hidden = true;
+    document.getElementById("sheet-flowDataViewer").hidden = false;
+    dataViewerEditorReturnSheet = "";
+    renderAll();
+  }
+}
+function setDataViewerRunStatus(message) {
+  const status = document.getElementById("dataViewerRunStatus");
+  if (status) status.textContent = message;
 }
 function saveDataViewerEditor() {
   if (!dataViewerEditorDraft) return;
@@ -815,10 +908,27 @@ function renderDataViewerChoices() {
     label.append(input, name, edit); return label;
   };
   document.getElementById("dataViewerTables").replaceChildren(...tables.map(choice));
+  renderFilteredSelectAll("dataViewerTables", {
+    allItems: DATA_VIEWER_TABLES, scopedItems: filter ? tables : DATA_VIEWER_TABLES, isSelected: (table) => Boolean(state.dataViewerSettings[table.id]),
+    applySelection: (items, selected) => { items.forEach((table) => { state.dataViewerSettings[table.id] = selected; }); persistDraft(); renderAll(); }
+  });
   renderOptionHint("dataViewerHint", DATA_VIEWER_TABLES.length, tables, filter);
+  const selected = selectedDataViewerTables();
+  const ready = selected.length > 0;
+  const apiButton = document.getElementById("runApiCustomRecordsBtn");
+  const formButton = document.getElementById("runDataViewerBtn");
+  if (apiButton) apiButton.disabled = !ready;
+  if (formButton) formButton.disabled = !ready;
+  setDataViewerRunStatus(ready
+    ? `${selected.length} table${selected.length === 1 ? "" : "s"} selected. Choose Save Record or API Load.`
+    : "Select one or more tables to enable a record run.");
   const flowFilter = document.getElementById("flowDataViewerSearch").value.trim().toLowerCase();
   const flowTables = quickVisibleOptions(DATA_VIEWER_TABLES, (table) => Boolean(state.dataViewerSettings[table.id]), flowFilter, DATA_VIEWER_PINNED_TABLES);
   document.getElementById("flowDataViewerTables").replaceChildren(...flowTables.map(choice));
+  renderFilteredSelectAll("flowDataViewerTables", {
+    allItems: DATA_VIEWER_TABLES, scopedItems: flowFilter ? flowTables : DATA_VIEWER_TABLES, isSelected: (table) => Boolean(state.dataViewerSettings[table.id]),
+    applySelection: (items, selected) => { items.forEach((table) => { state.dataViewerSettings[table.id] = selected; }); persistDraft(); renderAll(); }
+  });
   renderOptionHint("flowDataViewerHint", DATA_VIEWER_TABLES.length, flowTables, flowFilter);
   const displayRepeat = /^[1-9]\d*$/.test(String(state.dataViewerOptions.recordsPerTable || "").trim()) ? state.dataViewerOptions.recordsPerTable.trim() : "1";
   const dataViewerMeta = selectionMetadata(selectedDataViewerTables(), `${displayRepeat} per table`);
@@ -830,7 +940,7 @@ function renderDataViewerChoices() {
 function payloadChoice(name) {
   const label = document.createElement("label"); label.className = "choice";
   const input = document.createElement("input"); input.type = "checkbox"; input.checked = selectedExportPayloads().includes(name);
-  input.addEventListener("change", () => { const selected = new Set(selectedExportPayloads()); if (input.checked) selected.add(name); else selected.delete(name); state.exportPayloads = [...selected]; state.exportPayloadName = state.exportPayloads[0] || ""; persistDraft(); renderAll(); });
+  input.addEventListener("change", () => { const selected = new Set(selectedExportPayloads()); if (input.checked) selected.add(name); else selected.delete(name); state.exportPayloads = [...selected]; state.exportPayloadName = state.exportPayloads[0] || ""; syncImportSelectionsFromExport(); persistDraft(); renderAll(); });
   const text = document.createElement("span"); text.className = "choice-label"; text.textContent = name; text.title = name;
   label.append(input, text); return label;
 }
@@ -839,10 +949,23 @@ function renderPayloadChoices() {
   const filter = document.getElementById("quickExportSearch").value.trim().toLowerCase();
   const values = quickVisibleOptions(names.map((label) => ({ label })), (payload) => selectedExportPayloads().includes(payload.label), filter, JOB_PICKER_PINNED_OPTIONS);
   document.getElementById("quickExportPayloads").replaceChildren(...values.map((payload) => payloadChoice(payload.label, "quick")));
+  const exportItems = names.map((label) => ({ label }));
+  const applyExportSelection = (items, selected) => {
+    const selectedNames = new Set(selectedExportPayloads());
+    items.forEach((item) => selected ? selectedNames.add(item.label) : selectedNames.delete(item.label));
+    state.exportPayloads = [...selectedNames]; state.exportPayloadName = state.exportPayloads[0] || "";
+    syncImportSelectionsFromExport(); persistDraft(); renderAll();
+  };
+  renderFilteredSelectAll("quickExportPayloads", {
+    allItems: exportItems, scopedItems: filter ? values : exportItems, isSelected: (item) => selectedExportPayloads().includes(item.label), applySelection: applyExportSelection
+  });
   renderOptionHint("quickExportHint", names.length, values, filter);
   const flowFilter = document.getElementById("flowExportSearch").value.trim().toLowerCase();
   const flowValues = quickVisibleOptions(names.map((label) => ({ label })), (payload) => selectedExportPayloads().includes(payload.label), flowFilter, JOB_PICKER_PINNED_OPTIONS);
   document.getElementById("flowExportPayloads").replaceChildren(...flowValues.map((payload) => payloadChoice(payload.label, "flow")));
+  renderFilteredSelectAll("flowExportPayloads", {
+    allItems: exportItems, scopedItems: flowFilter ? flowValues : exportItems, isSelected: (item) => selectedExportPayloads().includes(item.label), applySelection: applyExportSelection
+  });
   renderOptionHint("flowExportHint", names.length, flowValues, flowFilter);
   document.getElementById("quickExportValue").textContent = exportSummary();
   setStepPills("flowExportValue", tablePills(selectedExportPayloads(), ""));
@@ -875,6 +998,10 @@ function renderDataModelChoices() {
     label.append(input, name, attributeBadge); return label;
   });
   document.getElementById("dataModelGroups").replaceChildren(...groups);
+  renderFilteredSelectAll("dataModelGroups", {
+    allItems: DATA_MODEL_GROUPS, scopedItems: DATA_MODEL_GROUPS, isSelected: (group) => Boolean(state.dataModelSettings[group]),
+    applySelection: (items, selected) => { items.forEach((group) => { state.dataModelSettings[group] = selected; if (selected) state.dataModelAttributeEnabled[group] = true; }); persistDraft(); renderAll(); }
+  });
   const parentRows = selectedDataModelGroups().map((group) => {
     const row = document.createElement("div"); row.className = "data-model-parent-row";
     const label = document.createElement("strong"); label.textContent = `${group} parent`;
@@ -966,7 +1093,8 @@ function renderDataModelAttributeChoices() {
 }
 function renderFlow() {
   const steps = selectedFlowSteps();
-  setStepPills("flowExportValue", [...tablePills(selectedExportPayloads(), ""), ...schedulePills(state.schedulers.flowExport)]);
+  const exportRouteCount = selectedExportPayloads().length;
+  setStepPills("flowExportValue", [...tablePills(selectedExportPayloads(), ""), exportRouteCount ? pill(`${exportRouteCount} route${exportRouteCount === 1 ? "" : "s"}`, "neutral") : null, ...schedulePills(state.schedulers.flowExport)]);
   setStepPills("flowImportCount", [...tablePills(selectedImportEntries(), ""), ...schedulePills(state.schedulers.flowImport)]);
   const advancedSteps = document.getElementById("flowAdvancedSteps");
   const selectedExtras = document.getElementById("flowSelectedExtras");
@@ -985,7 +1113,19 @@ function renderFlow() {
   if (advancedStepsExpanded) flowView.append(run);
   else advancedToggle.after(run);
   run.textContent = steps.length === 1 ? "▶ Run step" : `▶ Run ${steps.length}-step workflow`;
-  run.disabled = !steps.length || (steps.includes("import") && !selectedImportEntries().length) || (steps.includes("export") && !selectedExportPayloads().length) || (steps.includes("dataModel") && !selectedDataModelGroups().length);
+  const transferSelected = steps.some((step) => ["source", "destination", "export", "import", "responsys"].includes(step));
+  const blockedReason = !steps.length ? "Select a workflow step."
+    : transferSelected && !state.templateId ? "Select a transfer template."
+      : steps.includes("import") && !selectedImportEntries().length ? "Select Import table(s) in Edit."
+        : steps.includes("export") && !selectedExportPayloads().length ? "Select Export table(s) in Edit."
+          : steps.includes("dataViewer") && !selectedDataViewerTables().length ? "Select Add data table(s) in Edit."
+            : steps.includes("dataModel") && !selectedDataModelGroups().length ? "Select Data Model type(s) in Edit."
+              : "";
+  run.disabled = Boolean(blockedReason);
+  run.title = blockedReason || "Run selected workflow steps";
+  const launchStatus = document.getElementById("flowLaunchStatus");
+  if (blockedReason) { launchStatus.textContent = blockedReason; launchStatus.hidden = false; }
+  else if (launchStatus.dataset.validation === "true") { launchStatus.hidden = true; launchStatus.dataset.validation = "false"; }
 }
 function commitFlowConfiguration() {
   if (!pendingFlowConfigurationStep) return;
@@ -999,10 +1139,16 @@ function renderAll() {
   document.querySelectorAll("[data-mapping-mode] button").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.mode === state.importMappingMode)));
   const flowRepeat = document.getElementById("flowDataViewerRecordsPerTable");
   if (flowRepeat) flowRepeat.value = state.dataViewerOptions.recordsPerTable;
+  const flowStartingIndex = document.getElementById("flowDataViewerStartingIndex");
+  if (flowStartingIndex) flowStartingIndex.value = state.dataViewerOptions.startingIndex || "";
+  const flowSourceId = document.getElementById("flowDataViewerSourceId");
+  if (flowSourceId) flowSourceId.value = state.dataViewerOptions.sourceId || "CDP";
   renderWorkingSet();
   renderTenantSchedulerSetting();
   renderTableChoices();
   renderPayloadChoices();
+  renderTransferRoutes();
+  renderImportTemplateControls();
   renderDataViewerChoices();
   renderDataModelChoices();
   renderDataModelAttributeChoices();
@@ -1011,15 +1157,21 @@ function renderAll() {
   const openDrawer = [...document.querySelectorAll(".sheet")].find((sheet) => !sheet.hidden);
   if (openDrawer) renderDrawerContext(openDrawer);
 }
-async function persistDraft() { await chrome.storage.local.set({ flowDraft: { workingSetKey: state.workingSetKey, importSettings: state.importSettings, importCustomSettings: state.importCustomSettings, importMappingMode: state.importMappingMode, exportPayloadName: state.exportPayloadName, exportPayloads: selectedExportPayloads(), dataViewerSettings: state.dataViewerSettings, dataViewerOptions: state.dataViewerOptions, dataViewerOverrides: state.dataViewerOverrides, dataModelSettings: state.dataModelSettings, dataModelOptions: state.dataModelOptions, dataModelAttributeEnabled: state.dataModelAttributeEnabled, dataModelParents: state.dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeColumns: state.dataModelAttributeColumns, connectionPurpose: state.connectionPurpose, schedulers: state.schedulers, flowSteps: selectedFlowSteps() } }); }
-function setStatus(status) { const running = /^Running:/.test(status || ""); statusEl.textContent = status || "No automation running"; statusDot.classList.toggle("idle", !running); stopButton.hidden = !running; }
+async function persistDraft() { await chrome.storage.local.set({ flowDraft: { templateId: state.templateId, workingSetKey: state.workingSetKey, importSettings: state.importSettings, importCustomSettings: state.importCustomSettings, importMappingMode: state.importMappingMode, syncImportWithExport: state.syncImportWithExport, transferRoutes: state.transferRoutes, singleImportTemplateId: state.singleImportTemplateId, exportPayloadName: state.exportPayloadName, exportPayloads: selectedExportPayloads(), dataViewerSettings: state.dataViewerSettings, dataViewerOptions: state.dataViewerOptions, dataViewerOverrides: state.dataViewerOverrides, dataModelSettings: state.dataModelSettings, dataModelOptions: state.dataModelOptions, dataModelAttributeEnabled: state.dataModelAttributeEnabled, dataModelParents: state.dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeColumns: state.dataModelAttributeColumns, connectionPurpose: state.connectionPurpose, schedulers: state.schedulers, flowSteps: selectedFlowSteps() } }); }
+function setStatus(status) { const running = /^Running:/.test(status || ""); statusEl.textContent = status || "No automation running"; statusDot.classList.toggle("idle", !running); stopButton.hidden = !running; const flowLaunchStatus = document.getElementById("flowLaunchStatus"); if (flowLaunchStatus && status) { flowLaunchStatus.textContent = status; flowLaunchStatus.hidden = false; flowLaunchStatus.dataset.validation = "false"; } }
+function setApiLoadStatus(status) {
+  for (const id of ["dataViewerRunStatus", "flowDataViewerRunStatus"]) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = status;
+  }
+}
 async function activeTab() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); if (!tab?.id) throw new Error("No active tab found."); return tab.id; }
 function closeAfterLaunch() {
   // The in-page status pill remains the progress/Stop control while the
   // automation runs, so release the browser workspace after a launch.
   window.setTimeout(() => window.close(), 1000);
 }
-async function send(message, label, runInfo) { try { const customTransferStep = message.type === "run-custom-flow" && message.flow.steps.some((step) => ["source", "destination", "export", "import", "responsys"].includes(step)); const needsTemplate = !["run-publish-all", "run-data-viewer", "run-data-model", "run-data-model-attributes", "run-custom-flow"].includes(message.type) || customTransferStep; if (needsTemplate && !state.templateId) throw new Error("Select a transfer template first."); const tabId = await activeTab(); const status = `Running: ${label}`; const pendingRun = { ...(runInfo || { summary: label, details: label }), startedAt: Date.now(), logs: [{ at: Date.now(), level: "info", message: `Started: ${label}` }] }; await chrome.storage.local.set({ pendingRun, e2eStatus: status, ...(needsTemplate ? { lastTemplateId: state.templateId } : {}) }); setStatus(status); chrome.runtime.sendMessage({ ...message, tabId, connectionPurpose: state.connectionPurpose.trim(), ...(needsTemplate ? { templateId: state.templateId } : {}) }); closeAfterLaunch(); } catch (error) { setStatus(`Failed: ${error.message || error}`); } }
+async function send(message, label, runInfo) { try { const customTransferStep = message.type === "run-custom-flow" && message.flow.steps.some((step) => ["source", "destination", "export", "import", "responsys"].includes(step)); const needsTemplate = !["run-publish-all", "run-data-viewer", "run-data-model", "run-data-model-attributes", "run-custom-flow", "run-fusion-user"].includes(message.type) || customTransferStep; if (!state.templateId && templateSelect.value && fileTemplates().some((template) => template.id === templateSelect.value)) state.templateId = templateSelect.value; if (needsTemplate && !state.templateId) throw new Error("Select a transfer template first."); const tabId = await activeTab(); const status = `Running: ${label}`; const pendingRun = { ...(runInfo || { summary: label, details: label }), startedAt: Date.now(), logs: [{ at: Date.now(), level: "info", message: `Started: ${label}` }] }; await chrome.storage.local.set({ pendingRun, e2eStatus: status, ...(needsTemplate ? { lastTemplateId: state.templateId } : {}) }); setStatus(status); if (message.type === "run-api-custom-records") setApiLoadStatus(status); const response = await chrome.runtime.sendMessage({ ...message, tabId, connectionPurpose: state.connectionPurpose.trim(), ...(needsTemplate ? { templateId: state.templateId } : {}) }); if (!response?.ok) throw new Error(response?.error || `${label} did not start.`); if (message.type === "run-api-custom-records") setApiLoadStatus("API load completed. Check the CDP data object and Activity log for the response."); const fusionStatus = document.getElementById("fusionUserRunStatus"); if (message.type === "run-fusion-user" && fusionStatus) fusionStatus.textContent = "User form is ready for review. Save and Close was not selected."; } catch (error) { const detail = error.message || error; setStatus(`Failed: ${detail}`); if (message.type === "run-api-custom-records") setApiLoadStatus(`Failed before API request: ${detail}`); const fusionStatus = document.getElementById("fusionUserRunStatus"); if (fusionStatus) fusionStatus.textContent = `Failed: ${detail}`; } }
 
 // Use the same stateful configuration sheets as a full popup view.  Returning commits the
 // current draft so the corresponding main-flow card always reflects the saved selections.
@@ -1030,7 +1182,13 @@ function prepareDrawerActions() {
       : back.id === "dataViewerEditorBack"
         ? "← Back to Record"
         : "← Return to Workflow";
-    back.classList.remove("sheet-back-bottom");
+    if (back.hasAttribute("data-close-sheet")) {
+      // Configuration is completed top-to-bottom. Put its return action after
+      // the final control instead of making the user scroll back to the title.
+      const body = back.closest(".sheet")?.querySelector(":scope > .sheet-body");
+      back.classList.add("sheet-back-bottom");
+      body?.append(back);
+    } else back.classList.remove("sheet-back-bottom");
   });
 }
 prepareDrawerActions();
@@ -1038,36 +1196,95 @@ prepareDrawerActions();
 document.getElementById("sourceBtn").addEventListener("click", () => send({ type: "run-task", filename: "source.js" }, "Create Source", { summary: "Create Source", details: "Create Source" }));
 document.getElementById("destinationBtn").addEventListener("click", () => send({ type: "run-task", filename: "destination.js" }, "Create Destination", { summary: "Create Destination", details: "Create Destination" }));
 document.getElementById("publishAllBtn").addEventListener("click", () => send({ type: "run-publish-all" }, "Publish All Data Feeds", { summary: "Publish All Data Feeds", details: "Publish All Data Feeds" }));
+function applyFusionUserDefault(key) { const preset = FUSION_USER_DEFAULTS[key]; if (!preset) return; document.getElementById("fusionUserFirstName").value = preset.firstName; document.getElementById("fusionUserLastName").value = preset.lastName; document.getElementById("fusionUserEmail").value = preset.email; document.getElementById("fusionUserName").value = preset.userName; document.getElementById("fusionUserRoles").value = ""; renderFusionRoleOptions(key); }
+document.getElementById("fusionUserPreset").addEventListener("change", (event) => applyFusionUserDefault(event.target.value));
+document.getElementById("fusionUserEditPreset").addEventListener("click", () => { document.getElementById("fusionUserFirstName").focus(); document.getElementById("fusionUserFirstName").select(); });
+document.getElementById("fusionUserPreset").value = "cdp_admin";
+const FUSION_CDP_ROLES = ["ORA_FMK_CUSTOMER_DATA_PLATFORM_ADMINISTRATOR_JOB", "ORA_FMK_CUSTOMER_DATA_PLATFORM_MANAGER_JOB", "ORA_FMK_CUSTOMER_DATA_PLATFORM_SPECIALIST_JOB"];
+const FUSION_FMK_ROLES = ["ORA_FMK_MARKETING_MANAGER_JOB", "ORA_FMK_MARKETING_ADMINISTRATOR_JOB", "ORA_FMK_MARKETING_SPECIALIST_JOB"];
+const fusionRoleOptions = document.createElement("div");
+fusionRoleOptions.id = "fusionUserRoleOptions";
+fusionRoleOptions.className = "fusion-role-options";
+const fusionRoleActions = document.createElement("div");
+fusionRoleActions.className = "fusion-role-actions";
+fusionRoleActions.innerHTML = '<label><input type="checkbox" id="fusionUserRolesAll" checked> Select all roles</label>';
+const fusionCustomRoles = document.getElementById("fusionUserRoles");
+fusionCustomRoles.placeholder = "Additional custom role code(s), optional";
+fusionCustomRoles.closest("label").firstChild.textContent = "Additional custom role code(s), optional ";
+fusionCustomRoles.closest("label").after(fusionRoleOptions);
+fusionRoleOptions.before(fusionRoleActions);
+function renderFusionRoleOptions(key) {
+  const roles = [...(key.includes("cdp") ? FUSION_CDP_ROLES : []), ...(key.includes("fmk") ? FUSION_FMK_ROLES : [])];
+  fusionRoleOptions.innerHTML = roles.map((role) => `<label class="dry-run-option" title="${role}"><input type="checkbox" value="${role}" checked> ${role.replace("ORA_FMK_", "").replace("_JOB", "")}</label>`).join("");
+  document.getElementById("fusionUserRolesAll").checked = roles.length > 0;
+}
+function selectedFusionRoleCodes() { return [...fusionRoleOptions.querySelectorAll("input:checked")].map((input) => input.value); }
+fusionRoleActions.addEventListener("change", (event) => {
+  if (event.target.id !== "fusionUserRolesAll") return;
+  fusionRoleOptions.querySelectorAll("input[type=checkbox]").forEach((input) => { input.checked = event.target.checked; });
+});
+fusionRoleOptions.addEventListener("change", () => {
+  const roles = [...fusionRoleOptions.querySelectorAll("input[type=checkbox]")];
+  document.getElementById("fusionUserRolesAll").checked = roles.length > 0 && roles.every((input) => input.checked);
+});
+applyFusionUserDefault("cdp_admin");
+document.getElementById("runFusionUserBtn").textContent = "▶ Create Fusion user";
+document.querySelector("#sheet-fusionUser .hint").innerHTML = "Creates the account in Security Console → Users and selects <strong>Save and Close</strong>. When selected, Instance Admin is assigned through the Roles flow after creation.";
+const fusionInstanceAdmin = document.createElement("label");
+fusionInstanceAdmin.className = "dry-run-option";
+fusionInstanceAdmin.innerHTML = '<input id="fusionUserInstanceAdmin" type="checkbox"> Add Instance Admin after creating the user';
+document.getElementById("runFusionUserBtn").before(fusionInstanceAdmin);
+function setFusionInstanceAdminDefault(key) { document.getElementById("fusionUserInstanceAdmin").checked = /cdp/.test(key); }
+document.getElementById("fusionUserPreset").addEventListener("change", (event) => setFusionInstanceAdminDefault(event.target.value));
+setFusionInstanceAdminDefault("cdp_admin");
+chrome.storage.onChanged.addListener((changes) => {
+  const status = changes.e2eStatus?.newValue;
+  if (typeof status === "string" && status.startsWith("Fusion user created")) {
+    document.getElementById("fusionUserRunStatus").textContent = status;
+  }
+});
+document.getElementById("runFusionUserBtn").addEventListener("click", () => {
+  const user = {
+    firstName: document.getElementById("fusionUserFirstName").value.trim(), lastName: document.getElementById("fusionUserLastName").value.trim(), email: document.getElementById("fusionUserEmail").value.trim(), phone: document.getElementById("fusionUserPhone").value.trim(), userName: document.getElementById("fusionUserName").value.trim(), password: document.getElementById("fusionUserPassword").value, confirmPassword: document.getElementById("fusionUserConfirmPassword").value, roles: [...selectedFusionRoleCodes(), ...document.getElementById("fusionUserRoles").value.split(/\n|,/).map((role) => role.trim()).filter(Boolean)], active: document.getElementById("fusionUserActive").checked, locked: document.getElementById("fusionUserLocked").checked, instanceAdmin: document.getElementById("fusionUserInstanceAdmin").checked
+  };
+  const fusionStatus = document.getElementById("fusionUserRunStatus");
+  if (!user.lastName || !user.email || !user.userName || !user.password) { const text = "Enter Last name, Email, User name, and Password."; setStatus(text); if (fusionStatus) fusionStatus.textContent = text; return; }
+  if (user.password !== user.confirmPassword) { const text = "Password and Confirm password must match."; setStatus(text); if (fusionStatus) fusionStatus.textContent = text; return; }
+  send({ type: "run-fusion-user", user }, "Prepare Fusion User", { summary: "Fusion User — ready for review", details: `Prepare ${user.userName} with ${user.roles.length} role${user.roles.length === 1 ? "" : "s"}; does not save.` });
+});
 document.getElementById("runResponsysBtn").addEventListener("click", () => { const schedule = schedulerConfig("responsys"); send({ type: "run-task", filename: "importJob.js", schedule }, "Import Responsys Profile", { summary: `Responsys Import — ${scheduleSummary(schedule)}`, details: `Import Responsys Profile — ${scheduleSummary(schedule)}` }); });
 document.getElementById("runQuickImportBtn").addEventListener("click", () => { if (!catalogReady) return setStatus("Table catalog is still loading."); const tableIds = selectedTableIds(); const customTables = selectedImportCustomTables(); if (!tableIds.length && !customTables.length) return setStatus("Select at least one import table."); const schedule = schedulerConfig("quickImport"); const tables = selectedTableSummary(); send({ type: "run-import-job", tableIds, customTables, schedule }, "Import Job", { summary: `Import — ${tables} — ${scheduleSummary(schedule)}`, details: `Import — ${selectedImportEntries().map((table) => table.label).join(", ")} — ${scheduleSummary(schedule)}` }); });
 document.getElementById("runQuickExportBtn").addEventListener("click", () => { if (!catalogReady) return setStatus("Table catalog is still loading."); if (!selectedExportPayloads().length) return setStatus("Select at least one export table."); const schedule = schedulerConfig("quickExport"); const customTable = selectedExportCustomTable(); send({ type: "run-task", filename: "exportJob.js", schedule, exportPayloadName: state.exportPayloadName, customTable }, "Export Job", { summary: `Export — ${state.exportPayloadName} — ${scheduleSummary(schedule)}`, details: `Export — ${state.exportPayloadName} — ${scheduleSummary(schedule)}` }); });
-document.getElementById("runDataViewerBtn").addEventListener("click", () => { try { if (!catalogReady) return setStatus("Table catalog is still loading."); const tables = selectedDataViewerTables(); if (!tables.length) return setStatus("Select at least one table."); const options = dataViewerRunOptions(); const mode = options.saveRecords ? "Save records" : "Dry run"; send({ type: "run-data-viewer", tableIds: tables.map((table) => table.id), ...options }, "Data Viewer Records", { summary: `Data Viewer — ${dataViewerSummary()}`, details: `Data Viewer ${mode.toLowerCase()}: ${tables.map((table) => table.label).join(", ")} · ${options.recordsPerTable} per table · Source ID: CDP` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
+document.getElementById("runDataViewerBtn").addEventListener("click", () => { try { if (!catalogReady) { setDataViewerRunStatus("Table catalog is still loading."); return setStatus("Table catalog is still loading."); } const tables = selectedDataViewerTables(); if (!tables.length) { setDataViewerRunStatus("Select one or more tables first."); return setStatus("Select at least one table."); } const options = dataViewerRunOptions(); const mode = options.saveRecords ? "Save records" : "Dry run"; setDataViewerRunStatus(`Starting ${mode.toLowerCase()} for ${tables.map((table) => table.label).join(", ")}…`); send({ type: "run-data-viewer", tableIds: tables.map((table) => table.id), ...options }, "Data Viewer Records", { summary: `Data Viewer — ${dataViewerSummary()}`, details: `Data Viewer ${mode.toLowerCase()}: ${tables.map((table) => table.label).join(", ")} · ${options.recordsPerTable} per table · Source ID: CDP` }); } catch (error) { setDataViewerRunStatus(`Failed: ${error.message || error}`); setStatus(`Failed: ${error.message || error}`); } });
 document.getElementById("runApiCustomRecordsBtn").addEventListener("click", () => { try {
-  if (!catalogReady) return setStatus("Table catalog is still loading.");
+  if (!catalogReady) { setDataViewerRunStatus("Table catalog is still loading."); return setStatus("Table catalog is still loading."); }
   const tables = selectedDataViewerTables();
-  if (!tables.length) return setStatus("Select at least one custom object.");
-  if (tables.some((table) => !table.isCustom)) return setStatus("API Load Custom Records supports custom objects only. Clear standard tables first.");
+  if (!tables.length) { setDataViewerRunStatus("Select one or more tables first."); return setStatus("Select at least one table."); }
   const options = dataViewerRunOptions();
-  send({ type: "run-api-custom-records", tableIds: tables.map((table) => table.id), ...options }, "API Load Custom Records", { summary: `API Load — ${dataViewerSummary()}`, details: `API custom records: ${tables.map((table) => table.label).join(", ")} · ${options.recordsPerTable} per table · Source ID: ${options.sourceId}` });
-} catch (error) { setStatus(`Failed: ${error.message || error}`); } });
+  setDataViewerRunStatus(`Starting API load for ${tables.map((table) => table.label).join(", ")}…`);
+  send({ type: "run-api-custom-records", tableIds: tables.map((table) => table.id), ...options }, "API Load Custom Records", { summary: `API Load — ${dataViewerSummary()}`, details: `API custom records: ${tables.map((table) => table.label).join(", ")} · ${options.recordsPerTable} per table · Start index: ${options.startingIndex} · Source ID: ${options.sourceId}` });
+} catch (error) { setDataViewerRunStatus(`Failed: ${error.message || error}`); setStatus(`Failed: ${error.message || error}`); } });
 document.getElementById("runFlowApiCustomRecordsBtn").addEventListener("click", () => { try {
-  if (!catalogReady) return setStatus("Table catalog is still loading.");
+  const flowStatus = document.getElementById("flowDataViewerRunStatus");
+  if (!catalogReady) { if (flowStatus) flowStatus.textContent = "Table catalog is still loading."; return setStatus("Table catalog is still loading."); }
   const tables = selectedDataViewerTables();
-  if (!tables.length) return setStatus("Select at least one custom object.");
-  if (tables.some((table) => !table.isCustom)) return setStatus("API Load Custom Records supports custom objects only. Clear standard tables first.");
+  if (!tables.length) { if (flowStatus) flowStatus.textContent = "Select one or more tables first."; return setStatus("Select at least one table."); }
   const options = dataViewerRunOptions();
-  send({ type: "run-api-custom-records", tableIds: tables.map((table) => table.id), ...options }, "API Load Custom Records", { summary: `API Load — ${dataViewerSummary()}`, details: `API custom records: ${tables.map((table) => table.label).join(", ")} · ${options.recordsPerTable} per table · Source ID: CDP` });
-} catch (error) { setStatus(`Failed: ${error.message || error}`); } });
+  if (flowStatus) flowStatus.textContent = `Starting API load for ${tables.map((table) => table.label).join(", ")}…`;
+  send({ type: "run-api-custom-records", tableIds: tables.map((table) => table.id), ...options }, "API Load Custom Records", { summary: `API Load — ${dataViewerSummary()}`, details: `API custom records: ${tables.map((table) => table.label).join(", ")} · ${options.recordsPerTable} per table · Start index: ${options.startingIndex} · Source ID: CDP` });
+} catch (error) { const message = `Failed: ${error.message || error}`; const flowStatus = document.getElementById("flowDataViewerRunStatus"); if (flowStatus) flowStatus.textContent = message; setStatus(message); } });
 document.getElementById("runDataModelBtn").addEventListener("click", () => { try { const groups = selectedDataModelGroups(); if (!groups.length) return setStatus("Select at least one Data Model object group."); if (dataModelConfigurationContext === "flow") { commitFlowConfiguration(); persistDraft(); closeSheets(); showView("flow"); return; } const dryRun = state.dataModelOptions.dryRun; const attributeGroups = dryRun ? [] : selectedDataModelAttributeGroups(); const columnOverrides = attributeGroups.length ? dataModelColumnOverridesForRun(attributeGroups) : {}; const parentByGroup = dryRun ? {} : dataModelParentsForRun(groups); send({ type: "run-data-model", groups, saveObjects: !dryRun, attributeGroups, columnOverrides, parentByGroup }, dryRun ? "Data Model Dry Run" : "Create Data Model Objects", { summary: `Data Model — ${dataModelSummary()}${attributeGroups.length ? ` + ${attributeGroups.length} attribute set${attributeGroups.length === 1 ? "" : "s"}` : ""}`, details: `${dryRun ? "Dry run" : "Live create"}: ${groups.join(", ")}${attributeGroups.length ? ` · attributes: ${attributeGroups.join(", ")}` : ""}${Object.keys(parentByGroup).length ? ` · parents: ${Object.entries(parentByGroup).map(([group, parent]) => `${group} → ${parent}`).join(", ")}` : ""}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
 document.getElementById("runDataModelAttributesBtn").addEventListener("click", () => { try { const objectName = state.dataModelAttributeObjectName.trim(); if (!objectName) return setStatus("Enter the existing Data Model object name."); const group = state.dataModelAttributeGroup; const columnOverrides = dataModelColumnOverridesForRun([group]); send({ type: "run-data-model-attributes", group, objectName, columnOverrides }, "Add New Attributes", { summary: `Add New Attributes — ${group} · ${objectName}`, details: `Add ${dataModelColumnCount(group)} new attributes to ${objectName}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
-document.getElementById("runCustomFlowBtn").addEventListener("click", () => { try { const steps = selectedFlowSteps(); if (!catalogReady && (steps.includes("import") || steps.includes("export") || steps.includes("dataViewer"))) return setStatus("Table catalog is still loading."); const dataViewerTableIds = selectedDataViewerTables().map((table) => table.id); const dataModelGroups = selectedDataModelGroups(); if (steps.includes("import") && !selectedImportEntries().length) return setStatus("Select at least one Import table."); if (steps.includes("export") && !selectedExportPayloads().length) return setStatus("Select at least one Export table."); if (steps.includes("dataViewer") && !dataViewerTableIds.length) return setStatus("Select at least one Data Viewer table."); if (steps.includes("dataModel") && !dataModelGroups.length) return setStatus("Select at least one Data Model object group."); const canUseCreatedDataModelObject = steps.includes("dataModel") && dataModelGroups.includes(state.dataModelAttributeGroup) && !state.dataModelOptions.dryRun; if (steps.includes("dataModelAttributes") && !state.dataModelAttributeObjectName.trim() && !canUseCreatedDataModelObject) return setStatus("Enter the Data Model object name, or create that same type in this live flow."); const staggerJobs = flowHasBothJobs(); const customDataViewer = { recordsPerTable: 1, sourceId: "UI", saveRecords: true, dataViewerOverrides: state.dataViewerOverrides }; const dataModelAttributeGroups = steps.includes("dataModel") && !state.dataModelOptions.dryRun ? selectedDataModelAttributeGroups() : []; const columnGroups = [...new Set([...(steps.includes("dataModelAttributes") ? [state.dataModelAttributeGroup] : []), ...dataModelAttributeGroups])]; const dataModelParents = steps.includes("dataModel") && !state.dataModelOptions.dryRun ? dataModelParentsForRun(dataModelGroups) : {}; send({ type: "run-custom-flow", flow: { steps, importTableIds: selectedTableIds(), importCustomTables: selectedImportCustomTables(), importMappingMode: state.importMappingMode, exportPayloadName: state.exportPayloadName, exportPayloads: selectedExportPayloads(), exportCustomTables: LIVE_CUSTOM_TABLES.filter((table) => selectedExportPayloads().includes(table.label)), exportSchedule: schedulerConfig("flowExport"), importSchedule: schedulerConfig("flowImport"), responsysSchedule: schedulerConfig("flowResponsys"), staggerJobs, dataViewerTableIds, dataModelGroups, dataModelAttributeGroups, dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeObjectName: state.dataModelAttributeObjectName.trim(), dataModelColumnOverrides: dataModelColumnOverridesForRun(columnGroups), saveDataModelObjects: !state.dataModelOptions.dryRun, ...customDataViewer } }, "Workflow", { summary: `Workflow — ${steps.length} steps`, details: `Workflow — ${steps.join(" → ")}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
-templateSelect.addEventListener("change", async () => { state.templateId = templateSelect.value; await chrome.storage.local.set({ lastTemplateId: state.templateId }); renderTemplates(); });
+document.getElementById("runCustomFlowBtn").addEventListener("click", () => { try { const steps = selectedFlowSteps(); if (!catalogReady && (steps.includes("import") || steps.includes("export") || steps.includes("dataViewer"))) return setStatus("Table catalog is still loading."); const dataViewerTableIds = selectedDataViewerTables().map((table) => table.id); const dataModelGroups = selectedDataModelGroups(); if (steps.includes("import") && !selectedImportEntries().length) return setStatus("Select at least one Import table."); if (steps.includes("export") && !selectedExportPayloads().length) return setStatus("Select at least one Export table."); if (steps.includes("dataViewer") && !dataViewerTableIds.length) return setStatus("Select at least one Data Viewer table."); if (steps.includes("dataModel") && !dataModelGroups.length) return setStatus("Select at least one Data Model object group."); const canUseCreatedDataModelObject = steps.includes("dataModel") && dataModelGroups.includes(state.dataModelAttributeGroup) && !state.dataModelOptions.dryRun; if (steps.includes("dataModelAttributes") && !state.dataModelAttributeObjectName.trim() && !canUseCreatedDataModelObject) return setStatus("Enter the Data Model object name, or create that same type in this live flow."); const staggerJobs = flowHasBothJobs(); const customDataViewer = { ...dataViewerRunOptions(), saveRecords: true }; const dataModelAttributeGroups = steps.includes("dataModel") && !state.dataModelOptions.dryRun ? selectedDataModelAttributeGroups() : []; const columnGroups = [...new Set([...(steps.includes("dataModelAttributes") ? [state.dataModelAttributeGroup] : []), ...dataModelAttributeGroups])]; const dataModelParents = steps.includes("dataModel") && !state.dataModelOptions.dryRun ? dataModelParentsForRun(dataModelGroups) : {}; send({ type: "run-custom-flow", flow: { steps, importTableIds: selectedTableIds(), importCustomTables: selectedImportCustomTables(), importMappingMode: state.importMappingMode, syncImportWithExport: state.syncImportWithExport, transferRoutes: state.transferRoutes, singleImportTemplateId: state.singleImportTemplateId || state.templateId, exportPayloadName: state.exportPayloadName, exportPayloads: selectedExportPayloads(), exportCustomTables: LIVE_CUSTOM_TABLES.filter((table) => selectedExportPayloads().includes(table.label)), exportSchedule: schedulerConfig("flowExport"), importSchedule: schedulerConfig("flowImport"), responsysSchedule: schedulerConfig("flowResponsys"), staggerJobs, dataViewerTableIds, dataModelGroups, dataModelAttributeGroups, dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeObjectName: state.dataModelAttributeObjectName.trim(), dataModelColumnOverrides: dataModelColumnOverridesForRun(columnGroups), saveDataModelObjects: !state.dataModelOptions.dryRun, ...customDataViewer } }, "Workflow", { summary: `Workflow — ${steps.length} steps`, details: `Workflow — ${steps.join(" → ")}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
+templateSelect.addEventListener("change", async () => { state.templateId = templateSelect.value; if (!state.singleImportTemplateId) state.singleImportTemplateId = state.templateId; await chrome.storage.local.set({ lastTemplateId: state.templateId }); renderTemplates(); renderAll(); persistDraft(); });
 connectionPurposeInput.addEventListener("input", () => { state.connectionPurpose = connectionPurposeInput.value; chrome.storage.local.set({ lastConnectionPurpose: state.connectionPurpose }); persistDraft(); });
 document.getElementById("select-primary-object").addEventListener("change", (event) => applyWorkingSet(workingSetOptions().find((table) => table.workingSetKey === event.target.value)));
 document.getElementById("btn-refresh-tables").addEventListener("click", () => refreshLiveDataViewerTables());
 document.getElementById("tenantSchedulerNew").addEventListener("click", () => saveTenantSchedulerPreference("new"));
 document.getElementById("tenantSchedulerLegacy").addEventListener("click", () => saveTenantSchedulerPreference("legacy"));
 document.querySelectorAll("[data-mapping-mode] button").forEach((button) => button.addEventListener("click", () => { state.importMappingMode = ["combined", "separate", "separateJobs"].includes(button.dataset.mode) ? button.dataset.mode : "combined"; persistDraft(); renderAll(); }));
+document.getElementById("syncImportWithExport").addEventListener("change", (event) => { state.syncImportWithExport = event.target.checked; syncImportSelectionsFromExport(); persistDraft(); renderAll(); });
+document.getElementById("singleImportTemplateId").addEventListener("change", (event) => { state.singleImportTemplateId = event.target.value; persistDraft(); });
 document.getElementById("flowAddStepBtn").addEventListener("click", () => {
   advancedStepsExpanded = !advancedStepsExpanded;
   renderFlow();
@@ -1088,7 +1305,10 @@ document.querySelectorAll("[data-close-sheet]").forEach((button) => button.addEv
 document.getElementById("quickImportSearch").addEventListener("input", renderTableChoices); document.getElementById("quickExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("flowImportSearch").addEventListener("input", renderTableChoices); document.getElementById("flowExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("dataViewerSearch").addEventListener("input", renderDataViewerChoices); document.getElementById("flowDataViewerSearch").addEventListener("input", renderDataViewerChoices);
 document.getElementById("dataViewerRecordsPerTable").addEventListener("input", (event) => { state.dataViewerOptions.recordsPerTable = event.target.value; persistDraft(); renderDataViewerChoices(); });
 document.getElementById("flowDataViewerRecordsPerTable").addEventListener("input", (event) => { state.dataViewerOptions.recordsPerTable = event.target.value; persistDraft(); });
+document.getElementById("dataViewerStartingIndex").addEventListener("input", (event) => { state.dataViewerOptions.startingIndex = event.target.value; persistDraft(); });
+document.getElementById("flowDataViewerStartingIndex").addEventListener("input", (event) => { state.dataViewerOptions.startingIndex = event.target.value; persistDraft(); });
 document.getElementById("dataViewerSourceId").addEventListener("input", (event) => { state.dataViewerOptions.sourceId = event.target.value; persistDraft(); });
+document.getElementById("flowDataViewerSourceId").addEventListener("input", (event) => { state.dataViewerOptions.sourceId = event.target.value; persistDraft(); });
 document.getElementById("dataViewerParentCustomerId").addEventListener("input", (event) => { state.dataViewerOptions.parentSourceCustomerId = event.target.value; persistDraft(); });
 document.getElementById("dataViewerDryRun").addEventListener("change", (event) => { state.dataViewerOptions.dryRun = event.target.checked; document.getElementById("runDataViewerBtn").textContent = event.target.checked ? "▶ Test Data Viewer Record" : "▶ Save Data Viewer Record"; persistDraft(); });
 document.getElementById("dataModelDryRun").addEventListener("change", (event) => { state.dataModelOptions.dryRun = event.target.checked; persistDraft(); renderDataModelChoices(); renderFlow(); });
@@ -1117,7 +1337,7 @@ document.getElementById("dataViewerAddValue").addEventListener("click", () => { 
 document.getElementById("dataViewerAddRelationship").addEventListener("click", () => { dataViewerEditorDraft?.relationships.push({ field: "", table: "" }); renderDataViewerEditor(); });
 document.getElementById("dataViewerUseDefaults").addEventListener("click", () => { if (!dataViewerEditorDraft) return; delete state.dataViewerOverrides[dataViewerEditorDraft.tableName]; persistDraft(); closeDataViewerEditor(); });
 document.getElementById("dataViewerApplyEditor").addEventListener("click", saveDataViewerEditor);
-function clearImportSelection() { state.importSettings = {}; state.importCustomSettings = {}; chrome.storage.local.set({ customImportTablesV1: [] }); persistDraft(); renderAll(); }
+function clearImportSelection() { state.importSettings = {}; state.importCustomSettings = {}; if (state.syncImportWithExport) syncImportSelectionsFromExport(); chrome.storage.local.set({ customImportTablesV1: selectedImportCustomTables() }); persistDraft(); renderAll(); }
 function clearDataViewerSelection() { state.dataViewerSettings = {}; state.dataViewerOptions.contactPointExplicitlyUnselected = false; persistDraft(); renderAll(); }
 document.getElementById("clearImportBtn").addEventListener("click", clearImportSelection);
 document.getElementById("flowImportClearBtn").addEventListener("click", clearImportSelection);
@@ -1127,11 +1347,41 @@ const EXTRA_FLOW_STEP_ORDER = ["dataModelAttributes", "source", "destination", "
 const EXTRA_FLOW_STEPS = new Set(EXTRA_FLOW_STEP_ORDER);
 DEFAULT_FLOW.forEach((step) => document.getElementById(`flow-${step}`).addEventListener("change", (event) => {
   if (event.target.checked && EXTRA_FLOW_STEPS.has(step)) advancedStepsExpanded = false;
+  // Export is the selection driver whenever Import sync is enabled. A user
+  // may choose tables before enabling the Export workflow card, so mirror
+  // them at the moment that card becomes active as well as on picker edits.
+  if (step === "export" && event.target.checked) syncImportSelectionsFromExport();
   persistDraft();
   renderAll();
 }));
+function resetWorkflowSession() {
+  state.workingSetKey = "";
+  state.templateId = defaultTransferTemplateId();
+  state.connectionPurpose = "";
+  state.importSettings = {};
+  state.importCustomSettings = {};
+  state.importMappingMode = "separateJobs";
+  state.syncImportWithExport = true;
+  state.exportPayloadName = "";
+  state.exportPayloads = [];
+  state.dataViewerSettings = {};
+  state.dataViewerOptions = { recordsPerTable: "", startingIndex: "", sourceId: "", parentSourceCustomerId: "", contactPointExplicitlyUnselected: false, dryRun: false };
+  state.dataViewerOverrides = {};
+  state.dataModelSettings = {};
+  state.dataModelAttributeEnabled = {};
+  state.dataModelAttributeColumns = {};
+  state.transferRoutes = {};
+  state.singleImportTemplateId = "";
+  document.querySelectorAll('input[id^="flow-"][type="checkbox"]').forEach((input) => { input.checked = false; });
+  renderTemplates();
+}
+
 async function initialize() {
   try {
+    // Popup state is intentionally transient. Saved presets, templates, and
+    // connection profiles remain available, but opening/reloading starts a
+    // blank Workflow tab with no selected steps or objects.
+    await chrome.storage.local.remove(["flowDraft", "popupView", "lastConnectionPurpose", "lastTemplateId"]);
     await Promise.all([loadCatalog(), loadTemplates(), loadDataViewerRecordDefaults(), loadDataModelColumnDefaults(), loadPresets()]);
     const { flowDraft, e2eStatus, lastRun, runHistory, pendingRun, popupView, lastConnectionPurpose, lastDataModelAttributeGroup } = await chrome.storage.local.get({ flowDraft: null, e2eStatus: "", lastRun: null, runHistory: [], pendingRun: null, popupView: "run", lastConnectionPurpose: "", lastDataModelAttributeGroup: "Profile" });
     await chrome.storage.local.remove("lastDataModelAttributeObjectName");
@@ -1139,6 +1389,7 @@ async function initialize() {
     state.connectionPurpose = flowDraft?.connectionPurpose ?? lastConnectionPurpose;
     connectionPurposeInput.value = state.connectionPurpose;
     if (flowDraft) { state.workingSetKey = flowDraft.workingSetKey || state.workingSetKey; state.importSettings = flowDraft.importSettings || {}; state.importMappingMode = flowDraft.importMappingMode === "separate" ? "separate" : "combined"; state.exportPayloads = Array.isArray(flowDraft.exportPayloads) ? flowDraft.exportPayloads : [flowDraft.exportPayloadName || "Customer"]; state.exportPayloadName = String(flowDraft.exportPayloadName || state.exportPayloads[0] || ""); state.dataViewerSettings = flowDraft.dataViewerSettings || { Customer: true, ContactPoint: true }; state.dataViewerOptions = { ...state.dataViewerOptions, ...(flowDraft.dataViewerOptions || {}) }; state.dataViewerOverrides = flowDraft.dataViewerOverrides || {}; state.dataModelSettings = flowDraft.dataModelSettings || {}; state.dataModelOptions = { ...state.dataModelOptions, ...(flowDraft.dataModelOptions || {}) }; state.dataModelAttributeEnabled = flowDraft.dataModelAttributeEnabled || {}; state.dataModelParents = flowDraft.dataModelParents || state.dataModelParents; if (!flowDraft.dataModelAttributeEnabled && flowDraft.dataModelOptions?.addAttributes) DATA_MODEL_GROUPS.forEach((group) => { if (state.dataModelSettings[group]) state.dataModelAttributeEnabled[group] = true; }); state.dataModelAttributeGroup = DATA_MODEL_GROUPS.includes(flowDraft.dataModelAttributeGroup) ? flowDraft.dataModelAttributeGroup : "Profile"; state.dataModelAttributeObjectName = flowDraft.dataModelAttributeObjectName || ""; state.dataModelAttributeColumns = flowDraft.dataModelAttributeColumns || Object.fromEntries(Object.entries(flowDraft.dataModelColumnOverrides || {}).map(([group, additions]) => [group, [...dataModelDefaultColumns(group), ...(Array.isArray(additions) ? additions : [])]])); if (state.dataViewerSettings.customer && !state.dataViewerSettings.Customer) { state.dataViewerSettings.Customer = true; delete state.dataViewerSettings.customer; } if (state.dataViewerSettings.Customer && !state.dataViewerSettings.ContactPoint && !state.dataViewerOptions.contactPointExplicitlyUnselected) state.dataViewerSettings.ContactPoint = true; const savedSchedulers = flowDraft.schedulers || {}; state.schedulers = Object.fromEntries(Object.keys(state.schedulers).map((key) => [key, normalizeScheduler(key, savedSchedulers[key]) ])); if (Array.isArray(flowDraft.flowSteps)) { const legacyDefaultSteps = ["dataViewer", "source", "destination", "export", "import", "publish", "verify"]; const isLegacyDefault = legacyDefaultSteps.every((step) => flowDraft.flowSteps.includes(step)); const keepRunningFlow = /^Running:/.test(e2eStatus || ""); DEFAULT_FLOW.forEach((step) => { document.getElementById(`flow-${step}`).checked = !isLegacyDefault || keepRunningFlow ? flowDraft.flowSteps.includes(step) : false; }); } }
+    if (flowDraft) { if (state.templates.some((template) => template.id === flowDraft.templateId && template.kind !== "direct")) state.templateId = flowDraft.templateId; state.syncImportWithExport = flowDraft.syncImportWithExport !== false; state.transferRoutes = flowDraft.transferRoutes && typeof flowDraft.transferRoutes === "object" ? flowDraft.transferRoutes : {}; state.singleImportTemplateId = flowDraft.singleImportTemplateId || ""; if (["combined", "separate", "separateJobs"].includes(flowDraft.importMappingMode)) state.importMappingMode = flowDraft.importMappingMode; }
     // Existing-object targets are intentional per-run input. Never restore a
     if (flowDraft?.importCustomSettings && typeof flowDraft.importCustomSettings === "object") state.importCustomSettings = flowDraft.importCustomSettings;
     // prior target when this popup is reopened.
@@ -1152,10 +1403,7 @@ async function initialize() {
     // Older drafts did not contain its selection state, which made the Custom
     // Flow handler stop before it sent the automation message.
     if (!flowDraft?.dataViewerSettings && document.getElementById("flow-dataViewer").checked && !selectedDataViewerTables().length) state.dataViewerSettings = { Customer: true, ContactPoint: true };
-    if (!selectedDataModelGroups().length) {
-      state.dataModelSettings = { Profile: true };
-      state.dataModelAttributeEnabled = { Profile: true };
-    }
+    resetWorkflowSession();
     // One-time, non-destructive migration: retain a user's current draft as
     // an explicitly named starting point for the new reusable preset system.
     if (flowDraft && !jobPresets.some((preset) => preset?.config?.kind === "import")) jobPresets.unshift({ id: crypto.randomUUID(), name: "Imported Import draft", savedAt: Date.now(), config: jobPresetConfig("import") });
@@ -1164,14 +1412,16 @@ async function initialize() {
     if (flowDraft) await persistPresets();
     await loadTenantSchedulerPreference();
     document.getElementById("dataViewerRecordsPerTable").value = state.dataViewerOptions.recordsPerTable;
-    document.getElementById("dataViewerSourceId").value = state.dataViewerOptions.sourceId;
+    document.getElementById("dataViewerStartingIndex").value = state.dataViewerOptions.startingIndex || "";
+    document.getElementById("dataViewerSourceId").value = state.dataViewerOptions.sourceId || "CDP";
     document.getElementById("dataViewerParentCustomerId").value = state.dataViewerOptions.parentSourceCustomerId;
     document.getElementById("dataViewerDryRun").checked = state.dataViewerOptions.dryRun;
     document.getElementById("runDataViewerBtn").textContent = state.dataViewerOptions.dryRun ? "▶ Test Data Viewer Record" : "▶ Save Data Viewer Record";
     await chrome.storage.local.remove("popupAccordionState");
     const history = Array.isArray(runHistory) && runHistory.length ? runHistory : (lastRun ? [{ ...lastRun, outcome: lastRun.outcome || "completed" }] : []);
     if (!runHistory?.length && history.length) await chrome.storage.local.set({ runHistory: history.slice(0, 5) });
-    setStatus(e2eStatus); renderRunHistory(history); showActivitySection("runs"); showView(["flow", "activity"].includes(popupView) ? popupView : "flow", false); renderAll(); renderPresetRows(); refreshLiveDataViewerTables({ quiet: true });
+    if (state.syncImportWithExport) syncImportSelectionsFromExport();
+    setStatus(e2eStatus); renderRunHistory(history); showActivitySection("runs"); showView("flow", false); renderAll(); renderPresetRows(); refreshLiveDataViewerTables({ quiet: true });
   } catch (error) {
     setStatus(`Catalog error: ${error.message || error}`);
   }

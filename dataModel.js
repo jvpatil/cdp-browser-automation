@@ -363,8 +363,8 @@ window.cdpDataModelSaveAttribute = async () => {
       .find((element) => visible(element) && normal(text(element)) === normal(label)) || null;
   }
 
-  async function waitForRelationshipDialog() {
-    return waitFor(relationshipDialog, "Create relationship dialog");
+  async function waitForRelationshipDialog(timeout = 60000) {
+    return waitFor(relationshipDialog, "Create relationship dialog", timeout);
   }
 
   function detailsTab() {
@@ -374,7 +374,8 @@ window.cdpDataModelSaveAttribute = async () => {
 
   function createRelationshipControl() {
     const control = document.getElementById("create-foreign-key-plus");
-    return visible(control) ? control : null;
+    const target = control?.querySelector?.("button") || control;
+    return control?.isConnected && visible(control) && target && !target.disabled ? control : null;
   }
 
   window.cdpDataModelCreateRelationship = async (group, objectName, parentName) => {
@@ -390,10 +391,21 @@ window.cdpDataModelSaveAttribute = async () => {
     // text-only "Create relationship" lookup could target a stale control on
     // the Attributes view and report a false save.
     await click(await waitFor(detailsTab, "Data Model Details tab"));
-    await waitFor(createRelationshipControl, "Create relationship control in Details");
-    await sleep(800);
-    await click(createRelationshipControl());
-    const dialog = await waitForRelationshipDialog();
+    // The Details panel can re-render after selecting an object. Click the
+    // exact connected instance that satisfied the wait, not a later lookup.
+    let relationshipControl = await waitFor(createRelationshipControl, "Create relationship control in Details");
+    await click(relationshipControl);
+
+    let dialog = null;
+    try {
+      dialog = await waitForRelationshipDialog(8000);
+    } catch (_) {
+      // One fresh-control retry covers the Details-panel re-render race
+      // without repeatedly creating dialogs or leaving the runner looping.
+      relationshipControl = await waitFor(createRelationshipControl, "refreshed Create relationship control in Details");
+      await click(relationshipControl);
+      dialog = await waitForRelationshipDialog();
+    }
     const childRadio = await waitFor(() => {
       const input = dialog.querySelector('input[name="object-one"][value="child"]');
       return visible(input) ? input : null;

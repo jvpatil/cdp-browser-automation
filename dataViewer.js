@@ -86,7 +86,10 @@
   const drawerIsLoading = (drawer) => [...(drawer?.querySelectorAll("oj-cx-unity-loader, .table-skeleton-container, .oj-animation-skeleton") || [])]
     .some((element) => visible(element));
   const drawerFormReady = (drawer) => {
-    if (!drawer || drawerIsLoading(drawer) || !entryFieldKeys(drawer).length) return false;
+    // Identifier-only custom objects can show only optional audit fields on
+    // page one. They still have a valid Next action and their required PK/FK
+    // inputs appear on page two, so do not require a writable first-page key.
+    if (!drawer || drawerIsLoading(drawer)) return false;
     const next = [...drawer.querySelectorAll("button")]
       .find((button) => visible(button) && /^next$/i.test(text(button)));
     return Boolean(next && !next.disabled && next.getAttribute("aria-disabled") !== "true");
@@ -143,8 +146,8 @@
     }
   };
 
-  const valueContext = (sequence, tableSequence, sourceId, objectId) => {
-    const now = new Date();
+  const valueContext = (sequence, tableSequence, sourceId, objectId, runDate = new Date()) => {
+    const now = runDate;
     const pad = (value) => String(value).padStart(2, "0");
     const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
     const timestamp = `${date}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
@@ -155,6 +158,7 @@
       month: String(now.getMonth() + 1),
       year: String(now.getFullYear()),
       ddmm: `${pad(now.getDate())}${pad(now.getMonth() + 1)}`,
+      ddmmyy: `${pad(now.getDate())}${pad(now.getMonth() + 1)}${String(now.getFullYear()).slice(-2)}`,
       sequence: String(sequence),
       tableSequence: String(tableSequence),
       sourceId,
@@ -165,20 +169,21 @@
   const tableShortCode = (tableName) => {
     // Keep generated source-object IDs short but unambiguous.  Single-word
     // tables use their first two letters; multi-word tables use initials.
-    const configured = { Customer: "CU", ContactPoint: "CP", Address: "AD", Account: "AC", Product: "PR" }[tableName];
+    const rootName = String(tableName || "").split(/[\s_-]+/)[0];
+    const configured = { Customer: "CU", ContactPoint: "CP", Address: "AD", Account: "AC", Product: "PR", Profile: "PR", Behavioral: "BH", Transactional: "TR", Other: "OT" }[rootName];
     if (configured) return configured;
     const words = String(tableName || "").replace(/([a-z])([A-Z])/g, "$1 $2").split(/[\s_-]+/).filter(Boolean);
     if (words.length === 1) return (words[0].slice(0, 2) || "UI").toUpperCase();
     return (words.map((word) => word[0]).join("") || "UI").toUpperCase();
   };
-  const sourceObjectIdFor = (tableName, context, tableSequence) => {
-    const prefix = tableShortCode(tableName);
-    const base = `${prefix}-${context.ddmm}`;
-    return tableSequence > 1 ? `${base}-${tableSequence - 1}` : base;
-  };
+  const sourceObjectIdFor = (_tableName, context, tableSequence) => `${context.ddmmyy}${String(Math.max(1, Number(tableSequence) || 1)).padStart(3, "0")}`;
   const canonicalSourceKey = (field) => String(field || "")
     .replace(/^field-/, "")
-    .replace(/^Column[-_ ]*/i, "");
+    .replace(/^Column[-_ ]*/i, "")
+    // Custom-table foreign keys are physical attributes such as
+    // SourceCustomerID_c. Keep the actual field ID for DOM input lookup, but
+    // remove this suffix when deciding which parent key it represents.
+    .replace(/_c$/i, "");
   const sourceKeyComparable = (field) => canonicalSourceKey(field).replace(/[^a-z0-9]/gi, "").toLowerCase();
   const sourceKeyFieldNames = (drawer) => [...drawer.querySelectorAll("input[id$='|input'], textarea[id$='|input']")]
     .filter((input) => !input.disabled)
@@ -190,35 +195,66 @@
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/\s+/g, " ")
     .trim();
+  const recordEmailForSequence = (sequence) => {
+    const recordNumber = Math.max(1, Number.parseInt(sequence, 10) || 1);
+    const seededEmails = [
+      "jagannath.patil@oracle.com",
+      "jagan.test01@gmail.com",
+      "jagan.test01@yahoo.com",
+      "jagan.test02@gmail.com",
+      "jagan.test02@yahoo.com"
+    ];
+    if (recordNumber <= seededEmails.length) return seededEmails[recordNumber - 1];
+    return `jagan.record.${Date.now().toString(36)}${recordNumber}@example.com`;
+  };
   const defaultFieldValue = (field, context) => {
     const known = {
       Email: "jagannath.patil@oracle.com", FirstName: "Jagannath", MiddleName: "Kumar", LastName: "Patil",
       Prefix: "Mr", Suffix: "Jr", Title: "Mr", Gender: "M", PrimaryLanguage: "English",
       Phone: "9999999999", BusinessPhone: "9999999999", MobilePhone: "9999999999", MobileNumber: "9999999999", Fax: "9999999999",
       ChannelType: "Email", OptInStatus: "In", IsDeliverable: "True", IsActive: "True", CountryCode: "US", Country: "United States",
-      Browser: "Chrome", BrowserType: "Desktop", DeviceType: "Desktop", OperatingSystem: "Windows", PlatformKey: "PK-001", PlatformType: "Desktop",
-      UserAgent: "Mozilla/5.0", ISP: "Oracle", MobileCarrier: "Oracle", MobileCode: "M1", MobileKeyword: "keyword1",
+      Browser: "Chrome", BrowserType: "Desktop", DeviceType: "Desktop", OperatingSystem: "Windows", PlatformKey: "WEB-PORTAL", PlatformType: "Desktop",
+      UserAgent: "Mozilla/5.0", ISP: "Oracle", MobileCarrier: "Airtel", MobileCode: "WELCOME10", MobileKeyword: "JOIN",
       Status: "Active", Type: "Standard",
-      AddressLine1: "500 Oracle Parkway", City: "Redwood City", State: "CA", ZipCode: "94065", Description: "Created by CDP Browser Automation",
-      Name: "Automation Test Record", Industry: "Technology", JobTitle: "Software Engineer", JobDepartment: "Engineering", JobSpeciality: "Automation",
-      JobTitleDescription: "Software engineering and test automation", JobTitleLevel: "2", JobCode: "SE-002", SourceAppID: "APP-001", SourcePushID: "PUSH-001", SourceUserID: "USER-001",
+      AddressLine1: "500 Oracle Parkway", City: "Redwood City", State: "CA", ZipCode: "94065", Description: "Enterprise customer profile for product engagement",
+      Name: "Northwind Enterprise", Industry: "Technology", JobTitle: "Product Manager", JobDepartment: "Product", JobSpeciality: "Customer Data Platform",
+      EventName: "Product Demo Requested", ProductName: "Oracle CX Unity", ProductCode: "OCX-UNITY-001", ProductCategory: "Customer Experience",
+      JobTitleDescription: "Product management for customer data experiences", JobTitleLevel: "2", JobCode: "PM-002",
       Region: "North America", CurrencyCode: "USD", CountryCode_ISOAlpha2: "US", CountryCode_ISOAlpha3: "USA", CompanyName: "Oracle"
     };
-    if (known[field] !== undefined) return known[field];
-    if (/birthday$/i.test(field)) return context.day;
-    if (/birthmonth$/i.test(field)) return context.month;
-    if (/birthyear$/i.test(field)) return context.year;
-    if (/(timestamp|(?:ts|dt))$/i.test(field)) return context.timestamp;
-    if (/date/i.test(field)) return context.date;
-    if (/(flag|^is|deliverable|active|enabled)/i.test(field)) return "True";
-    if (/(age|amount|revenue|score|rank|count|number|quantity|year|month|day|level)/i.test(field)) return "1";
-    if (/(email)/i.test(field)) return "jagannath.patil@oracle.com";
-    if (/(phone|mobile|fax)/i.test(field)) return "9999999999";
-    if (/(^source.*id$|\bid$)/i.test(field)) return `${field}-${context.sequence}`;
-    if (/name/i.test(field)) return `Sample ${field.replace(/([A-Z])/g, " $1").trim()}`;
-    if (/description|comment|note/i.test(field)) return `Sample ${field.replace(/([A-Z])/g, " $1").trim()} for automation testing`;
-    if (/code/i.test(field)) return "AUTO-001";
-    return "Sample Value";
+    const logicalField = String(field || "").replace(/^field-/, "").replace(/_c$/i, "");
+    const fieldKey = logicalField.replace(/[^a-z0-9]/gi, "").toLowerCase();
+    const knownByKey = Object.fromEntries(Object.entries(known).map(([key, value]) => [key.replace(/[^a-z0-9]/gi, "").toLowerCase(), value]));
+    const pick = (values) => values[(Math.max(1, Number(context.tableSequence) || 1) - 1) % values.length];
+    const semanticValues = {
+      customertype: ["B2B", "B2C"], loyaltytier: ["Gold", "Silver", "Platinum"], preferredchannel: ["Email", "SMS", "Push"],
+      lifecyclestage: ["Prospect", "Lead", "Customer", "Advocate"], channel: ["Email", "SMS", "Push"], channeltype: ["Email", "SMS", "Push"],
+      status: ["Active", "Qualified", "Engaged"], segment: ["Enterprise", "Growth", "Strategic"], priority: ["High", "Medium", "Low"],
+      industry: ["Technology", "Financial Services", "Retail"], productcategory: ["Customer Experience", "Cloud Services", "Analytics"],
+      productname: ["Oracle CX Unity", "Oracle CX Platform", "Oracle Analytics Cloud"], eventname: ["Product Viewed", "Form Submitted", "Webinar Registered"],
+      campaignname: ["Q3 Nurture Campaign", "Product Adoption Campaign", "Customer Expansion Campaign"], campaigncode: ["CMP-1001", "CMP-1002", "CMP-1003"],
+      currencycode: ["USD", "INR", "GBP"], country: ["United States", "India", "United Kingdom"], countrycode: ["US", "IN", "GB"],
+      city: ["Redwood City", "Bengaluru", "London"], state: ["CA", "KA", "London"], region: ["North America", "Asia Pacific", "Europe"]
+    };
+    if (/email/i.test(fieldKey)) return recordEmailForSequence(context.sequence);
+    if (/^sourceid$/i.test(fieldKey)) return context.sourceId;
+    if (/^source.*id$/i.test(fieldKey)) return sourceObjectIdFor("", context, context.tableSequence);
+    if (knownByKey[fieldKey] !== undefined) return knownByKey[fieldKey];
+    if (semanticValues[fieldKey]) return pick(semanticValues[fieldKey]);
+    if (/birthday$/i.test(fieldKey)) return context.day;
+    if (/birthmonth$/i.test(fieldKey)) return context.month;
+    if (/birthyear$/i.test(fieldKey)) return context.year;
+    if (/(timestamp|(?:ts|dt))$/i.test(fieldKey)) return context.timestamp;
+    if (/date/i.test(fieldKey)) return context.date;
+    if (/(flag|^is|deliverable|active|enabled)/i.test(fieldKey)) return "True";
+    if (/(age|amount|revenue|score|rank|count|number|quantity|year|month|day|level)/i.test(fieldKey)) return "1";
+    if (/(phone|mobile|fax)/i.test(fieldKey)) return "9999999999";
+    if (/cookie/i.test(fieldKey)) return `session_${context.ddmmyy}${String(context.tableSequence).padStart(3, "0")}`;
+    if (/url/i.test(fieldKey)) return "https://www.oracle.com/cx/";
+    if (/name/i.test(fieldKey)) return `Enterprise ${logicalField.replace(/([A-Z])/g, " $1").replace(/_/g, " ").trim()} ${context.tableSequence}`;
+    if (/description|comment|note/i.test(fieldKey)) return `${logicalField.replace(/([A-Z])/g, " $1").replace(/_/g, " ").trim()} for customer engagement record ${context.tableSequence}`;
+    if (/code/i.test(fieldKey)) return `CDP${String(context.tableSequence).padStart(3, "0")}`;
+    return `${logicalField.replace(/([A-Z])/g, " $1").replace(/_/g, " ").trim() || "Customer attribute"} ${context.ddmmyy}${String(context.tableSequence).padStart(3, "0")}`;
   };
 
   // Oracle JET hosts (oj-input-date, oj-select-single, etc.) are not native
@@ -247,7 +283,9 @@
     }
     const base = resolveValue(suppliedValues[0] || rawValue, context);
     const input = findField(drawer, field);
-    if (repeatCount <= 1 || !base || !suffixEligible(field, input)) return base;
+    // Email values are already sequenced by defaultFieldValue. Do not append a
+    // second suffix before the @ sign (for example, jagan.test01-2@gmail.com).
+    if (repeatCount <= 1 || !base || /email/i.test(field) || !suffixEligible(field, input)) return base;
     const marker = context.tableSequence;
     const at = base.indexOf("@");
     return at > 0 ? `${base.slice(0, at)}-${marker}${base.slice(at)}` : `${base}-${marker}`;
@@ -317,8 +355,9 @@
   window.runCdpDataViewer = async ({ tables = [], recordsPerTable = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false } = {}) => {
     if (!Array.isArray(tables) || !tables.length || tables.some((table) => !table?.cdpTable)) throw new Error("At least one Data Viewer table is required.");
     if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
-    const resolvedSourceId = String(sourceId || "").trim() || "UI";
+    const resolvedSourceId = String(sourceId || "").trim() || "CDP";
     const resolvedParentSourceCustomerId = String(parentSourceCustomerId || "").trim();
+    const dummySourceRunDate = new Date();
     const generatedObjectIds = {};
     const completed = [];
     // Keep a table selected while creating all of its records. This avoids
@@ -345,14 +384,15 @@
         setProgress(`Loading ${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
         await wait(() => drawerFormReady(drawer) ? drawer : null, `${table.cdpTable} record form to finish loading`, 60000);
         await chooseDrawerMode(drawer);
-        const context = valueContext(tableSequence, tableSequence, resolvedSourceId, "");
+        const context = valueContext(tableSequence, tableSequence, resolvedSourceId, "", dummySourceRunDate);
         const sourceObjectId = sourceObjectIdFor(table.cdpTable, context, tableSequence);
         context.objectId = sourceObjectId;
         const configuredValues = table.recordConfig?.values || {};
         const allowedFields = Array.isArray(table.enterableFieldIds) ? table.enterableFieldIds.map(normalize) : [];
         const fields = entryFieldKeys(drawer).filter((field) => !isAuditField(field) && (!allowedFields.length || allowedFields.includes(normalize(field))));
-        if (!fields.length) throw new Error(`${table.cdpTable} has no eligible non-system fields in the Add record drawer.`);
-        setProgress(`Filling ${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
+        setProgress(fields.length
+          ? `Filling ${table.cdpTable} record ${tableSequence}/${recordsPerTable}`
+          : `Skipping optional first-page fields for ${table.cdpTable}`);
         const skippedFields = [];
         for (const field of fields) {
           // Primary Email is the meaningful contact value for Customer and
@@ -362,10 +402,15 @@
             audit.actions.push({ action: "Skip", target: field, value: "not configured" });
             continue;
           }
-          const configuredValue = Object.hasOwn(configuredValues, field)
+          const hasConfiguredValue = Object.hasOwn(configuredValues, field);
+          const configuredValue = hasConfiguredValue
             ? configuredValues[field]
             : defaultFieldValue(field, context);
-          const value = configuredValueFor(configuredValue, field, table.cdpTable, drawer, context, recordsPerTable);
+          // Generated values already carry their meaningful per-record value;
+          // reserve automatic suffixing for an explicit user-configured value.
+          const value = hasConfiguredValue
+            ? configuredValueFor(configuredValue, field, table.cdpTable, drawer, context, recordsPerTable)
+            : configuredValue;
           try {
             await chooseValue(drawer, field, value);
             audit.fields.push({ field, value: auditValue(field, value) });
@@ -390,25 +435,44 @@
         audit.actions.push({ action: "Click", target: "Next" });
         setProgress(`Filling ${table.cdpTable} key fields`);
         await wait(() => findField(drawer, "SourceID") || findField(drawer, "Column_SourceID") || sourceKeyFieldNames(drawer).length, "the source ID fields", 60000);
-        const keyFields = sourceKeyFieldNames(drawer);
         const currentTableKey = String(table.sourceAttribute || `Source${table.cdpTable.replace(/[^A-Za-z0-9]/g, "")}ID`);
         // Parent IDs are stored by sequence. A child record at sequence 2 uses
         // the parent table's sequence-2 ID, even though all parent records are
-        // intentionally created before the child table is selected.
-        for (const field of keyFields) {
+        // intentionally created before the child table is selected. CDP can
+        // enable relationship keys only after SourceID and the table key have
+        // been committed, so discover and fill the live key set in stages.
+        const filledKeyFields = new Set();
+        const keyPriority = (field) => {
           const canonicalField = canonicalSourceKey(field);
-          let value;
-          if (/^SourceID$/i.test(canonicalField)) value = resolvedSourceId;
-          else if (sourceKeyComparable(canonicalField) === sourceKeyComparable(currentTableKey)) value = sourceObjectId;
-          else if (table.cdpTable === "ContactPoint" && /^SourceCustomerID$/i.test(canonicalField) && resolvedParentSourceCustomerId && !generatedObjectIds.Customer?.length) value = resolvedParentSourceCustomerId;
-          else {
-            const referencedTable = referencedTableFromKey(canonicalField).replace(/\s+/g, "");
-            value = generatedObjectIds[referencedTable]?.[tableSequence - 1]
-              || sourceObjectIdFor(referencedTable, context, tableSequence);
+          if (/^SourceID$/i.test(canonicalField)) return 0;
+          if (sourceKeyComparable(canonicalField) === sourceKeyComparable(currentTableKey)) return 1;
+          return 2;
+        };
+        for (let keyPass = 0; keyPass < 5; keyPass += 1) {
+          const keyFields = sourceKeyFieldNames(drawer)
+            .filter((field) => !filledKeyFields.has(field))
+            .sort((left, right) => keyPriority(left) - keyPriority(right));
+          if (!keyFields.length) {
+            await sleep(400);
+            continue;
           }
-          await chooseValue(drawer, field, value);
-          audit.keys.push({ field, value: auditValue(field, value) });
-          audit.actions.push({ action: "Type", target: field, value: auditValue(field, value) });
+          for (const field of keyFields) {
+            const canonicalField = canonicalSourceKey(field);
+            let value;
+            if (/^SourceID$/i.test(canonicalField)) value = resolvedSourceId;
+            else if (sourceKeyComparable(canonicalField) === sourceKeyComparable(currentTableKey)) value = sourceObjectId;
+            else if (table.cdpTable === "ContactPoint" && /^SourceCustomerID$/i.test(canonicalField) && resolvedParentSourceCustomerId && !generatedObjectIds.Customer?.length) value = resolvedParentSourceCustomerId;
+            else {
+              const referencedTable = referencedTableFromKey(canonicalField).replace(/\s+/g, "");
+              value = generatedObjectIds[referencedTable]?.[tableSequence - 1]
+                || sourceObjectIdFor(referencedTable, context, tableSequence);
+            }
+            await chooseValue(drawer, field, value);
+            filledKeyFields.add(field);
+            audit.keys.push({ field, value: auditValue(field, value) });
+            audit.actions.push({ action: "Type", target: field, value: auditValue(field, value) });
+          }
+          await sleep(500);
         }
         for (const [field, referencedTable] of Object.entries(table.recordConfig?.relationships || {})) {
           const referencedId = generatedObjectIds[referencedTable]?.[tableSequence - 1];

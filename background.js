@@ -167,6 +167,7 @@ function normalizeLiveDataViewerTable(table) {
     label: name,
     cdpTable: name,
     tableId,
+    resourceName: String(table?.resourceName || "").trim(),
     sourceAttribute: String(table?.sourceAttribute || "").trim(),
     versionTS: Number(table?.versionTS || 0) || 0,
     isCustom: /_c$/i.test(tableId) || (table?.createdBy && !/^system$/i.test(String(table.createdBy)))
@@ -187,11 +188,7 @@ async function loadLiveDataViewerTables(tabId) {
   });
 }
 
-async function loadLiveDataViewerFields(tabId, table) {
-  const tableId = encodeURIComponent(String(table?.tableId || table?.id || table || ""));
-  if (!tableId) throw new Error("A Data Viewer table ID is required.");
-  const before = Number(table?.versionTS || 0);
-  const response = await fetchCdpMetadata(tabId, `tables/${tableId}${before ? `?before=${before}` : ""}`);
+function liveDataViewerFieldsFromMetadata(response) {
   const unique = new Map();
   for (const field of metadataFieldList(response)) {
     const fieldId = String(field?.fieldId || field?.id || field?.name || "").trim();
@@ -204,11 +201,23 @@ async function loadLiveDataViewerFields(tabId, table) {
     unique.set(fieldId, {
       fieldId,
       displayName: displayName || fieldId,
-      dataType: String(field?.dataType || field?.type || "string").toLowerCase(),
+      // CDP table metadata nests the physical type under `type.dataType`.
+      // Reading that first lets API record generation preserve numbers,
+      // booleans, dates, and collection values instead of treating every
+      // attribute as an arbitrary string.
+      dataType: String(field?.dataType || field?.type?.dataType || field?.type?.name || "string").toLowerCase(),
       systemAttribute: rawSystemAttribute === true || /^true$/i.test(String(rawSystemAttribute || ""))
     });
   }
   return [...unique.values()];
+}
+
+async function loadLiveDataViewerFields(tabId, table) {
+  const tableId = encodeURIComponent(String(table?.tableId || table?.id || table || ""));
+  if (!tableId) throw new Error("A Data Viewer table ID is required.");
+  const before = Number(table?.versionTS || 0);
+  const response = await fetchCdpMetadata(tabId, `tables/${tableId}${before ? `?before=${before}` : ""}`);
+  return liveDataViewerFieldsFromMetadata(response);
 }
 
 function parentTableFromMetadataFields(fields = []) {
@@ -266,13 +275,26 @@ function csvCell(value, delimiter) {
 }
 
 function isAuditImportField(field) {
-  const name = String(field?.displayName || field?.fieldId || field?.header || field || "")
-    .replace(/[^a-z0-9]/gi, "").toLowerCase();
-  return /^(?:column)?(createdby|createddate|createdts|creationdate|creationts|modifiedby|modifieddate|modifiedts|lastmodifiedby|lastmodifieddate|lastmodifiedts|rowcreatedtimestamp|rowmodifiedtimestamp)$/.test(name);
+  const fieldNames = [field?.fieldId, field?.displayName, field?.name, field?.header, typeof field === "string" ? field : ""]
+    .map((value) => String(value || "").replace(/^column\s*[-_:]?\s*/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase())
+    .filter(Boolean);
+  return fieldNames.some((name) => /^(?:column)?(createdby|createddate|createdts|creationdate|creationts|modifiedby|modifieddate|modifiedts|lastmodifiedby|lastmodifieddate|lastmodifiedts|rowcreatedts|rowmodifiedts|rowcreatedtimestamp|rowmodifiedtimestamp)$/.test(name));
+}
+
+function isApiManagedField(field) {
+  if (isAuditImportField(field)) return true;
+  return [field?.fieldId, field?.displayName, field?.name, field?.header]
+    .map((value) => String(value || "").replace(/^column\s*[-_:]?\s*/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase())
+    .some((name) => name === "id" || name === "tenantid");
 }
 
 function importFieldKey(field) {
+  // Custom-object attributes are rendered by CDP as "Column - <name>".
+  // The prefix is presentational only: source CSV headers and OOTB attributes
+  // use the unprefixed key. Normalizing it here keeps all mapping, required
+  // source-key, and sample-value rules consistent across both object types.
   return String(field?.displayName || field?.fieldId || field?.header || field || "")
+    .replace(/^column\s*[-_:]?\s*/i, "")
     .replace(/_c$/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
@@ -338,33 +360,32 @@ function customObjectCode(table) {
 const CUSTOM_IMPORT_SOURCE_ORDER = ["PROFILE", "BEH", "TXN", "PRODUCT", "OTH"];
 
 function importHeaderForField(field) {
-  // CDP Import maps to display labels, not Data Viewer's internal Field IDs.
-  return String(field?.displayName || field?.fieldId || "")
-    .replace(/_c$/i, "")
-    .replace(/\s+/g, "")
-    .toLowerCase();
+  // CDP's Export job writes the physical fieldId as the CSV header. Display
+  // names (for example "Column - SourceProfile…") are UI-only and must not
+  // define the source-file contract. Preserve fieldId, including `_c`.
+  return String(field?.fieldId || "").trim().toLowerCase();
 }
 
-function sourceKeySampleValue(field, table) {
-  const id = String(field?.displayName || field?.fieldId || "");
+function sourceKeySampleValue(field, table, sequence = 1) {
+  const id = String(field?.displayName || field?.fieldId || "").replace(/^column\s*[-_:]?\s*/i, "");
   const related = id.replace(/^source/i, "").replace(/id$/i, "").replace(/_c$/i, "").replace(/[^a-z0-9]+/gi, "");
   const normalized = related.toLowerCase();
-  const code = normalized === "customer" ? "CU"
-    : normalized === "account" ? "AC"
-      : normalized === "contactpoint" ? "CP"
-        : normalized === "address" ? "AD"
-          : normalized === "product" ? "PR"
-            : normalized === "profile" ? "PF"
-              : String(table?.label || related || "OB").replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "OB";
-  return code + "-1001";
+  const codeFor = (name) => ({ customer: "CU", account: "AC", contactpoint: "CP", address: "AD", product: "PR", profile: "PR", behavioral: "BH", transactional: "TR", other: "OT" })[String(name || "").toLowerCase()];
+  const code = Object.entries({ customer: "CU", account: "AC", contactpoint: "CP", address: "AD", product: "PR", profile: "PR", behavioral: "BH", transactional: "TR", other: "OT" })
+    .find(([name]) => normalized.startsWith(name))?.[1]
+    || codeFor(String(table?.cdpTable || table?.label || "").split(/[_\s-]/)[0])
+    || String(table?.label || related || "OB").replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "OB";
+  const now = new Date();
+  const ddmm = String(now.getDate()).padStart(2, "0") + String(now.getMonth() + 1).padStart(2, "0");
+  return `${code}-${ddmm}-${Math.max(1, Number(sequence) || 1)}`;
 }
 
 function importSampleValueForField(field, table) {
-  const id = String(field?.displayName || field?.fieldId || "");
+  const id = String(field?.displayName || field?.fieldId || "").replace(/^column\s*[-_:]?\s*/i, "");
   const type = String(field?.dataType || "string").toLowerCase();
-  if (/^sourceid$/i.test(id)) return "UI";
+  if (/^sourceid$/i.test(id)) return "CDP";
   if (/^source.+id$/i.test(id)) return sourceKeySampleValue(field, table);
-  if (/email/i.test(id)) return "automation.test@oracle.com";
+  if (/email/i.test(id)) return recordEmailForSequence(1);
   if (/date/i.test(id) && type !== "timestamp") return new Date().toISOString().slice(0, 10);
   if (/timestamp|\bts\b/i.test(id) || type === "timestamp") return new Date().toISOString().slice(0, 19);
   if (/amount|score|count|number/i.test(id) || ["int", "bigint", "decimal"].includes(type)) return "1";
@@ -377,12 +398,65 @@ function downstreamImportFields() {
   // ContactPoint records needed by downstream profile/activation scenarios.
   return [
     { header: "sourceid", value: "UI", targets: ["Customer", "ContactPoint"] },
+    // Each custom object now carries SourceCustomerID through its Customer
+    // relationship. Reuse that real exported header for ContactPoint too;
+    // do not invent a SourceContactPointID field that exports never contain.
     { header: "sourcecustomerid", value: "CU-1001", targets: ["Customer", "ContactPoint"] },
-    { header: "email", value: "automation.test@oracle.com", targets: ["Customer", "ContactPoint"] },
-    { header: "sourcecontactpointid", value: "CP-1001", targets: ["ContactPoint"] },
-    { header: "OptInStatus", value: "In", targets: ["ContactPoint"] },
-    { header: "isdeliverable", value: "true", targets: ["ContactPoint"] }
+    // Opt-in and deliverability are derived from the real exported `email`
+    // column by static transformations during field mapping. Do not add
+    // fictional columns to the sample/import CSV contract.
+    { header: "email", value: recordEmailForSequence(1), targets: ["Customer", "ContactPoint"] }
   ];
+}
+
+const importHeaderKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+// `_c` is significant in the exported physical header, but a mapping-picker
+// label can omit it. Use this semantic key only to find the same bridge field;
+// never use it when writing the CSV header.
+const importHeaderSemanticKey = (value) => String(value || "").replace(/_c$/i, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+function customImportMappingRules(entries) {
+  // Every target object must receive its required Source<Table>ID. Reuse the
+  // real, physical source header from the selected custom object (with or
+  // without `_c`) instead of creating a second logical source column.
+  const fieldTargetAttributes = {};
+  const fieldStaticTransforms = {};
+  const findEntry = (name) => entries.find((entry) => importHeaderSemanticKey(entry.header) === importHeaderSemanticKey(name));
+  const sourceCustomerEntry = findEntry("sourcecustomerid");
+  if (sourceCustomerEntry) {
+    sourceCustomerEntry.targets = [...new Set([...sourceCustomerEntry.targets, "Customer", "ContactPoint"])];
+    fieldTargetAttributes[sourceCustomerEntry.header] = {
+      ContactPoint: ["SourceCustomerID", "SourceContactPointID"]
+    };
+  }
+  const sourceContactPointEntry = findEntry("sourcecontactpointid");
+  if (sourceContactPointEntry) sourceContactPointEntry.targets = [...new Set([...sourceContactPointEntry.targets, "ContactPoint"])];
+  const sourceAccountEntry = findEntry("sourceaccountid");
+  if (sourceAccountEntry) {
+    sourceAccountEntry.targets = [...new Set([...sourceAccountEntry.targets, "Account"])];
+    const sourceIdEntry = findEntry("sourceid");
+    if (sourceIdEntry) sourceIdEntry.targets = [...new Set([...sourceIdEntry.targets, "Account"])];
+  }
+  const emailEntry = findEntry("email");
+
+  for (const targetName of ["OptInStatus", "IsDeliverable"]) {
+    const directEntry = findEntry(targetName);
+    if (directEntry) {
+      // The field is genuinely present in the selected table's metadata and
+      // therefore in its export file: map it directly, never overwrite it.
+      directEntry.targets = [...new Set([...directEntry.targets, "ContactPoint"])];
+      continue;
+    }
+    // No real source field exists. Reuse email and supply CDP's required
+    // static ContactPoint value without introducing a made-up CSV header.
+    if (!emailEntry) continue;
+    const targetRules = fieldTargetAttributes[emailEntry.header] || { ContactPoint: ["Email"] };
+    targetRules.ContactPoint = [...new Set([...targetRules.ContactPoint, targetName])];
+    fieldTargetAttributes[emailEntry.header] = targetRules;
+    fieldStaticTransforms[emailEntry.header] ||= { ContactPoint: {} };
+    fieldStaticTransforms[emailEntry.header].ContactPoint[targetName] = targetName === "OptInStatus" ? "In" : "true";
+  }
+  return { fieldTargetAttributes, fieldStaticTransforms };
 }
 
 async function buildCustomImportConfig(tabId, tables, delimiter = ",", mappingMode = "combined") {
@@ -394,12 +468,12 @@ async function buildCustomImportConfig(tabId, tables, delimiter = ",", mappingMo
   const sources = [];
   for (const table of selected) {
     const allFields = await loadLiveDataViewerFields(tabId, table);
-    const required = new Set(["sourceid", String(table.sourceAttribute || "").toLowerCase()]);
+    const required = new Set(["sourceid", importFieldKey(table.sourceAttribute)]);
     for (const field of allFields) {
-      if (/^source.+id$/i.test(field.fieldId)) required.add(String(field.fieldId).toLowerCase());
+      if (/^source.+id$/i.test(importFieldKey(field))) required.add(importFieldKey(field));
     }
     const mappingFields = allFields.filter((field) =>
-      (!field.systemAttribute || required.has(String(field.fieldId).toLowerCase())) &&
+      (!field.systemAttribute || required.has(importFieldKey(field))) &&
       !isAuditImportField(field) &&
       !isDerivedImportField(field, allFields)
     );
@@ -414,17 +488,39 @@ async function buildCustomImportConfig(tabId, tables, delimiter = ",", mappingMo
         targets: [table.cdpTable]
       });
     }
+    // CDP can omit its default "Column - SourceID" and table-level
+    // "Column - Source<Table>ID" attributes from the metadata field list.
+    // They are nevertheless required by the import contract. Add them
+    // explicitly so their source-file headers are mapped to this custom
+    // object as well as to any downstream bridge records.
+    const tableSourceFieldId = String(
+      table.sourceAttribute || `Source${String(table.cdpTable || table.label || "").replace(/[^A-Za-z0-9]/g, "")}ID`
+    ).trim();
+    const requiredSourceEntries = [
+      { header: "sourceid", value: "CDP" },
+      {
+        header: importHeaderForField({ fieldId: tableSourceFieldId }),
+        value: sourceKeySampleValue({ fieldId: tableSourceFieldId }, table)
+      }
+    ];
+    for (const requiredSource of requiredSourceEntries) {
+      const existing = [...entriesByHeader.values()].find((entry) => importHeaderSemanticKey(entry.header) === importHeaderSemanticKey(requiredSource.header));
+      if (existing) existing.targets = [...new Set([...existing.targets, table.cdpTable])];
+      else entriesByHeader.set(requiredSource.header, { ...requiredSource, targets: [table.cdpTable] });
+    }
     for (const downstream of downstreamImportFields()) {
-      const existing = entriesByHeader.get(downstream.header);
+      const existing = [...entriesByHeader.values()].find((entry) => importHeaderSemanticKey(entry.header) === importHeaderSemanticKey(downstream.header));
       if (existing) existing.targets = [...new Set([...existing.targets, ...downstream.targets])];
       else entriesByHeader.set(downstream.header, { ...downstream });
     }
     const entries = [...entriesByHeader.values()];
+    const mappingRules = customImportMappingRules(entries);
     sources.push({
       table,
       sourceCode: customObjectCode(table),
       targetTables: [...new Set(entries.flatMap((entry) => entry.targets))],
       fieldToTable: Object.fromEntries(entries.map((entry) => [entry.header, entry.targets])),
+      ...mappingRules,
       parentBridge: "Customer + ContactPoint",
       mappingEntries: entries,
       csvContent: `${entries.map((entry) => csvCell(entry.header, separator)).join(separator)}\n${entries.map((entry) => csvCell(entry.value, separator)).join(separator)}\n`
@@ -438,7 +534,7 @@ async function buildCustomImportConfig(tabId, tables, delimiter = ",", mappingMo
       else entriesByHeader.set(entry.header, { ...entry, targets: [...entry.targets] });
     }
     const entries = [...entriesByHeader.values()];
-    return { sources: [{ sourceCode: "COMBINED", targetTables: [...new Set(entries.flatMap((entry) => entry.targets))], fieldToTable: Object.fromEntries(entries.map((entry) => [entry.header, entry.targets])), parentBridge: "Customer + ContactPoint", csvContent: entries.map((entry) => csvCell(entry.header, separator)).join(separator) + "\n" + entries.map((entry) => csvCell(entry.value, separator)).join(separator) + "\n" }] };
+    return { sources: [{ sourceCode: "COMBINED", targetTables: [...new Set(entries.flatMap((entry) => entry.targets))], fieldToTable: Object.fromEntries(entries.map((entry) => [entry.header, entry.targets])), ...customImportMappingRules(entries), parentBridge: "Customer + ContactPoint", csvContent: entries.map((entry) => csvCell(entry.header, separator)).join(separator) + "\n" + entries.map((entry) => csvCell(entry.value, separator)).join(separator) + "\n" }] };
   }
   return { sources };
 }
@@ -453,6 +549,7 @@ async function selectedTransferTemplate(templateId) {
   const vault = await cdpReadTemplates();
   const template = vault.templates.find((item) => item.id === templateId);
   if (!template) throw new Error("Select a valid transfer template before running automation.");
+  if (template.kind === "direct") throw new Error("Select a file-transfer template for Export or Import jobs.");
   if (!template.source?.type || !template.destination?.type) throw new Error("The selected transfer template is incomplete.");
   const profiles = await cdpReadConnectionProfiles();
   const resolve = (side) => {
@@ -2229,7 +2326,7 @@ async function verifyPublishedJobs(tabId, options) {
 async function runDataViewerStep(tabId, flow, runId) {
   const recordsPerTable = flow.recordsPerTable ?? 1;
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
-  const sourceId = String(flow.sourceId || "").trim() || "UI";
+  const sourceId = String(flow.sourceId || "").trim() || "CDP";
   const tableIds = [...new Set(flow.dataViewerTableIds || ["Customer"])];
   const tables = await resolveDataViewerTables(tabId, tableIds, flow.dataViewerOverrides || {}, flow.dataViewerParents || {});
   const tab = await chrome.tabs.get(tabId);
@@ -2518,6 +2615,41 @@ async function runConfiguredFlow(tabId, flow = {}) {
   // dedicated Source instead of reusing the generic Import Source.
   const responsysSourceConfig = template ? responsysSourceRuntime(template, connectionSequence) : null;
   const destinationConfig = template ? connectionRuntime(template, "destination", connectionSequence) : null;
+  const routeStates = new Map();
+  let routeOrdinal = 1;
+  routeStates.set(template?.id, { template, sequence: connectionSequence, source: sourceConfig, destination: destinationConfig, defaultRoute: true });
+  const routeTemplateFor = async (label, explicitTemplateId = "") => {
+    const templateId = explicitTemplateId || flow.transferRoutes?.[label] || template?.id;
+    if (!templateId) throw new Error(`Select a transfer template for ${label}.`);
+    if (routeStates.has(templateId)) return routeStates.get(templateId);
+    const routeTemplate = await selectedTransferTemplate(templateId);
+    if (routeTemplate.kind === "direct") throw new Error(`${routeTemplate.name} is a direct application template and cannot be used for file transfer jobs.`);
+    const sequence = { ...connectionSequence, ordinal: ++routeOrdinal };
+    const state = { template: { ...routeTemplate, connectionPurpose: flow.connectionPurpose || "" }, sequence, source: null, destination: null, defaultRoute: false };
+    state.source = connectionRuntime(state.template, "source", sequence);
+    state.destination = connectionRuntime(state.template, "destination", sequence);
+    routeStates.set(templateId, state);
+    return state;
+  };
+  const ensureRouteConnection = async (route, side) => {
+    const config = route[side];
+    const readyKey = `${side}Ready`;
+    if (route[readyKey]) return config;
+    if (route.defaultRoute) { route[readyKey] = true; return config; }
+    const definition = side === "source"
+      ? { filename: "source.js", label: `Create Source · ${route.template.name}`, saveSelector: "#create-source-saveClose" }
+      : { filename: "destination.js", label: `Create Destination · ${route.template.name}`, saveSelector: "#dst-saveClose-btn" };
+    await setE2EStatus(`Running: ${definition.label}`, tabId);
+    await runTask(tabId, definition.filename, { runId, stepId: `${definition.filename}:${route.template.id}`, saveSelector: definition.saveSelector }, undefined, undefined, undefined, undefined, config);
+    await waitForStep(tabId, definition.label, definition.saveSelector, runId, `${definition.filename}:${route.template.id}`);
+    await rememberConnectionSequence(route.template.id, route.sequence);
+    const saved = await captureCreatedEntity(tabId, runMetadata, definition.filename, config.name);
+    if (saved?.name) config.name = saved.name;
+    route[readyKey] = true;
+    runSnapshot.connections[`${side}:${route.template.name}`] = config.name;
+    await saveRunSnapshot({ ...runSnapshot, connections: { ...runSnapshot.connections } });
+    return config;
+  };
   // A job always owns its prerequisite connection, even when the user did not
   // select the connection card explicitly in a custom flow.
   if (selectedSteps.has("import")) selectedSteps.add("source");
@@ -2609,54 +2741,25 @@ async function runConfiguredFlow(tabId, flow = {}) {
       }
       if (step.id === "export" || step.id === "import" || step.id === "responsys") {
         const monitor = { runId, stepId: step.filename, saveSelector: step.saveSelector };
-        const result = step.id === "export"
-          ? await runExportJobBatch(tabId, {
-            origin: flow.origin || "custom-flow",
-            runId,
-            template,
-            connectionSequence,
-            connection: destinationConfig,
-            schedule,
-            filterRecords: flow.exportFilterRecords,
-            payloadType: flow.exportPayloadType,
-            payloadName: flow.exportPayloadName || "Customer",
-            exportPayloads: flow.exportPayloads || [flow.exportPayloadName || "Customer"],
-            customTables: flow.exportCustomTables || [],
-            customTable: flow.exportCustomTable || null,
-            jobName: flow.exportJobName,
-            description: flow.exportDescription,
-            notification: flow.notification,
-            monitor,
-            runMetadata
-          })
-          : await (flow.importMappingMode === "separateJobs" ? runImportJobBatch : runImportJobRequest)(tabId, {
-            origin: flow.origin || "custom-flow",
-            runId,
-            template,
-            connectionSequence,
-            connection: step.id === "responsys" ? responsysSourceConfig : sourceConfig,
-            schedule,
-            variant: step.id === "responsys" ? "responsys" : (flow.importVariant || "generic"),
-            tableIds: step.id === "responsys" ? [] : (flow.importTableIds || (flow.importCustomTables?.length ? [] : ["customer", "contactPoint"])),
-            customTables: step.id === "responsys" ? [] : (flow.importCustomTables || []),
-            mappingMode: flow.importMappingMode || "combined",
-            jobName: flow.importJobName,
-            description: flow.importDescription,
-            notification: flow.notification,
-            monitor,
-            runMetadata,
-            allowImportFallback: flow.allowImportFallback
-          });
-        runSnapshot.jobs.push({
-          kind: step.id,
-          variant: result.request.variant || "generic",
-          name: result.saved?.name || result.request.jobName,
-          connectionName: result.request.connection?.name || "",
-          payloadName: result.request.payloadName || "",
-          tableIds: result.request.tableIds || [],
-          scheduler: result.request.schedule
-        });
-        await saveRunSnapshot({ ...runSnapshot, jobs: [...runSnapshot.jobs] });
+        const recordJob = async (result) => { runSnapshot.jobs.push({ kind: step.id, variant: result.request.variant || "generic", name: result.saved?.name || result.request.jobName, connectionName: result.request.connection?.name || "", payloadName: result.request.payloadName || "", tableIds: result.request.tableIds || [], templateId: result.request.template?.id || "", templateName: result.request.template?.name || "", scheduler: result.request.schedule }); await saveRunSnapshot({ ...runSnapshot, jobs: [...runSnapshot.jobs] }); };
+        if (step.id === "export") {
+          for (const payloadName of [...new Set(flow.exportPayloads || [flow.exportPayloadName || "Customer"])]) {
+            const route = await routeTemplateFor(payloadName);
+            const connection = await ensureRouteConnection(route, "destination");
+            const customTable = (flow.exportCustomTables || []).find((item) => item.label === payloadName) || (flow.exportCustomTable?.label === payloadName ? flow.exportCustomTable : null);
+            await recordJob(await runExportJobRequest(tabId, { origin: flow.origin || "custom-flow", runId, template: route.template, connectionSequence: route.sequence, connection, schedule, filterRecords: flow.exportFilterRecords, payloadType: flow.exportPayloadType, payloadName, customTable, jobName: flow.exportJobName, description: flow.exportDescription, notification: flow.notification, monitor, runMetadata }));
+          }
+        } else if (step.id === "responsys") {
+          await recordJob(await runImportJobRequest(tabId, { origin: flow.origin || "custom-flow", runId, template, connectionSequence, connection: responsysSourceConfig, schedule, variant: "responsys", tableIds: [], customTables: [], mappingMode: "combined", jobName: flow.importJobName, description: flow.importDescription, notification: flow.notification, monitor, runMetadata, allowImportFallback: flow.allowImportFallback }));
+        } else if (flow.importMappingMode === "separateJobs") {
+          const catalog = await loadTableCatalog();
+          const entries = [...(flow.importTableIds || []).map((tableId) => ({ label: catalog.importsById[tableId]?.label || tableId, tableIds: [tableId], customTables: [] })), ...(flow.importCustomTables || []).map((customTable) => ({ label: customTable.label || customTable.cdpTable, tableIds: [], customTables: [customTable] }))];
+          for (const entry of entries) { const route = await routeTemplateFor(entry.label); const connection = await ensureRouteConnection(route, "source"); await recordJob(await runImportJobRequest(tabId, { origin: flow.origin || "custom-flow", runId, template: route.template, connectionSequence: route.sequence, connection, schedule, variant: flow.importVariant || "generic", ...entry, mappingMode: "combined", jobName: flow.importJobName, description: flow.importDescription, notification: flow.notification, monitor, runMetadata, allowImportFallback: flow.allowImportFallback })); }
+        } else {
+          const route = await routeTemplateFor("__singleImport__", flow.singleImportTemplateId || template.id);
+          const connection = await ensureRouteConnection(route, "source");
+          await recordJob(await runImportJobRequest(tabId, { origin: flow.origin || "custom-flow", runId, template: route.template, connectionSequence: route.sequence, connection, schedule, variant: flow.importVariant || "generic", tableIds: flow.importTableIds || (flow.importCustomTables?.length ? [] : ["customer", "contactPoint"]), customTables: flow.importCustomTables || [], mappingMode: flow.importMappingMode || "combined", jobName: flow.importJobName, description: flow.importDescription, notification: flow.notification, monitor, runMetadata, allowImportFallback: flow.allowImportFallback }));
+        }
         continue;
       }
       const connectionConfig = step.id === "source"
@@ -2687,6 +2790,8 @@ async function runConfiguredFlow(tabId, flow = {}) {
       if (step.id === "source" && savedEntity?.name) sourceConfig.name = savedEntity.name;
       if (step.id === "responsysSource" && savedEntity?.name) responsysSourceConfig.name = savedEntity.name;
       if (step.id === "destination" && savedEntity?.name) destinationConfig.name = savedEntity.name;
+      if (step.id === "source") routeStates.get(template?.id).sourceReady = true;
+      if (step.id === "destination") routeStates.get(template?.id).destinationReady = true;
       if (step.id === "source" || step.id === "responsysSource" || step.id === "destination") {
         runSnapshot.connections[step.id] = savedEntity?.name || connectionConfig?.name || "";
         await saveRunSnapshot({ ...runSnapshot, connections: { ...runSnapshot.connections } });
@@ -2866,18 +2971,98 @@ async function resolveDataViewerTables(tabId, selections, overrides = {}, parent
 }
 
 
-function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}) {
+function recordEmailForSequence(sequence) {
+  const recordNumber = Math.max(1, Number.parseInt(sequence, 10) || 1);
+  const seededEmails = [
+    "jagannath.patil@oracle.com",
+    "jagan.test01@gmail.com",
+    "jagan.test01@yahoo.com",
+    "jagan.test02@gmail.com",
+    "jagan.test02@yahoo.com"
+  ];
+  if (recordNumber <= seededEmails.length) return seededEmails[recordNumber - 1];
+  return `jagan.record.${Date.now().toString(36)}${recordNumber}@example.com`;
+}
+
+function apiDummySourceKey(sequence, runDate = new Date()) {
+  const pad = (value, width) => String(value).padStart(width, "0");
+  const datePart = `${pad(runDate.getDate(), 2)}${pad(runDate.getMonth() + 1, 2)}${pad(runDate.getFullYear() % 100, 2)}`;
+  return `${datePart}${pad(Math.max(1, Number(sequence) || 1), 3)}`;
+}
+
+function apiValueForLiveType(value, field) {
+  const dataType = String(field?.dataType || "string").toLowerCase();
+  if (/bool/.test(dataType)) return value === true || /^(true|y|yes|1)$/i.test(String(value));
+  if (/(?:int|long|decimal|double|float|number)/.test(dataType)) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+  // CDP MAP<STRING, STRING> attributes must be JSON objects. A plain string
+  // is accepted by JavaScript but is not a valid map value for the stream API.
+  if (/map/.test(dataType)) {
+    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+    return { value: String(value ?? "") };
+  }
+  if (/(?:array|list|collection)/.test(dataType)) return Array.isArray(value) ? value : [value];
+  return value;
+}
+
+function apiSupportedSourceField(field, sourceAttribute) {
+  const key = importFieldKey(field);
+  if (!/^source.+id$/i.test(key)) return true;
+  const allowed = new Set([
+    "sourceid",
+    importFieldKey({ fieldId: sourceAttribute }),
+    "sourcecustomerid",
+    "sourceaccountid",
+    "sourcecontactpointid"
+  ]);
+  // Do not fabricate values for unrelated standard fields such as
+  // SourceAppID, SourcePushID, or SourceUserID. Only the object source key
+  // and supported Customer/Account/ContactPoint relationship keys are sent.
+  return allowed.has(key);
+}
+
+function apiFullPayloadField(field, sourceAttribute) {
+  const dataType = String(field?.dataType || "string").toLowerCase();
+  const names = [field?.fieldId, field?.displayName, field?.name]
+    .map((value) => String(value || "").replace(/[^a-z0-9]/gi, "").toLowerCase());
+  // Complex collection values vary by tenant and can contain nested contracts.
+  // Keep the full-record debug payload to scalar fields only.
+  if (/(?:array|list|collection|map)/.test(dataType)) return false;
+  if (/timestamp/.test(dataType) || names.some((name) => /timestamp|ts$/.test(name))) return false;
+  return apiSupportedSourceField(field, sourceAttribute);
+}
+
+function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}, runDate = new Date()) {
   const fieldId = String(field?.fieldId || "");
   const displayName = String(field?.displayName || fieldId);
   const configured = recordConfig.values?.[fieldId] ?? recordConfig.values?.[displayName];
   const configuredValue = typeof configured === "object" && configured !== null ? configured.value : configured;
-  if (configuredValue !== undefined && configuredValue !== "") return String(configuredValue)
-    .replace(/\{\{sourceId\}\}/g, sourceId)
-    .replace(/\{\{sequence\}\}/g, String(sequence));
   const normalized = importFieldKey(field);
   const timestampDate = new Date(Date.now() + (sequence - 1) * 60_000);
   const date = timestampDate.toISOString().slice(0, 10);
   const timestamp = timestampDate.toISOString().slice(0, 19);
+  const typed = (value) => apiValueForLiveType(value, field);
+  // SourceID identifies the CDP stream. Keep it stable even when a saved
+  // record configuration contains an older override.
+  if (normalized === "sourceid") return "CDP";
+  // Customer birth components are real calendar values, not generic numeric
+  // defaults. Keep them aligned with the generated BirthDate for this record.
+  if (normalized === "birthdate") return typed(date);
+  if (normalized === "birthday") return typed(timestampDate.getDate());
+  if (normalized === "birthmonth") return typed(timestampDate.getMonth() + 1);
+  if (normalized === "birthyear") return typed(timestampDate.getFullYear());
+  if (normalized === "properties") return typed({ category: "customer", source: "CDP" });
+  // EmailFrequency is a choice field, not an email-address field.
+  if (normalized === "emailfrequency") return typed("Every day");
+  if (/email/i.test(normalized) && (configuredValue === undefined || configuredValue === "" || configuredValue === "jagannath.patil@oracle.com" || configuredValue === "{{email}}")) return typed(recordEmailForSequence(sequence));
+  if (configuredValue !== undefined && configuredValue !== "") return typed(String(configuredValue)
+    .replace(/\{\{sourceId\}\}/g, sourceId)
+    .replace(/\{\{sequence\}\}/g, String(sequence))
+    .replace(/\{\{email\}\}/g, recordEmailForSequence(sequence))
+    .replace(/\{\{date\}\}/g, date)
+    .replace(/\{\{timestamp\}\}/g, timestamp));
   const pick = (values) => values[(sequence - 1) % values.length];
   const semanticValues = {
     firstname: ["Jagan", "Anika", "Rahul", "Meera", "Arjun"],
@@ -2885,6 +3070,7 @@ function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}
     lastname: ["Patil", "Sharma", "Nair", "Iyer", "Rao"],
     customertype: ["B2B", "B2C"], preferredchannel: ["Email", "SMS", "Push"],
     channel: ["Email", "SMS", "Push", "Web"], channeltype: ["Email", "SMS", "Push"],
+    emailfrequency: ["Every day"], businessinterestarea: ["Oracle Cloud"],
     lifecyclestage: ["Prospect", "Lead", "Customer", "Advocate"], loyaltytier: ["Gold", "Silver", "Platinum"],
     industry: ["Technology", "Financial Services", "Retail", "Healthcare"], status: ["Active", "Qualified", "Engaged"],
     primarylanguage: ["English", "Hindi", "Spanish"], country: ["United States", "India", "United Kingdom"],
@@ -2893,36 +3079,43 @@ function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}
     postalcode: ["94065", "560001", "EC1A1BB"], addressline1: ["500 Oracle Parkway", "100 Innovation Drive", "1 Cloud Street"],
     companyname: ["Oracle", "Acme Technologies", "Northwind Traders"], organizationname: ["Oracle", "Acme Technologies", "Northwind Traders"],
     jobtitle: ["Software Engineer", "Marketing Manager", "Product Analyst", "Sales Director"],
-    jobdepartment: ["Engineering", "Marketing", "Product", "Sales"], jobspeciality: ["Automation", "Demand Generation", "Analytics", "Enterprise Sales"],
+    jobdepartment: ["Engineering", "Marketing", "Product", "Sales"], jobspeciality: ["Platform", "Demand Generation", "Analytics", "Enterprise Sales"],
     productname: ["Oracle Cloud Subscription", "Oracle CX Platform", "Oracle Analytics Cloud"],
     productcode: ["OCI-STD-001", "OCX-PRM-002", "OAC-ENT-003"], productcategory: ["Cloud Services", "Customer Experience", "Analytics"],
     currencycode: ["USD", "INR", "GBP"], transactionstatus: ["Completed", "Processing", "Approved"],
     eventname: ["Product Viewed", "Form Submitted", "Webinar Registered", "Content Downloaded", "Demo Requested"],
-    campaigncode: ["CMP-AUTO-1001", "CMP-AUTO-1002", "CMP-AUTO-1003", "CMP-AUTO-1004", "CMP-AUTO-1005"],
+    campaigncode: ["CMP-NURTURE-1001", "CMP-ADOPTION-1002", "CMP-EXPANSION-1003", "CMP-WEBINAR-1004", "CMP-RENEWAL-1005"],
     pageurl: ["https://www.oracle.com/cloud/", "https://www.oracle.com/cx/", "https://www.oracle.com/analytics/"],
     browser: ["Chrome", "Safari", "Firefox"], browsertype: ["Desktop", "Mobile"], devicetype: ["Desktop", "Mobile"],
     operatingsystem: ["macOS", "Windows", "iOS"], platformtype: ["Web", "Mobile App"], isp: ["Oracle", "Comcast", "Airtel"],
-    gender: ["M", "F"], prefix: ["Mr", "Ms"], suffix: ["Jr", "Sr"], title: ["Mr", "Ms"],
-    description: ["Automation test record", "API-loaded test record", "CDP validation record"]
+    gender: ["M", "F"], prefix: ["Mr", "Ms"], suffix: ["Jr", "Sr"], title: ["Engineer", "Manager"],
+    mobilecarrier: ["Verizon", "Airtel", "Vodafone"], mobilecode: ["WELCOME10", "CX2026", "MEMBER20"],
+    mobilekeyword: ["JOIN", "UPDATES", "OFFERS"], platformkey: ["WEB-PORTAL", "MOBILE-APP", "LOYALTY-HUB"],
+    optoutreason: ["Preference update", "Email frequency change", "Channel preference"],
+    nonsalesflag: ["False"], originalchannel: ["Email"], peerrank: ["High"], region: ["NA"], type: ["Guest"],
+    oktocall: ["Y"], oktoemail: ["Y"], oktomail: ["Y"], oktonotify: ["Y"], oktotext: ["Y"],
+    oktoshareinternally: ["Y"], oktosharewith3rdparties: ["Y"],
+    description: ["Customer engagement profile", "Marketing preference record", "Product interest record"]
   };
-  if (normalized === "sourceid") return "CDP";
-  if (/^source.+id$/i.test(fieldId)) {
-    const base = sourceKeySampleValue(field, table);
-    return sequence > 1 ? base + "-" + (sequence - 1) : base;
-  }
-  if (normalized === "optinstatus" || normalized === "optin") return "In";
-  if (normalized === "isdeliverable") return true;
-  if (normalized === "email") return "automation.test" + (sequence > 1 ? "." + sequence : "") + "@oracle.com";
-  if (normalized === "campaigncode") return "CMP-AUTO-" + String(1000 + sequence);
-  if (normalized === "productcode") return "PRD-AUTO-" + String(1000 + sequence);
-  if (semanticValues[normalized]) return pick(semanticValues[normalized]);
-  if (/timestamp|(?:ts|dt)$/i.test(displayName) || String(field?.dataType || "").toLowerCase() === "timestamp") return timestamp;
-  if (/date/i.test(displayName)) return date;
-  if (/^(is|has).+|deliverable|active|consent|enabled/i.test(displayName) || String(field?.dataType || "").toLowerCase() === "boolean") return true;
-  if (/age/i.test(displayName)) return 24 + sequence;
-  if (/amount|revenue|score|count|number|rank|level|quantity/i.test(displayName) || ["int", "bigint", "decimal", "number"].includes(String(field?.dataType || "").toLowerCase())) return 100 + sequence;
+  if (/^source.+id$/i.test(normalized)) return apiDummySourceKey(sequence, runDate);
+  if (normalized === "optinstatus" || normalized === "optin") return typed("In");
+  if (normalized === "isdeliverable") return typed(true);
+  if (/email/i.test(normalized)) return typed(recordEmailForSequence(sequence));
+  if (normalized === "campaigncode") return typed("CMP-NURTURE-" + String(1000 + sequence));
+  if (normalized === "productcode") return typed("PRD-CX-" + String(1000 + sequence));
+  if (semanticValues[normalized]) return typed(pick(semanticValues[normalized]));
+  if (/timestamp|(?:ts|dt)$/i.test(displayName) || /timestamp/.test(String(field?.dataType || "").toLowerCase())) return typed(timestamp);
+  if (/date/i.test(displayName)) return typed(date);
+  if (/^(is|has).+|deliverable|active|consent|enabled/i.test(displayName) || /bool/.test(String(field?.dataType || "").toLowerCase())) return typed(true);
+  if (/age/i.test(displayName)) return typed(24 + sequence);
+  if (/amount|revenue|score|count|number|rank|level|quantity/i.test(displayName) || /(?:int|long|decimal|double|float|number)/.test(String(field?.dataType || "").toLowerCase())) return typed(100 + sequence);
+  if (/phone|mobile|fax/i.test(displayName)) return typed(pick(["4155550101", "9876543210", "2071838750"]));
+  if (/cookie/i.test(displayName)) return typed("session_" + apiDummySourceKey(sequence, runDate));
+  if (/url/i.test(displayName)) return typed(pick(["https://www.oracle.com/cx/", "https://www.oracle.com/cloud/", "https://www.oracle.com/marketing/"]));
+  if (/comment|note|description/i.test(displayName)) return typed("Customer preference captured through a web form.");
+  if (/code|key/i.test(displayName)) return typed("REF-" + apiDummySourceKey(sequence, runDate));
   const readableField = displayName.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").trim();
-  return "Automation " + (readableField || "Record") + " " + sequence;
+  return typed((readableField || "Customer attribute") + " " + apiDummySourceKey(sequence, runDate));
 }
 
 function metadataTenantId(response) {
@@ -2977,41 +3170,74 @@ async function postCustomRecordsToCdp(tabId, payload, tenantId) {
   return result;
 }
 
-async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, sourceId = "UI", saveRecords = true, dataViewerOverrides = {} } = {}) {
+async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, startingIndex = 1, sourceId = "UI", saveRecords = true, dataViewerOverrides = {} } = {}) {
   if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
+  if (!Number.isSafeInteger(startingIndex) || startingIndex < 1 || startingIndex > 999) throw new Error("API start index must be a whole number from 1 through 999.");
+  if (startingIndex + recordsPerTable - 1 > 999) throw new Error("API start index plus records per table cannot exceed 999.");
   const runId = crypto.randomUUID();
   let failed = false;
   activeSequences.set(tabId, { runId, cancelled: false, status: "Running: API Load Custom Records" });
   await setE2EStatus("Running: API Load Custom Records", tabId);
   try {
     const tables = await resolveDataViewerTables(tabId, tableIds, dataViewerOverrides);
-    const customTables = tables.filter((table) => table.isCustom);
-    if (!customTables.length) throw new Error("API Load Custom Records supports custom objects only.");
-    // resolveDataViewerTables may add a related standard parent for FK planning.
-    // The stream request intentionally contains only the user-selected custom objects.
+    const requestedIds = new Set((tableIds || []).map((entry) => String(typeof entry === "string" ? entry : entry?.id || entry?.tableId || entry?.cdpTable || "").toLowerCase()));
+    // resolveDataViewerTables can append a related parent for UI-form FK planning.
+    // The stream request contains only tables chosen by the user.
+    const streamTables = tables.filter((table) => [table.id, table.tableId, table.cdpTable, table.label]
+      .some((value) => requestedIds.has(String(value || "").toLowerCase())));
+    if (!streamTables.length) throw new Error("Select at least one table to load through the API.");
     const payload = {};
     let resolvedTenantId = null;
-    for (const table of customTables) {
+    const resolvedSourceId = String(sourceId || "").trim() || "CDP";
+    const dummySourceRunDate = new Date();
+    for (const table of streamTables) {
       const metadata = await fetchCdpMetadata(tabId, "tables/" + encodeURIComponent(table.tableId || table.id));
       resolvedTenantId ||= metadataTenantId(metadata);
-      const fields = table.liveFields?.filter((field) => !field.systemAttribute && !isAuditImportField(field) && !isDerivedImportField(field, table.liveFields)) || [];
+      // The stream endpoint accepts API resource names, not the Data Viewer
+      // labels. For example, ContactPoint and Customer map to `contactpoints`
+      // and `customers` respectively.
+      const resourceName = String(metadata?.resourceName || table.resourceName || "").trim();
+      if (!resourceName) throw new Error("CDP did not return an API resource name for " + table.label + ".");
+      // API loads must use the current schema: custom fields can be added after
+      // the table list's versionTS snapshot was read. Do not reuse the
+      // versioned `table.liveFields` here, or required fields such as Email_c
+      // can be missing from the stream payload.
+      const liveFields = liveDataViewerFieldsFromMetadata(metadata);
+      const fields = liveFields.filter((field) => (!field.systemAttribute || /^source(?:.+)?id$/i.test(importFieldKey(field)))
+        && !isApiManagedField(field)
+        && !isDerivedImportField(field, liveFields)
+        && apiFullPayloadField(field, String(table.sourceAttribute || `Source${String(table.cdpTable || table.label || "").replace(/[^A-Za-z0-9]/g, "")}ID`).trim()));
       if (!fields.length) throw new Error("CDP did not return writable fields for " + table.label + ".");
+      // CDP's stream endpoint requires the table-level source attribute even
+      // when metadata classifies it as derived and therefore omits it from the
+      // normal writable-field list. Example: SourceProfile_KiwiFix_04Sep_2239ID.
+      const sourceAttribute = String(table.sourceAttribute || `Source${String(table.cdpTable || table.label || "").replace(/[^A-Za-z0-9]/g, "")}ID`).trim();
       const records = [];
-      for (let sequence = 1; sequence <= recordsPerTable; sequence += 1) {
+      for (let offset = 0; offset < recordsPerTable; offset += 1) {
+        const sequence = startingIndex + offset;
         const record = {};
-        for (const field of fields) record[field.fieldId] = apiRecordFieldValue(field, table, "CDP", sequence, table.recordConfig);
+        for (const field of fields.filter((field) => apiSupportedSourceField(field, sourceAttribute))) {
+          record[field.fieldId] = apiRecordFieldValue(field, table, resolvedSourceId, sequence, table.recordConfig, dummySourceRunDate);
+        }
+        // SourceID is the stream-level origin marker. It is required alongside
+        // the table-specific source attribute, but metadata can hide it from
+        // the enterable-field collection.
+        if (!Object.keys(record).some((key) => String(key).toLowerCase() === "sourceid")) record.SourceID = resolvedSourceId;
+        if (sourceAttribute && record[sourceAttribute] === undefined) {
+          record[sourceAttribute] = apiRecordFieldValue({ fieldId: sourceAttribute, displayName: sourceAttribute }, table, resolvedSourceId, sequence, table.recordConfig, dummySourceRunDate);
+        }
         records.push(record);
       }
-      payload[table.cdpTable] = records;
-      await appendRunLog("Prepared " + records.length + " API record" + (records.length === 1 ? "" : "s") + " with " + fields.length + " writable fields.", "info", table.label, "Prepare");
+      payload[resourceName] = records;
+      await appendRunLog("Prepared " + records.length + " API record" + (records.length === 1 ? "" : "s") + " with " + fields.length + " writable fields for resource " + resourceName + " (starting index " + startingIndex + ").", "info", table.label, "Prepare");
     }
     if (!saveRecords) {
       await appendRunLog("Dry run: API request was not sent.", "info", "API Load", "Dry run");
       return { payload, dryRun: true };
     }
     const response = await postCustomRecordsToCdp(tabId, payload, resolvedTenantId);
-    await appendRunLog("CDP stream API accepted " + customTables.length + " custom object payload" + (customTables.length === 1 ? "" : "s") + " (HTTP " + response.status + ").", "info", "API Load", "Save");
+    await appendRunLog("CDP stream API accepted " + streamTables.length + " table payload" + (streamTables.length === 1 ? "" : "s") + " (HTTP " + response.status + ").", "info", "API Load", "Save");
     return response;
   } catch (error) {
     failed = true;
@@ -3031,7 +3257,7 @@ async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, sourc
 async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false, dataViewerOverrides = {} } = {}) {
   if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
-  const resolvedSourceId = String(sourceId || "").trim() || "UI";
+  const resolvedSourceId = String(sourceId || "").trim() || "CDP";
   const tables = await resolveDataViewerTables(tabId, tableIds, dataViewerOverrides);
   const runId = crypto.randomUUID();
   let failed = false;
@@ -3066,6 +3292,211 @@ async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = 
     else if (cancelled) await finalizeRunHistory("stopped");
     else await finalizeRunHistory("completed");
     await clearFlowDraft();
+  }
+}
+
+async function runFusionUserPreparation(tabId, user = {}) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!/\.fusionapps\./i.test(new URL(tab.url).hostname)) throw new Error("Open the target Oracle Fusion Apps tab before preparing a user.");
+  if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
+  if (!user.lastName || !user.email || !user.userName || !user.password) throw new Error("Last name, email, user name, and password are required.");
+  if (user.password !== user.confirmPassword) throw new Error("Password and Confirm password must match.");
+
+  const runId = crypto.randomUUID();
+  activeSequences.set(tabId, { runId, cancelled: false, status: "Running: Prepare Fusion User" });
+  await setE2EStatus("Running: Prepare Fusion User", tabId);
+  try {
+    const waitDeadline = Date.now() + 60000;
+    let usersPageReady = false;
+    while (Date.now() < waitDeadline) {
+      const [{ result: state }] = await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN",
+        func: () => {
+          const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+          const controls = [...document.querySelectorAll("a,button,[role=button]")].filter((element) => element.getClientRects().length);
+          const exact = (label) => controls.find((element) => normalize(element.getAttribute("aria-label") || element.getAttribute("title") || element.textContent) === label);
+          if (exact("add user account")) return "ready";
+
+          // Security Console itself exposes Roles and Users.  Once there, go straight
+          // to Users; from any other Fusion page, use the navigator menu first.
+          const users = exact("users") || document.querySelector('[id*="ASE_FUSE_UM_WORKAREA"][id$="::disAcr"]');
+          const roles = exact("roles") || document.querySelector('[id*="ASE_FUSE_RM_WORKAREA"][id$="::disAcr"]');
+          if (users && roles) { users.click(); return "users"; }
+          const consoleLink = exact("security console") || document.querySelector('[id^="ASE_FUSE_SECURITY_CONSOLE_"]');
+          if (consoleLink && !window.__cdpFusionSecurityConsoleOpening) {
+            window.__cdpFusionSecurityConsoleOpening = true;
+            consoleLink.click();
+            return "security-console";
+          }
+          // The standard Fusion route is Navigator → Tools → Security Console.
+          // Only expand Tools after the Navigator drawer is open so an unrelated
+          // home-page application tile cannot be selected by mistake.
+          const tools = exact("tools");
+          if (tools && window.__cdpFusionNavigatorOpened && !window.__cdpFusionToolsOpened) {
+            window.__cdpFusionToolsOpened = true;
+            tools.click();
+            return "tools";
+          }
+          const navigator = controls.find((element) => normalize(element.getAttribute("aria-label") || element.getAttribute("title")) === "navigator");
+          if (navigator && !window.__cdpFusionNavigatorOpened) {
+            window.__cdpFusionNavigatorOpened = true;
+            navigator.click();
+            return "navigator";
+          }
+          // Some pods render the Navigator drawer asynchronously or omit the Tools
+          // item from its DOM.  The global Fusion search is the equivalent route.
+          const globalSearch = [...document.querySelectorAll("input,textarea")].find((element) => {
+            const id = String(element.id || "");
+            const label = normalize(element.getAttribute("aria-label") || element.getAttribute("placeholder") || element.getAttribute("title"));
+            return /_uisgsr/i.test(id) || label === "search" && /_uis/i.test(id);
+          });
+          if (globalSearch && !window.__cdpFusionSecuritySearchStarted) {
+            window.__cdpFusionSecuritySearchStarted = true;
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+            setter?.call(globalSearch, "Security Console");
+            globalSearch.dispatchEvent(new Event("input", { bubbles: true }));
+            globalSearch.dispatchEvent(new Event("change", { bubbles: true }));
+            globalSearch.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+            globalSearch.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
+            return "global-search";
+          }
+          return "waiting";
+        }
+      });
+      if (state === "ready") { usersPageReady = true; break; }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (!usersPageReady) throw new Error("Security Console → Users could not be opened automatically. Confirm the logged-in pod owner can access Security Console.");
+    await installStopGuard(tabId);
+    await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["fusionUser.js"] });
+    const [{ result: prepared }] = await chrome.scripting.executeScript({
+      target: { tabId }, world: "MAIN", args: [user],
+      func: async (details) => window.cdpFusionPrepareUser(details)
+    });
+    if (!prepared?.formReady) throw new Error("Fusion did not open the Add User Account form.");
+    // ADF ignores synthetic value events for several account fields. Re-enter
+    // every populated value through Chrome's trusted keyboard input before Save.
+    const typeFusionField = async (suffix, value, label) => {
+      if (!value) return;
+      const [{ result: inputId }] = await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN", args: [suffix],
+        func: (idSuffix) => document.querySelector(`input[id$="${idSuffix}"]`)?.id || ""
+      });
+      if (!inputId) throw new Error(`Fusion field unavailable: ${label}.`);
+      await typeJetInput(tabId, inputId, value, `Fusion ${label}`);
+    };
+    await typeFusionField(":auFirstName::content", user.firstName, "First Name");
+    await typeFusionField(":auLastName::content", user.lastName, "Last Name");
+    await typeFusionField(":auEmail::content", user.email, "Email");
+    await typeFusionField(":auPhone::content", user.phone, "Phone");
+    const userNameDeadline = Date.now() + 15000;
+    let emailDerivedUserName = false;
+    while (Date.now() < userNameDeadline && !emailDerivedUserName) {
+      const [{ result: populated }] = await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN",
+        func: () => Boolean(document.querySelector('input[id$=":itUsrLoginAdd::content"]')?.value?.trim())
+      });
+      emailDerivedUserName = Boolean(populated);
+      if (!emailDerivedUserName) await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!emailDerivedUserName) throw new Error("Fusion did not populate User Name from Email; cannot safely replace it with the requested user name.");
+    await typeFusionField(":itUsrLoginAdd::content", user.userName, "User Name");
+    await typeFusionField(":itPasswd::content", user.password, "Password");
+    await typeFusionField(":itConfPasswd::content", user.confirmPassword, "Confirm Password");
+    // The role picker is intentionally opened only after ADF has committed the
+    // account fields. This avoids a failed role search clearing the new form.
+    const [{ result: roleSetup }] = await chrome.scripting.executeScript({
+      target: { tabId }, world: "MAIN", args: [user.roles || []],
+      func: async (roles) => window.cdpFusionAddUserRoles(roles)
+    });
+    if (!roleSetup?.rolesReady) throw new Error("Fusion did not finish assigning the selected roles.");
+    const saveClickDeadline = Date.now() + 15000;
+    let saveClicked = false;
+    while (Date.now() < saveClickDeadline && !saveClicked) {
+      const [{ result: saveTarget }] = await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN",
+        func: () => {
+          const xpath = "//button[@title='Save and Close' and contains(@id, ':sp1:saveBtn') ]";
+          const save = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+          if (!save || save.disabled || !save.getClientRects().length) return null;
+          save.scrollIntoView({ block: "center" });
+          const rect = save.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        }
+      });
+      if (saveTarget) {
+        await trustedSchedulerClick(tabId, saveTarget, "Fusion Save and Close");
+        saveClicked = true;
+      }
+      if (!saveClicked) await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!saveClicked) throw new Error("Fusion Save and Close was unavailable or disabled.");
+    const saveDeadline = Date.now() + 5000;
+    let userCreated = false;
+    let saveValidationError = "";
+    while (Date.now() < saveDeadline) {
+      const [{ result: saveState }] = await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN",
+        func: () => {
+          const messages = [...document.querySelectorAll('[role="alert"], .af_message, .af_messages, .AFErrorText')]
+            .filter((element) => element.getClientRects().length)
+            .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim())
+            .filter((message) => /error|required|invalid|already exists|must enter/i.test(message));
+          const formOpen = [...document.querySelectorAll('h1, [title="Add User Account"]')]
+            .some((element) => String(element.textContent || element.getAttribute("title") || "").replace(/\s+/g, " ").trim() === "Add User Account");
+          return { formOpen, error: messages.join(" ") };
+        }
+      });
+      if (saveState?.error) { saveValidationError = saveState.error; break; }
+      if (!saveState?.formOpen) { userCreated = true; break; }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    if (saveValidationError) throw new Error(`Fusion rejected Save and Close: ${saveValidationError}`);
+    // This Fusion page often remains open without a confirmation after a valid
+    // save. The caller confirmed that absence of an error is the success signal.
+    userCreated = true;
+    let instanceAdminAdded = false;
+    if (user.instanceAdmin) {
+      await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["fusionUser.js"] });
+      const [{ result: instanceAdminSetup }] = await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN",
+        func: async () => window.cdpFusionBeginInstanceAdminAssignment()
+      });
+      if (!instanceAdminSetup?.inputId) throw new Error("Fusion did not expose the Instance Admin role search field.");
+      // This is an ADF autocomplete. Trusted typing is required for Fusion to
+      // accept the text as a search term; a script-set value yields zero rows.
+      await typeJetInput(tabId, instanceAdminSetup.inputId, "instance-admin", "Instance Admin role search");
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const [{ result: instanceAdminResult }] = await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN", args: [user.userName],
+        func: async (userName) => window.cdpFusionFinishInstanceAdminAssignment(userName)
+      });
+      if (!instanceAdminResult?.roleSaveReady) throw new Error("Fusion did not reach the Instance Admin Save and Close step.");
+      const [{ result: roleSaveTarget }] = await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN",
+        func: () => {
+          const xpath = "//button[@title='Save and Close' and contains(@id, 'cb1') ]";
+          const save = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+          if (!save || save.disabled || !save.getClientRects().length) return null;
+          save.scrollIntoView({ block: "center" });
+          const rect = save.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        }
+      });
+      if (!roleSaveTarget) throw new Error("Fusion Instance Admin Save and Close button is unavailable or disabled.");
+      await trustedSchedulerClick(tabId, roleSaveTarget, "Instance Admin Save and Close");
+      instanceAdminAdded = true;
+    }
+    const result = { userName: user.userName, roles: roleSetup.roles || [...new Set(user.roles || [])], created: true, instanceAdminAdded };
+    await appendRunLog(`Created ${result.userName} with ${result.roles.length} role${result.roles.length === 1 ? "" : "s"}${result.instanceAdminAdded ? " and assigned Instance Admin." : "."}`, "info", "Fusion User", "Created");
+    activeSequences.delete(tabId);
+    await setE2EStatus(result.instanceAdminAdded ? "Fusion user created and Instance Admin assigned." : "Fusion user created.", tabId);
+    await finalizeRunHistory("completed");
+    return result;
+  } catch (error) {
+    activeSequences.delete(tabId);
+    await setE2EStatus(`Failed: Prepare Fusion User`, tabId);
+    throw error;
   }
 }
 
@@ -3207,6 +3638,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "run-fusion-user") {
+    runFusionUserPreparation(message.tabId, message.user || {})
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
+    return true;
+  }
   if (message?.type === "run-data-model") {
     runDataModel(message.tabId, { purpose: message.connectionPurpose, groups: message.groups, saveObjects: message.saveObjects, attributeGroups: message.attributeGroups || [], addAttributes: message.addAttributes, columnOverrides: message.columnOverrides || {}, parentByGroup: message.parentByGroup || {} })
       .then(() => sendResponse({ ok: true }))
@@ -3220,7 +3657,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message?.type === "run-api-custom-records") {
-    runApiCustomRecords(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, sourceId: message.sourceId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
+    runApiCustomRecords(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, startingIndex: message.startingIndex, sourceId: message.sourceId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
     return true;

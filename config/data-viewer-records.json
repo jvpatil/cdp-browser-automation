@@ -3,7 +3,6 @@
   "tables": {
     "Customer": {
       "values": {
-        "Email": "jagannath.patil@oracle.com",
         "FirstName": "Jagannath",
         "MiddleName": "Responsys",
         "LastName": "Patil",
@@ -16,7 +15,6 @@
     },
     "ContactPoint": {
       "values": {
-        "Email": "jagannath.patil@oracle.com",
         "ChannelType": "Email",
         "IsDeliverable": "True",
         "OptInStatus": "In"
@@ -40,15 +38,15 @@
     },
     "Account": {
       "values": {
-        "Name": "Automation Test Account",
+        "Name": "Northwind Enterprise Account",
         "Industry": "Technology",
         "Status": "Active"
       }
     },
     "Product": {
       "values": {
-        "Name": "Automation Test Product",
-        "Description": "Created by CDP Browser Automation"
+        "Name": "Oracle CX Unity",
+        "Description": "Customer data platform subscription"
       }
     }
   }
