@@ -1,4 +1,5 @@
 importScripts("templateStore.js");
+importScripts("recordProfiles.js");
 
 const CDP_CONNECTION_SEQUENCE_KEY = "cdpConfirmedConnectionSequencesV2";
 
@@ -56,7 +57,7 @@ async function loadDataModelColumnConfig() {
       .then((config) => {
         const groups = config?.groups && typeof config.groups === "object" && !Array.isArray(config.groups) ? config.groups : null;
         if (!groups) throw new Error("config/data-model-columns.json must contain a groups object.");
-        return { groups };
+        return { groups, sharedTypeColumns: Array.isArray(config.sharedTypeColumns) ? config.sharedTypeColumns : [] };
       });
   }
   return dataModelColumnConfigPromise;
@@ -206,6 +207,8 @@ function liveDataViewerFieldsFromMetadata(response) {
       // booleans, dates, and collection values instead of treating every
       // attribute as an arbitrary string.
       dataType: String(field?.dataType || field?.type?.dataType || field?.type?.name || "string").toLowerCase(),
+      elementDataType: String(field?.type?.typeDescription?.dataType?.dataType || "").toLowerCase(),
+      required: field?.required === true || /^true$/i.test(String(field?.required || "")),
       systemAttribute: rawSystemAttribute === true || /^true$/i.test(String(rawSystemAttribute || ""))
     });
   }
@@ -2334,10 +2337,10 @@ async function runDataViewerStep(tabId, flow, runId) {
   await activatePageAutomationRun(tabId, runId);
   await waitForPageElement(tabId, TASKS["dataViewer.js"].readySelector, 60000);
   await chrome.scripting.executeScript({ target: { tabId }, world: "ISOLATED", files: ["dataViewerClickBridge.js"] });
-  await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["dataViewer.js"] });
+  await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["recordProfiles.js", "dataViewer.js"] });
   const [{ result: dataViewerResult }] = await chrome.scripting.executeScript({
     target: { tabId }, world: "MAIN",
-    args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, sourceAttribute: table.sourceAttribute, enterableFieldIds: table.enterableFieldIds, recordConfig: table.recordConfig })), { recordsPerTable, sourceId, saveRecords: Boolean(flow.saveRecords) }],
+    args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, sourceAttribute: table.sourceAttribute, enterableFieldIds: table.enterableFieldIds, liveFields: table.liveFields, recordConfig: table.recordConfig })), { recordsPerTable, sourceId, saveRecords: Boolean(flow.saveRecords) }],
     func: async (dataViewerTables, options) => {
       if (typeof window.runCdpDataViewer !== "function") throw new Error("Data Viewer automation did not load.");
       return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
@@ -2347,7 +2350,7 @@ async function runDataViewerStep(tabId, flow, runId) {
 }
 
 const DATA_MODEL_GROUPS = ["Profile", "Behavioral", "Transactional", "Product", "Other"];
-const DATA_MODEL_ATTRIBUTE_TYPES = new Set(["string", "int", "bigint", "decimal", "date", "timestamp", "boolean"]);
+const DATA_MODEL_ATTRIBUTE_TYPES = new Set(["array - string", "bigint", "boolean", "date", "decimal", "double", "float", "int", "smallint", "string", "text", "timestamp", "tinyint"]);
 
 function dataModelDryRunName(group, purpose = "", entityTimestamp = entityNameTag()) {
   // This is never saved. Keep the visible name aligned with jobs/connections
@@ -2382,8 +2385,16 @@ async function dataModelColumnsForGroup(group, columnOverrides = {}) {
   if (!Array.isArray(defaults)) throw new Error(`No default columns are configured for ${group}.`);
   // The popup sends the complete, reviewed list for a group. This lets users
   // edit or remove JSON defaults without the runner silently adding them back.
-  const configured = Array.isArray(columnOverrides?.[group]) ? columnOverrides[group] : defaults;
-  return validateDataModelColumns(configured, group);
+  const configured = Array.isArray(columnOverrides?.[group])
+    ? columnOverrides[group]
+    : [...(config.sharedTypeColumns || []), defaults.find((column) => String(column?.name || "").toLowerCase() === "email") || { name: "Email", dataType: "string" }];
+  const columns = validateDataModelColumns(configured, group);
+  // Older presets may still put Email first. Keep the requested creation
+  // order consistent without changing the order of other attributes.
+  return [
+    ...columns.filter((column) => column.name.toLowerCase() !== "email"),
+    ...columns.filter((column) => column.name.toLowerCase() === "email")
+  ];
 }
 
 async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {}, entityTimestamp = entityNameTag() } = {}) {
@@ -2993,6 +3004,16 @@ function apiDummySourceKey(sequence, runDate = new Date()) {
 function apiValueForLiveType(value, field) {
   const dataType = String(field?.dataType || "string").toLowerCase();
   if (/bool/.test(dataType)) return value === true || /^(true|y|yes|1)$/i.test(String(value));
+  if (/bigint/.test(dataType)) {
+    const exact = String(value);
+    if (!/^-?\d+$/.test(exact) || BigInt(exact) < -(1n << 63n) || BigInt(exact) > (1n << 63n) - 1n) throw new Error(`${field.fieldId} is outside signed 64-bit range.`);
+    return exact;
+  }
+  if (/decimal/.test(dataType)) {
+    const exact = String(value);
+    if (!/^-?\d+(?:\.\d+)?$/.test(exact)) throw new Error(`${field.fieldId} is not a valid decimal.`);
+    return exact;
+  }
   if (/(?:int|long|decimal|double|float|number)/.test(dataType)) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : 0;
@@ -3025,16 +3046,17 @@ function apiSupportedSourceField(field, sourceAttribute) {
 
 function apiFullPayloadField(field, sourceAttribute) {
   const dataType = String(field?.dataType || "string").toLowerCase();
-  const names = [field?.fieldId, field?.displayName, field?.name]
-    .map((value) => String(value || "").replace(/[^a-z0-9]/gi, "").toLowerCase());
-  // Complex collection values vary by tenant and can contain nested contracts.
-  // Keep the full-record debug payload to scalar fields only.
-  if (/(?:array|list|collection|map)/.test(dataType)) return false;
-  if (/timestamp/.test(dataType) || names.some((name) => /timestamp|ts$/.test(name))) return false;
+  // Only ARRAY<STRING> has a known, safe stream shape. Other nested contracts
+  // vary by tenant and must not be guessed from their display labels.
+  if (/(?:array|list|collection)/.test(dataType) && field?.elementDataType !== "string") return false;
+  if (/map/.test(dataType)) return false;
+  // isApiManagedField has already removed created/modified audit columns.
+  // Other timestamp/TS business attributes are valid scalar payload fields and
+  // apiRecordFieldValue supplies each with a current ISO timestamp.
   return apiSupportedSourceField(field, sourceAttribute);
 }
 
-function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}, runDate = new Date()) {
+function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}, runDate = new Date(), position = 1, count = 1) {
   const fieldId = String(field?.fieldId || "");
   const displayName = String(field?.displayName || fieldId);
   const configured = recordConfig.values?.[fieldId] ?? recordConfig.values?.[displayName];
@@ -3042,11 +3064,25 @@ function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}
   const normalized = importFieldKey(field);
   const timestampDate = new Date(Date.now() + (sequence - 1) * 60_000);
   const date = timestampDate.toISOString().slice(0, 10);
-  const timestamp = timestampDate.toISOString().slice(0, 19);
+  // CDP accepts business timestamp attributes in UTC as
+  // `YYYY-MM-DD HH:mm:ss` (not the ISO `T` separator form). The Data Viewer
+  // subsequently renders the stored epoch in the browser's local timezone.
+  const timestamp = [
+    timestampDate.getUTCFullYear(),
+    String(timestampDate.getUTCMonth() + 1).padStart(2, "0"),
+    String(timestampDate.getUTCDate()).padStart(2, "0")
+  ].join("-") + " " + [
+    String(timestampDate.getUTCHours()).padStart(2, "0"),
+    String(timestampDate.getUTCMinutes()).padStart(2, "0"),
+    String(timestampDate.getUTCSeconds()).padStart(2, "0")
+  ].join(":");
   const typed = (value) => apiValueForLiveType(value, field);
+  const profileValue = cdpRecordProfiles.value(normalized, { position, count, sequence, runDate });
   // SourceID identifies the CDP stream. Keep it stable even when a saved
   // record configuration contains an older override.
   if (normalized === "sourceid") return "CDP";
+  if (/^source.+id$/i.test(normalized)) return cdpRecordProfiles.sourceKey(sequence, runDate, position, count);
+  if (profileValue !== undefined) return typed(profileValue);
   // Customer birth components are real calendar values, not generic numeric
   // defaults. Keep them aligned with the generated BirthDate for this record.
   if (normalized === "birthdate") return typed(date);
@@ -3056,14 +3092,45 @@ function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}
   if (normalized === "properties") return typed({ category: "customer", source: "CDP" });
   // EmailFrequency is a choice field, not an email-address field.
   if (normalized === "emailfrequency") return typed("Every day");
-  if (/email/i.test(normalized) && (configuredValue === undefined || configuredValue === "" || configuredValue === "jagannath.patil@oracle.com" || configuredValue === "{{email}}")) return typed(recordEmailForSequence(sequence));
-  if (configuredValue !== undefined && configuredValue !== "") return typed(String(configuredValue)
-    .replace(/\{\{sourceId\}\}/g, sourceId)
-    .replace(/\{\{sequence\}\}/g, String(sequence))
-    .replace(/\{\{email\}\}/g, recordEmailForSequence(sequence))
-    .replace(/\{\{date\}\}/g, date)
-    .replace(/\{\{timestamp\}\}/g, timestamp));
+  if (/email/i.test(normalized) && (configuredValue === undefined || configuredValue === "" || configuredValue === "jagannath.patil@oracle.com" || configuredValue === "{{email}}")) return typed(cdpRecordProfiles.value("email", { position, count, sequence, runDate }) || recordEmailForSequence(sequence));
+  if (configuredValue !== undefined && configuredValue !== "") {
+    const substitute = (value) => String(value)
+      .replace(/\{\{sourceId\}\}/g, sourceId)
+      .replace(/\{\{sequence\}\}/g, String(sequence))
+      .replace(/\{\{email\}\}/g, recordEmailForSequence(sequence))
+      .replace(/\{\{date\}\}/g, date)
+      .replace(/\{\{timestamp\}\}/g, timestamp);
+    if (field?.dataType === "array" && field?.elementDataType === "string") {
+      return (Array.isArray(configuredValue) ? configuredValue : String(configuredValue).split(","))
+        .map((value) => substitute(value).trim()).filter(Boolean);
+    }
+    return typed(substitute(configuredValue));
+  }
   const pick = (values) => values[(sequence - 1) % values.length];
+  const modelGroup = String(table.cdpTable || table.label || "").split(/[_\s-]/)[0].toLowerCase();
+  const typeExamples = {
+    profile: { tags: ["Loyalty member", "Email subscriber"], note: "Customer prefers product updates by email.", number: 25, amount: 149.95 },
+    behavioral: { tags: ["Product view", "Web visit"], note: "Customer viewed the Oracle CX product page.", number: 3, amount: 4.75 },
+    transactional: { tags: ["Online order", "Paid"], note: "Order completed through the web store.", number: 2, amount: 249.95 },
+    product: { tags: ["Cloud service", "Subscription"], note: "Annual Oracle Cloud subscription.", number: 40, amount: 99.95 },
+    other: { tags: ["Enterprise account", "Renewal"], note: "Account renewal is scheduled this quarter.", number: 12, amount: 499.95 }
+  };
+  const example = typeExamples[modelGroup] || typeExamples.other;
+  const typeCoverageValues = {
+    arraystringvalues: example.tags,
+    bigintvalue: 1000000 + sequence,
+    booleanvalue: true,
+    datevalue: date,
+    decimalvalue: Number((example.amount + sequence).toFixed(2)),
+    doublevalue: Number((0.8 + sequence / 1000).toFixed(3)),
+    floatvalue: Number((4 + sequence / 10).toFixed(1)),
+    intvalue: example.number + sequence,
+    smallintvalue: 2 + sequence % 5,
+    textvalue: example.note,
+    timestampvalue: timestamp,
+    tinyintvalue: sequence % 2
+  };
+  if (Object.hasOwn(typeCoverageValues, normalized)) return typed(typeCoverageValues[normalized]);
   const semanticValues = {
     firstname: ["Jagan", "Anika", "Rahul", "Meera", "Arjun"],
     middlename: ["Kumar", "Devi", "Raj", "Priya", "Singh"],
@@ -3097,6 +3164,11 @@ function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}
     oktoshareinternally: ["Y"], oktosharewith3rdparties: ["Y"],
     description: ["Customer engagement profile", "Marketing preference record", "Product interest record"]
   };
+  if (normalized === "transactionid") return typed(`ORD-${apiDummySourceKey(sequence, runDate)}`);
+  if (normalized === "orderstatus") return typed("Completed");
+  if (normalized === "accountname") return typed("Northwind Enterprise");
+  if (normalized === "accounttier") return typed("Gold");
+  if (normalized === "unitprice" || normalized === "orderamount") return typed(example.amount + sequence);
   if (/^source.+id$/i.test(normalized)) return apiDummySourceKey(sequence, runDate);
   if (normalized === "optinstatus" || normalized === "optin") return typed("In");
   if (normalized === "isdeliverable") return typed(true);
@@ -3133,12 +3205,13 @@ function metadataTenantId(response) {
   return find(response);
 }
 
-async function postCustomRecordsToCdp(tabId, payload, tenantId) {
+async function postCustomRecordsToCdp(tabId, payload, tenantId, exactNumericFields = []) {
+  await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["recordProfiles.js"] });
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
-    args: [payload, tenantId],
-    func: async (body, resolvedTenantId) => {
+    args: [payload, tenantId, exactNumericFields],
+    func: async (body, resolvedTenantId, exactFields) => {
       const tenantKey = String(location.hostname || "").split(".")[0];
       if (!tenantKey) throw new Error("Could not determine the CDP tenant from the active tab.");
       const appId = "urn_opc_resource_fusion_" + tenantKey + "_unity_APPID";
@@ -3155,11 +3228,13 @@ async function postCustomRecordsToCdp(tabId, payload, tenantId) {
       };
       if (resolvedTenantId) headers["x-mcps-tenantId"] = String(resolvedTenantId);
       if (csrfToken) headers["X-Csrf-Token"] = csrfToken;
+      // Exact int64/decimal values remain strings until this final wire step.
+      const wireBody = globalThis.cdpRecordProfiles.serializeExactNumericPayload(body, exactFields);
       const response = await fetch(location.origin + "/api-stream/v1/" + tenantKey + "/data/streams", {
         method: "POST",
         credentials: "same-origin",
         headers,
-        body: JSON.stringify(body)
+        body: wireBody
       });
       const text = await response.text();
       if (!response.ok) throw new Error("CDP API load failed (" + response.status + "): " + text.slice(0, 500));
@@ -3188,6 +3263,7 @@ async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, start
       .some((value) => requestedIds.has(String(value || "").toLowerCase())));
     if (!streamTables.length) throw new Error("Select at least one table to load through the API.");
     const payload = {};
+    const exactNumericFields = new Set();
     let resolvedTenantId = null;
     const resolvedSourceId = String(sourceId || "").trim() || "CDP";
     const dummySourceRunDate = new Date();
@@ -3204,6 +3280,7 @@ async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, start
       // versioned `table.liveFields` here, or required fields such as Email_c
       // can be missing from the stream payload.
       const liveFields = liveDataViewerFieldsFromMetadata(metadata);
+      liveFields.filter((field) => /^(bigint|decimal)$/i.test(field.dataType)).forEach((field) => exactNumericFields.add(field.fieldId));
       const fields = liveFields.filter((field) => (!field.systemAttribute || /^source(?:.+)?id$/i.test(importFieldKey(field)))
         && !isApiManagedField(field)
         && !isDerivedImportField(field, liveFields)
@@ -3216,16 +3293,20 @@ async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, start
       const records = [];
       for (let offset = 0; offset < recordsPerTable; offset += 1) {
         const sequence = startingIndex + offset;
+        const position = offset + 1;
+        const profile = cdpRecordProfiles.kind(position, recordsPerTable);
         const record = {};
         for (const field of fields.filter((field) => apiSupportedSourceField(field, sourceAttribute))) {
-          record[field.fieldId] = apiRecordFieldValue(field, table, resolvedSourceId, sequence, table.recordConfig, dummySourceRunDate);
+          record[field.fieldId] = profile === "sparse" && !field.required && !/^source(?:.+)?id$/i.test(importFieldKey(field))
+            ? null
+            : apiRecordFieldValue(field, table, resolvedSourceId, sequence, table.recordConfig, dummySourceRunDate, position, recordsPerTable);
         }
         // SourceID is the stream-level origin marker. It is required alongside
         // the table-specific source attribute, but metadata can hide it from
         // the enterable-field collection.
         if (!Object.keys(record).some((key) => String(key).toLowerCase() === "sourceid")) record.SourceID = resolvedSourceId;
         if (sourceAttribute && record[sourceAttribute] === undefined) {
-          record[sourceAttribute] = apiRecordFieldValue({ fieldId: sourceAttribute, displayName: sourceAttribute }, table, resolvedSourceId, sequence, table.recordConfig, dummySourceRunDate);
+          record[sourceAttribute] = apiRecordFieldValue({ fieldId: sourceAttribute, displayName: sourceAttribute }, table, resolvedSourceId, sequence, table.recordConfig, dummySourceRunDate, position, recordsPerTable);
         }
         records.push(record);
       }
@@ -3236,7 +3317,7 @@ async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, start
       await appendRunLog("Dry run: API request was not sent.", "info", "API Load", "Dry run");
       return { payload, dryRun: true };
     }
-    const response = await postCustomRecordsToCdp(tabId, payload, resolvedTenantId);
+    const response = await postCustomRecordsToCdp(tabId, payload, resolvedTenantId, [...exactNumericFields]);
     await appendRunLog("CDP stream API accepted " + streamTables.length + " table payload" + (streamTables.length === 1 ? "" : "s") + " (HTTP " + response.status + ").", "info", "API Load", "Save");
     return response;
   } catch (error) {
@@ -3269,11 +3350,11 @@ async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = 
     await activatePageAutomationRun(tabId, runId);
     await waitForPageElement(tabId, TASKS["dataViewer.js"].readySelector, 60000);
     await chrome.scripting.executeScript({ target: { tabId }, world: "ISOLATED", files: ["dataViewerClickBridge.js"] });
-    await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["dataViewer.js"] });
+    await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["recordProfiles.js", "dataViewer.js"] });
     const [{ result: dataViewerResult }] = await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
-      args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, sourceAttribute: table.sourceAttribute, enterableFieldIds: table.enterableFieldIds, recordConfig: table.recordConfig })), { recordsPerTable, sourceId: resolvedSourceId, parentSourceCustomerId: String(parentSourceCustomerId || "").trim(), saveRecords: Boolean(saveRecords) }],
+      args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, sourceAttribute: table.sourceAttribute, enterableFieldIds: table.enterableFieldIds, liveFields: table.liveFields, recordConfig: table.recordConfig })), { recordsPerTable, sourceId: resolvedSourceId, parentSourceCustomerId: String(parentSourceCustomerId || "").trim(), saveRecords: Boolean(saveRecords) }],
       func: async (dataViewerTables, options) => {
         if (typeof window.runCdpDataViewer !== "function") throw new Error("Data Viewer automation did not load.");
         return window.runCdpDataViewer({ tables: dataViewerTables, ...options });

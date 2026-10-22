@@ -63,6 +63,13 @@
     return visible(control) ? control : null;
   }
 
+  function attributesTab() {
+    const details = document.getElementById("dataObjDetails-tab");
+    const tabBar = details?.closest("oj-tab-bar, [role=tablist]") || details?.parentElement?.parentElement;
+    return [...(tabBar?.querySelectorAll("[role=tab], oj-option, a") || [])]
+      .find((element) => visible(element) && normal(text(element)) === "attributes") || null;
+  }
+
   function dataObjectSearchInput() {
     return document.querySelector("#cd-do-search input[placeholder='Enter Keyword']") || null;
   }
@@ -257,7 +264,10 @@
       await waitFor(() => objectTab(objectName), `${objectName} search result`);
     }
     await click(await waitFor(() => objectTab(objectName), `${objectName} data object`));
-    // CDP loads the selected object's attributes/details panel asynchronously.
+    // A relationship leaves the object on Details. Selecting the next object
+    // does not reset that tab, so explicitly return to Attributes every time.
+    await click(await waitFor(attributesTab, "Data Model Attributes tab"));
+    // CDP loads the selected object's attributes panel asynchronously.
     // Let the panel settle before looking for its Create-attribute control.
     await click(await waitFor(addAttributeControl, "Create attribute control"));
     await waitFor(() => {

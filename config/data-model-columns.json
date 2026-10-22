@@ -1,39 +1,53 @@
 {
+  "sharedTypeColumns": [
+    { "name": "ArrayStringValues", "dataType": "array - string" },
+    { "name": "BigIntValue", "dataType": "bigint" },
+    { "name": "BooleanValue", "dataType": "boolean" },
+    { "name": "DateValue", "dataType": "date" },
+    { "name": "DecimalValue", "dataType": "decimal" },
+    { "name": "DoubleValue", "dataType": "double" },
+    { "name": "FloatValue", "dataType": "float" },
+    { "name": "IntValue", "dataType": "int" },
+    { "name": "SmallIntValue", "dataType": "smallint" },
+    { "name": "TextValue", "dataType": "text" },
+    { "name": "TimestampValue", "dataType": "timestamp" },
+    { "name": "TinyIntValue", "dataType": "tinyint" }
+  ],
   "groups": {
     "Profile": [
-      { "name": "Email", "dataType": "string" },
       { "name": "CustomerType", "dataType": "string" },
       { "name": "LifecycleStage", "dataType": "string" },
       { "name": "LoyaltyTier", "dataType": "string" },
-      { "name": "PreferredChannel", "dataType": "string" }
+      { "name": "PreferredChannel", "dataType": "string" },
+      { "name": "Email", "dataType": "string" }
     ],
     "Behavioral": [
-      { "name": "Email", "dataType": "string" },
       { "name": "EventName", "dataType": "string" },
       { "name": "EventTimestamp", "dataType": "timestamp" },
       { "name": "Channel", "dataType": "string" },
-      { "name": "CampaignCode", "dataType": "string" }
+      { "name": "CampaignCode", "dataType": "string" },
+      { "name": "Email", "dataType": "string" }
     ],
     "Transactional": [
-      { "name": "Email", "dataType": "string" },
       { "name": "TransactionID", "dataType": "string" },
       { "name": "TransactionDate", "dataType": "timestamp" },
       { "name": "OrderAmount", "dataType": "decimal" },
-      { "name": "OrderStatus", "dataType": "string" }
+      { "name": "OrderStatus", "dataType": "string" },
+      { "name": "Email", "dataType": "string" }
     ],
     "Product": [
-      { "name": "Email", "dataType": "string" },
       { "name": "ProductCode", "dataType": "string" },
       { "name": "ProductName", "dataType": "string" },
       { "name": "ProductCategory", "dataType": "string" },
-      { "name": "UnitPrice", "dataType": "decimal" }
+      { "name": "UnitPrice", "dataType": "decimal" },
+      { "name": "Email", "dataType": "string" }
     ],
     "Other": [
-      { "name": "Email", "dataType": "string" },
       { "name": "AccountName", "dataType": "string" },
       { "name": "Industry", "dataType": "string" },
       { "name": "AccountTier", "dataType": "string" },
-      { "name": "RenewalDate", "dataType": "date" }
+      { "name": "RenewalDate", "dataType": "date" },
+      { "name": "Email", "dataType": "string" }
     ]
   }
 }

@@ -1,8 +1,11 @@
 let IMPORT_JOB_TYPES = [];
 let EXPORT_PAYLOAD_OPTIONS = [];
+let STATIC_DATA_VIEWER_TABLES = [];
 let DATA_VIEWER_TABLES = [];
 let LIVE_CUSTOM_TABLES = [];
 let DATA_VIEWER_LIVE_FIELDS = {};
+let liveCatalogOrigin = "";
+let liveCatalogRefreshId = 0;
 let DATA_VIEWER_RECORD_DEFAULTS = { tables: {} };
 let DATA_MODEL_COLUMN_DEFAULTS = { groups: {} };
 let dataViewerEditorDraft = null;
@@ -229,22 +232,53 @@ async function loadCatalog() {
   if (!validImports || !uniqueIds || !validExports || !validDataViewerTables) throw new Error("config/tables.json has an invalid table or payload entry.");
   IMPORT_JOB_TYPES = imports.map(({ id, label }) => ({ id, label }));
   EXPORT_PAYLOAD_OPTIONS = exports;
-  DATA_VIEWER_TABLES = dataViewerTables.map((label) => ({ id: label, label, cdpTable: label, tableId: label, isCustom: false }));
+  STATIC_DATA_VIEWER_TABLES = dataViewerTables.map((label) => ({ id: label, label, cdpTable: label, tableId: label, isCustom: false }));
+  DATA_VIEWER_TABLES = [...STATIC_DATA_VIEWER_TABLES];
   catalogReady = true;
 }
 async function refreshLiveDataViewerTables({ quiet = false } = {}) {
+  const refreshId = ++liveCatalogRefreshId;
   try {
     const tabId = await activeTab();
+    const tab = await chrome.tabs.get(tabId);
+    if (refreshId !== liveCatalogRefreshId || await activeTab() !== tabId) return;
+    const origin = new URL(tab.url).origin;
+    if (origin !== liveCatalogOrigin) {
+      // Live objects and their field cache belong to the tab's CDP tenant.
+      // Clear the previous tenant immediately, including on a failed refresh.
+      if (liveCatalogOrigin) {
+        const standardIds = new Set(STATIC_DATA_VIEWER_TABLES.map((table) => table.id));
+        state.importCustomSettings = {};
+        state.dataViewerSettings = Object.fromEntries(Object.entries(state.dataViewerSettings)
+          .filter(([id]) => standardIds.has(id)));
+        state.dataViewerOverrides = Object.fromEntries(Object.entries(state.dataViewerOverrides)
+          .filter(([id]) => standardIds.has(id)));
+        state.exportPayloads = (Array.isArray(state.exportPayloads) ? state.exportPayloads : [state.exportPayloadName])
+          .filter((name) => EXPORT_PAYLOAD_OPTIONS.includes(name));
+        state.exportPayloadName = EXPORT_PAYLOAD_OPTIONS.includes(state.exportPayloadName)
+          ? state.exportPayloadName : (state.exportPayloads[0] || "");
+        if (state.workingSetKey.startsWith("custom:")) state.workingSetKey = "";
+        chrome.storage.local.set({ customImportTablesV1: [] });
+        persistDraft();
+      }
+      liveCatalogOrigin = origin;
+      DATA_VIEWER_TABLES = [...STATIC_DATA_VIEWER_TABLES];
+      LIVE_CUSTOM_TABLES = [];
+      DATA_VIEWER_LIVE_FIELDS = {};
+      renderAll();
+    }
     const response = await chrome.runtime.sendMessage({ type: "get-live-data-viewer-tables", tabId });
+    if (refreshId !== liveCatalogRefreshId || await activeTab() !== tabId) return;
     if (!response?.ok) throw new Error(response?.error || "CDP did not return Data Viewer objects.");
-    const staticById = new Map(DATA_VIEWER_TABLES.map((table) => [table.id, table]));
-    const merged = new Map(DATA_VIEWER_TABLES.map((table) => [table.id, table]));
+    const staticById = new Map(STATIC_DATA_VIEWER_TABLES.map((table) => [table.id, table]));
+    const merged = new Map(STATIC_DATA_VIEWER_TABLES.map((table) => [table.id, table]));
     for (const table of response.tables || []) merged.set(table.id, { ...staticById.get(table.id), ...table });
     DATA_VIEWER_TABLES = [...merged.values()].sort((left, right) => {
       if (Boolean(left.isCustom) !== Boolean(right.isCustom)) return left.isCustom ? -1 : 1;
       return String(left.label).localeCompare(String(right.label));
     });
     LIVE_CUSTOM_TABLES = DATA_VIEWER_TABLES.filter((table) => table.isCustom);
+    DATA_VIEWER_LIVE_FIELDS = {};
     document.getElementById("dataViewerLiveHint").textContent = "Custom objects first · " + response.tables.length + " DW objects refreshed from CDP.";
     renderWorkingSet();
     renderDataViewerChoices();
@@ -252,6 +286,7 @@ async function refreshLiveDataViewerTables({ quiet = false } = {}) {
     renderPayloadChoices();
     if (!quiet) setStatus("Data Viewer objects refreshed.");
   } catch (error) {
+    if (refreshId !== liveCatalogRefreshId) return;
     const message = "Could not refresh live CDP objects: " + (error.message || error);
     document.getElementById("dataViewerLiveHint").textContent = message;
     document.getElementById("workingSetHint").textContent = message;
@@ -259,21 +294,46 @@ async function refreshLiveDataViewerTables({ quiet = false } = {}) {
   }
 }
 
-function dataViewerDefaultValue(field) {
+function dataViewerDefaultValue(field, tableName = "") {
   const id = String(field?.fieldId || "");
   const type = String(field?.dataType || "string").toLowerCase();
+  const key = id.replace(/_c$/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const group = String(tableName).split(/[_\s-]/)[0].toLowerCase();
+  const examples = {
+    profile: { tags: "Loyalty member, Email subscriber", note: "Customer prefers product updates by email.", number: 25, amount: 149.95 },
+    behavioral: { tags: "Product view, Web visit", note: "Customer viewed the Oracle CX product page.", number: 3, amount: 4.75 },
+    transactional: { tags: "Online order, Paid", note: "Order completed through the web store.", number: 2, amount: 249.95 },
+    product: { tags: "Cloud service, Subscription", note: "Annual Oracle Cloud subscription.", number: 40, amount: 99.95 },
+    other: { tags: "Enterprise account, Renewal", note: "Account renewal is scheduled this quarter.", number: 12, amount: 499.95 }
+  };
+  const example = examples[group] || examples.other;
+  const typeValues = {
+    arraystringvalues: example.tags, bigintvalue: "1000001", booleanvalue: "True",
+    datevalue: new Date().toISOString().slice(0, 10), decimalvalue: String(example.amount),
+    doublevalue: "0.801", floatvalue: "4.1", intvalue: String(example.number),
+    smallintvalue: "3", textvalue: example.note, timestampvalue: new Date().toISOString().slice(0, 19), tinyintvalue: "1"
+  };
+  // Source keys are generated per record so related tables share the same
+  // DDMMYYNNN key. Do not save a static editor example over that relationship.
+  if (key === "sourceid" || /^source.+id$/.test(key)) return "";
+  if (Object.hasOwn(typeValues, key)) return typeValues[key];
   if (/email/i.test(id)) return "jagannath.patil@oracle.com";
   if (/eventname/i.test(id)) return "Product Demo Requested";
   if (/productname/i.test(id)) return "Oracle CX Unity";
   if (/productcategory/i.test(id)) return "Customer Experience";
   if (/companyname/i.test(id)) return "Northwind Enterprise";
+  if (key === "transactionid") return `ORD-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-001`;
+  if (key === "orderstatus") return "Completed";
+  if (key === "accountname") return "Northwind Enterprise";
+  if (key === "accounttier") return "Gold";
+  if (key === "unitprice" || key === "orderamount") return String(example.amount);
   if (/date/i.test(id) && type !== "timestamp") return new Date().toISOString().slice(0, 10);
   if (/timestamp|\bts\b/i.test(id) || type === "timestamp") return new Date().toISOString().slice(0, 19);
   if (/bool|active|deliverable|optin/i.test(id) || type === "boolean") return "True";
-  if (/age|count|number|amount|score/i.test(id) || ["int", "bigint", "decimal"].includes(type)) return "1";
+  if (/age|count|number|amount|score/i.test(id) || ["int", "bigint", "smallint", "tinyint", "decimal", "double", "float"].includes(type)) return String(example.number);
   if (/name/i.test(id)) return "Northwind Enterprise";
   if (/description|comment|note/i.test(id)) return "Business record for customer engagement";
-  return "Business value";
+  return example.note;
 }
 
 function isEditorAuditField(field) {
@@ -375,6 +435,15 @@ function selectedDataViewerTables() {
 }
 function dataViewerSummary() { const tables = selectedDataViewerTables(); const count = Number.parseInt(state.dataViewerOptions.recordsPerTable, 10); const repeat = Number.isSafeInteger(count) && count > 1 ? ` ×${count}` : ""; return !tables.length ? "Select tables" : `${tables[0].label}${tables.length > 1 ? ` +${tables.length - 1}` : ""}${repeat}`; }
 function selectedDataModelGroups() { return DATA_MODEL_GROUPS.filter((group) => state.dataModelSettings[group]); }
+function selectDefaultDataModelGroup() {
+  // An empty settings object is the untouched state of a new popup session.
+  // Explicit false values mean the user has changed the selection, so keep
+  // those choices when the panel is reopened.
+  if (Object.keys(state.dataModelSettings).length) return;
+  state.dataModelSettings.Profile = true;
+  state.dataModelAttributeEnabled.Profile = true;
+  persistDraft();
+}
 function selectedDataModelAttributeGroups() { return selectedDataModelGroups().filter((group) => state.dataModelAttributeEnabled[group] !== false); }
 function dataModelParentFor(group) {
   // A new Data Model object is related to Customer unless the user explicitly
@@ -393,11 +462,24 @@ function dataModelParentsForRun(groups = selectedDataModelGroups()) {
   return parents;
 }
 function dataModelSummary() { const groups = selectedDataModelGroups(); const relationshipCount = groups.filter((group) => dataModelParentName(group)).length; return !groups.length ? "Select types" : `${groups[0]}${groups.length > 1 ? ` +${groups.length - 1}` : ""}${relationshipCount ? ` · ${relationshipCount} parent` : ""}${state.dataModelOptions.dryRun ? " · Dry run" : ""}`; }
-function dataModelDefaultColumns(group) { return Array.isArray(DATA_MODEL_COLUMN_DEFAULTS.groups?.[group]) ? DATA_MODEL_COLUMN_DEFAULTS.groups[group] : []; }
+function dataModelDefaultColumns(group) {
+  const groupColumns = DATA_MODEL_COLUMN_DEFAULTS.groups?.[group];
+  if (!Array.isArray(groupColumns)) return [];
+  const email = groupColumns.find((column) => String(column?.name || "").toLowerCase() === "email") || { name: "Email", dataType: "string" };
+  return [...(DATA_MODEL_COLUMN_DEFAULTS.sharedTypeColumns || []), email];
+}
+function dataModelSpecificColumns(group) { return DATA_MODEL_COLUMN_DEFAULTS.groups?.[group] || []; }
+function dataModelColumnSet(group) {
+  const current = dataModelEditableColumns(group);
+  const same = (preset) => JSON.stringify(cloneDataModelColumns(current)) === JSON.stringify(cloneDataModelColumns(preset));
+  if (same(dataModelDefaultColumns(group))) return "types";
+  if (same(dataModelSpecificColumns(group))) return "specific";
+  return "custom";
+}
 function cloneDataModelColumns(columns) { return columns.map((column) => ({ name: String(column?.name || ""), dataType: String(column?.dataType || "string").toLowerCase() })); }
 function normalizeDataModelColumnType(value) {
   const type = String(value || "string").trim().toLowerCase();
-  return ({ integer: "int", number: "decimal", float: "decimal", double: "decimal", datetime: "timestamp", "date-time": "timestamp", bool: "boolean" })[type] || type;
+  return ({ integer: "int", number: "decimal", datetime: "timestamp", "date-time": "timestamp", bool: "boolean" })[type] || type;
 }
 function parseDataModelColumnsJson(parsed, group) {
   const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.columns) ? parsed.columns : (Array.isArray(parsed?.attributes) ? parsed.attributes : null));
@@ -413,10 +495,18 @@ function parseDataModelColumnsJson(parsed, group) {
   if (!columns.length) throw new Error(`${group}: JSON contains no attributes.`);
   return validateDataModelColumnsForRun(columns, group);
 }
-function dataModelEditableColumns(group) { return Array.isArray(state.dataModelAttributeColumns[group]) ? state.dataModelAttributeColumns[group] : cloneDataModelColumns(dataModelDefaultColumns(group)); }
+function dataModelEditableColumns(group) {
+  const columns = Array.isArray(state.dataModelAttributeColumns[group])
+    ? state.dataModelAttributeColumns[group]
+    : cloneDataModelColumns(dataModelDefaultColumns(group));
+  return [
+    ...columns.filter((column) => String(column?.name || "").trim().toLowerCase() !== "email"),
+    ...columns.filter((column) => String(column?.name || "").trim().toLowerCase() === "email")
+  ];
+}
 function dataModelColumnCount(group) { return dataModelEditableColumns(group).length; }
 function validateDataModelColumnsForRun(columns, group) {
-  const allowed = new Set(["string", "int", "bigint", "decimal", "date", "timestamp", "boolean"]);
+  const allowed = new Set(["array - string", "bigint", "boolean", "date", "decimal", "double", "float", "int", "smallint", "string", "text", "timestamp", "tinyint"]);
   const names = new Set();
   const result = columns.map((column, index) => ({ name: String(column?.name || "").trim(), dataType: normalizeDataModelColumnType(column?.dataType), index }));
   if (!result.length) throw new Error(`${group}: add at least one attribute.`);
@@ -854,7 +944,7 @@ async function openDataViewerEditor(table) {
     const fields = await loadDataViewerLiveFields(table);
     const configured = new Map(dataViewerEditorDraft.values.map((row) => [row.field, row.value]));
     if (fields.length) {
-      dataViewerEditorDraft.values = fields.map((field) => ({ field: field.fieldId, value: configured.has(field.fieldId) ? configured.get(field.fieldId) : dataViewerDefaultValue(field) }));
+      dataViewerEditorDraft.values = fields.map((field) => ({ field: field.fieldId, value: configured.has(field.fieldId) ? configured.get(field.fieldId) : dataViewerDefaultValue(field, dataViewerEditorDraft.tableName) }));
       renderDataViewerEditor();
     }
   } catch (error) {
@@ -1035,21 +1125,37 @@ function renderDataModelChoices() {
 function dataModelColumnEditor(group) {
   const columns = dataModelEditableColumns(group);
   const result = document.createDocumentFragment();
+  const setLabel = document.createElement("label"); setLabel.className = "data-model-target-label"; setLabel.textContent = "Attribute set";
+  const setSelect = document.createElement("select"); setSelect.setAttribute("aria-label", `${group} attribute set`);
+  setSelect.add(new Option("Email + all data types (default)", "types"));
+  setSelect.add(new Option(`${group} model-specific attributes`, "specific"));
+  if (dataModelColumnSet(group) === "custom") { const custom = new Option("Custom edited attributes", "custom"); custom.disabled = true; setSelect.add(custom); }
+  setSelect.value = dataModelColumnSet(group);
+  setSelect.addEventListener("change", () => {
+    if (setSelect.value === "types") delete state.dataModelAttributeColumns[group];
+    else state.dataModelAttributeColumns[group] = cloneDataModelColumns(dataModelSpecificColumns(group));
+    persistDraft(); renderDataModelAttributeChoices();
+  });
+  const markCustom = () => {
+    if (![...setSelect.options].some((option) => option.value === "custom")) { const custom = new Option("Custom edited attributes", "custom"); custom.disabled = true; setSelect.add(custom); }
+    setSelect.value = "custom";
+  };
+  setLabel.append(setSelect); result.append(setLabel);
   const rows = columns.map((column, index) => {
     const row = document.createElement("div"); row.className = "data-model-column-row";
     const name = document.createElement("input"); name.type = "text"; name.placeholder = "Attribute name"; name.value = column.name || ""; name.setAttribute("aria-label", `${group} attribute name`);
-    name.addEventListener("input", () => { columns[index].name = name.value; state.dataModelAttributeColumns[group] = columns; persistDraft(); });
+    name.addEventListener("input", () => { columns[index].name = name.value; state.dataModelAttributeColumns[group] = columns; markCustom(); persistDraft(); });
     const type = document.createElement("select"); type.setAttribute("aria-label", `${group} attribute data type`);
-    ["string", "int", "bigint", "decimal", "date", "timestamp", "boolean"].forEach((dataType) => type.add(new Option(dataType, dataType)));
+    ["array - string", "bigint", "boolean", "date", "decimal", "double", "float", "int", "smallint", "string", "text", "timestamp", "tinyint"].forEach((dataType) => type.add(new Option(dataType, dataType)));
     type.value = column.dataType || "string";
-    type.addEventListener("change", () => { columns[index].dataType = type.value; state.dataModelAttributeColumns[group] = columns; persistDraft(); });
+    type.addEventListener("change", () => { columns[index].dataType = type.value; state.dataModelAttributeColumns[group] = columns; markCustom(); persistDraft(); });
     const remove = document.createElement("button"); remove.type = "button"; remove.className = "data-model-column-remove"; remove.textContent = "×"; remove.title = "Remove attribute";
     remove.addEventListener("click", () => { columns.splice(index, 1); state.dataModelAttributeColumns[group] = columns; persistDraft(); renderDataModelAttributeChoices(); });
     row.append(name, type, remove); return row;
   });
   const add = document.createElement("button"); add.type = "button"; add.className = "link data-model-add-column"; add.textContent = "+ Add attribute";
   add.addEventListener("click", () => { state.dataModelAttributeColumns[group] = [...columns, { name: "", dataType: "string" }]; persistDraft(); renderDataModelAttributeChoices(); });
-  const restore = document.createElement("button"); restore.type = "button"; restore.className = "link data-model-restore-columns"; restore.textContent = "Restore defaults";
+  const restore = document.createElement("button"); restore.type = "button"; restore.className = "link data-model-restore-columns"; restore.textContent = "Reset to type coverage";
   restore.addEventListener("click", () => { delete state.dataModelAttributeColumns[group]; persistDraft(); renderDataModelAttributeChoices(); });
   const load = document.createElement("button"); load.type = "button"; load.className = "link data-model-load-columns"; load.textContent = "Load JSON";
   const file = document.createElement("input"); file.type = "file"; file.accept = "application/json,.json"; file.hidden = true;
@@ -1300,7 +1406,7 @@ document.getElementById("btn-manage-templates").addEventListener("click", async 
 document.getElementById("stopE2EBtn").addEventListener("click", async () => { try { await chrome.runtime.sendMessage({ type: "stop-current-flow", tabId: await activeTab() }); setStatus(""); } catch (error) { setStatus(`Stop failed: ${error.message || error}`); } });
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => { closeSheets(); showView(button.dataset.view); }));
 document.querySelectorAll("[data-activity-section]").forEach((button) => button.addEventListener("click", () => showActivitySection(button.dataset.activitySection)));
-document.querySelectorAll("[data-open-sheet]").forEach((button) => button.addEventListener("click", () => { attributeEditorForCreationGroup = ""; pendingFlowConfigurationStep = button.dataset.flowConfig || ""; if (button.dataset.openSheet === "dataModel") dataModelConfigurationContext = button.dataset.flowConfig === "dataModel" ? "flow" : "standalone"; if (button.dataset.openSheet === "dataModelAttributes") dataModelConfigurationContext = button.dataset.flowConfig ? "flow" : "standalone"; openSheet(button.dataset.openSheet); renderAll(); }));
+document.querySelectorAll("[data-open-sheet]").forEach((button) => button.addEventListener("click", () => { attributeEditorForCreationGroup = ""; pendingFlowConfigurationStep = button.dataset.flowConfig || ""; if (button.dataset.openSheet === "dataModel") { dataModelConfigurationContext = button.dataset.flowConfig === "dataModel" ? "flow" : "standalone"; selectDefaultDataModelGroup(); } if (button.dataset.openSheet === "dataModelAttributes") dataModelConfigurationContext = button.dataset.flowConfig ? "flow" : "standalone"; openSheet(button.dataset.openSheet); renderAll(); }));
 document.querySelectorAll("[data-close-sheet]").forEach((button) => button.addEventListener("click", async () => { commitFlowConfiguration(); await persistDraft(); closeSheets(); }));
 document.getElementById("quickImportSearch").addEventListener("input", renderTableChoices); document.getElementById("quickExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("flowImportSearch").addEventListener("input", renderTableChoices); document.getElementById("flowExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("dataViewerSearch").addEventListener("input", renderDataViewerChoices); document.getElementById("flowDataViewerSearch").addEventListener("input", renderDataViewerChoices);
 document.getElementById("dataViewerRecordsPerTable").addEventListener("input", (event) => { state.dataViewerOptions.recordsPerTable = event.target.value; persistDraft(); renderDataViewerChoices(); });
@@ -1347,6 +1453,7 @@ const EXTRA_FLOW_STEP_ORDER = ["dataModelAttributes", "source", "destination", "
 const EXTRA_FLOW_STEPS = new Set(EXTRA_FLOW_STEP_ORDER);
 DEFAULT_FLOW.forEach((step) => document.getElementById(`flow-${step}`).addEventListener("change", (event) => {
   if (event.target.checked && EXTRA_FLOW_STEPS.has(step)) advancedStepsExpanded = false;
+  if (step === "dataModel" && event.target.checked) selectDefaultDataModelGroup();
   // Export is the selection driver whenever Import sync is enabled. A user
   // may choose tables before enabling the Export workflow card, so mirror
   // them at the moment that card becomes active as well as on picker edits.

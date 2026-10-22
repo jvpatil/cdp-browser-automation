@@ -176,7 +176,9 @@
     if (words.length === 1) return (words[0].slice(0, 2) || "UI").toUpperCase();
     return (words.map((word) => word[0]).join("") || "UI").toUpperCase();
   };
-  const sourceObjectIdFor = (_tableName, context, tableSequence) => `${context.ddmmyy}${String(Math.max(1, Number(tableSequence) || 1)).padStart(3, "0")}`;
+  const sourceObjectIdFor = (_tableName, context, tableSequence) => cdpRecordProfiles.sourceKey(
+    Math.max(1, Number(tableSequence) || 1), context.runDate, Math.max(1, Number(tableSequence) || 1), context.recordCount
+  );
   const canonicalSourceKey = (field) => String(field || "")
     .replace(/^field-/, "")
     .replace(/^Column[-_ ]*/i, "")
@@ -207,7 +209,7 @@
     if (recordNumber <= seededEmails.length) return seededEmails[recordNumber - 1];
     return `jagan.record.${Date.now().toString(36)}${recordNumber}@example.com`;
   };
-  const defaultFieldValue = (field, context) => {
+  const defaultFieldValue = (field, context, table = {}) => {
     const known = {
       Email: "jagannath.patil@oracle.com", FirstName: "Jagannath", MiddleName: "Kumar", LastName: "Patil",
       Prefix: "Mr", Suffix: "Jr", Title: "Mr", Gender: "M", PrimaryLanguage: "English",
@@ -224,8 +226,32 @@
     };
     const logicalField = String(field || "").replace(/^field-/, "").replace(/_c$/i, "");
     const fieldKey = logicalField.replace(/[^a-z0-9]/gi, "").toLowerCase();
+    const profileValue = cdpRecordProfiles.value(fieldKey, {
+      position: Number(context.tableSequence), count: context.recordCount,
+      sequence: Number(context.tableSequence), runDate: context.runDate, ui: true
+    });
+    if (profileValue !== undefined) return Array.isArray(profileValue) ? profileValue.join(", ") : String(profileValue);
+    const fieldType = String(table.liveFields?.find((item) => item.fieldId === field)?.dataType || "string").toLowerCase();
     const knownByKey = Object.fromEntries(Object.entries(known).map(([key, value]) => [key.replace(/[^a-z0-9]/gi, "").toLowerCase(), value]));
     const pick = (values) => values[(Math.max(1, Number(context.tableSequence) || 1) - 1) % values.length];
+    const group = String(table.cdpTable || "").split(/[_\s-]/)[0].toLowerCase();
+    const examples = {
+      profile: { tags: "Loyalty member, Email subscriber", note: "Customer prefers product updates by email.", number: 25, amount: 149.95 },
+      behavioral: { tags: "Product view, Web visit", note: "Customer viewed the Oracle CX product page.", number: 3, amount: 4.75 },
+      transactional: { tags: "Online order, Paid", note: "Order completed through the web store.", number: 2, amount: 249.95 },
+      product: { tags: "Cloud service, Subscription", note: "Annual Oracle Cloud subscription.", number: 40, amount: 99.95 },
+      other: { tags: "Enterprise account, Renewal", note: "Account renewal is scheduled this quarter.", number: 12, amount: 499.95 }
+    };
+    const example = examples[group] || examples.other;
+    const ordinal = Number(context.tableSequence) || 1;
+    const typeCoverageValues = {
+      arraystringvalues: example.tags, bigintvalue: String(1000000 + ordinal), booleanvalue: "True",
+      datevalue: context.date, decimalvalue: (example.amount + ordinal).toFixed(2),
+      doublevalue: (0.8 + ordinal / 1000).toFixed(3), floatvalue: (4 + ordinal / 10).toFixed(1),
+      intvalue: String(example.number + ordinal), smallintvalue: String(2 + ordinal % 5),
+      textvalue: example.note, timestampvalue: context.timestamp, tinyintvalue: String(ordinal % 2)
+    };
+    if (Object.hasOwn(typeCoverageValues, fieldKey)) return typeCoverageValues[fieldKey];
     const semanticValues = {
       customertype: ["B2B", "B2C"], loyaltytier: ["Gold", "Silver", "Platinum"], preferredchannel: ["Email", "SMS", "Push"],
       lifecyclestage: ["Prospect", "Lead", "Customer", "Advocate"], channel: ["Email", "SMS", "Push"], channeltype: ["Email", "SMS", "Push"],
@@ -241,11 +267,18 @@
     if (/^source.*id$/i.test(fieldKey)) return sourceObjectIdFor("", context, context.tableSequence);
     if (knownByKey[fieldKey] !== undefined) return knownByKey[fieldKey];
     if (semanticValues[fieldKey]) return pick(semanticValues[fieldKey]);
+    if (fieldKey === "transactionid") return `ORD-${context.ddmmyy}${String(context.tableSequence).padStart(3, "0")}`;
+    if (fieldKey === "orderstatus") return "Completed";
+    if (fieldKey === "accountname") return "Northwind Enterprise";
+    if (fieldKey === "accounttier") return "Gold";
+    if (fieldKey === "unitprice" || fieldKey === "orderamount") return (example.amount + ordinal).toFixed(2);
     if (/birthday$/i.test(fieldKey)) return context.day;
     if (/birthmonth$/i.test(fieldKey)) return context.month;
     if (/birthyear$/i.test(fieldKey)) return context.year;
     if (/(timestamp|(?:ts|dt))$/i.test(fieldKey)) return context.timestamp;
     if (/date/i.test(fieldKey)) return context.date;
+    if (/bool/.test(fieldType)) return "True";
+    if (/(?:bigint|smallint|tinyint|int|decimal|double|float|number)/.test(fieldType)) return String(example.number + ordinal);
     if (/(flag|^is|deliverable|active|enabled)/i.test(fieldKey)) return "True";
     if (/(age|amount|revenue|score|rank|count|number|quantity|year|month|day|level)/i.test(fieldKey)) return "1";
     if (/(phone|mobile|fax)/i.test(fieldKey)) return "9999999999";
@@ -264,7 +297,7 @@
     || drawer.querySelector(`#${CSS.escape(`field-${field}|input`)}`)
     || drawer.querySelector(`#${CSS.escape(`field-${field}`)} input, #${CSS.escape(`field-${field}`)} textarea, #${CSS.escape(`field-${field}`)} [role='combobox']`)
     || drawer.querySelector(`[fieldid="${CSS.escape(field)}"] input, [fieldid="${CSS.escape(field)}"] textarea, [fieldid="${CSS.escape(field)}"] [role='combobox']`);
-  const entryFieldKeys = (drawer) => [...drawer.querySelectorAll("oj-input-text[id^='field-'],oj-text-area[id^='field-'],oj-select-single[id^='field-'],oj-combobox-one[id^='field-'],oj-input-date[id^='field-']")]
+  const entryFieldKeys = (drawer) => [...drawer.querySelectorAll("oj-input-text[id^='field-'],oj-text-area[id^='field-'],oj-select-single[id^='field-'],oj-combobox-one[id^='field-'],oj-input-date[id^='field-'],oj-input-date-time[id^='field-']")]
     .map((host) => host.id.replace(/^field-/, ""))
     .filter((field, index, fields) => field && fields.indexOf(field) === index && !findField(drawer, field)?.disabled);
   const isChoiceInput = (input) => {
@@ -273,8 +306,11 @@
   };
   const suffixEligible = (field, input) => !isChoiceInput(input)
     && !/(date|timestamp|(?:ts|dt)$|birth(day|month|year)|age|amount|revenue|score|rank|count|number|quantity|year|month|day|level|^is|flag)/i.test(field);
-  const configuredValueFor = (entry, field, tableName, drawer, context, repeatCount) => {
+  const configuredValueFor = (entry, field, tableName, drawer, context, repeatCount, liveFields = []) => {
     const rawValue = entry && typeof entry === "object" && !Array.isArray(entry) ? entry.value : entry;
+    // A comma-separated ARRAY<STRING> editor value is one record's collection,
+    // not a per-record override list.
+    if (liveFields.some((item) => item.fieldId === field && item.dataType === "array")) return resolveValue(rawValue, context);
     const delimiters = String(tableName || "").toLowerCase() === "address" ? /\r?\n/ : /[\n,]+/;
     const suppliedValues = String(rawValue ?? "").split(delimiters).map((value) => value.trim()).filter(Boolean);
     if (suppliedValues.length > 1) {
@@ -295,6 +331,9 @@
     const input = findField(drawer, field);
     if (!input) return;
     const host = input.closest("oj-select-single,oj-combobox-one,oj-combobox-many,oj-input-date,oj-input-date-time") || input.parentElement;
+    // Date/time JET controls accept ISO input; opening a choice popup after
+    // setting them can replace the typed value with a calendar selection.
+    if (host?.matches?.("oj-input-date,oj-input-date-time")) return setValue(input, value);
     const isChoice = isChoiceInput(input);
     if (!isChoice) return setValue(input, value);
     setValue(input, value);
@@ -385,6 +424,9 @@
         await wait(() => drawerFormReady(drawer) ? drawer : null, `${table.cdpTable} record form to finish loading`, 60000);
         await chooseDrawerMode(drawer);
         const context = valueContext(tableSequence, tableSequence, resolvedSourceId, "", dummySourceRunDate);
+        context.recordCount = recordsPerTable;
+        context.runDate = dummySourceRunDate;
+        context.profile = cdpRecordProfiles.kind(tableSequence, recordsPerTable);
         const sourceObjectId = sourceObjectIdFor(table.cdpTable, context, tableSequence);
         context.objectId = sourceObjectId;
         const configuredValues = table.recordConfig?.values || {};
@@ -395,6 +437,15 @@
           : `Skipping optional first-page fields for ${table.cdpTable}`);
         const skippedFields = [];
         for (const field of fields) {
+          const liveField = table.liveFields?.find((item) => item.fieldId === field);
+          const control = findField(drawer, field);
+          const required = liveField?.required || control?.required || control?.getAttribute("aria-required") === "true"
+            || control?.closest("[aria-required='true'],[required]");
+          if (context.profile === "sparse" && !required) {
+            if (control?.value) await chooseValue(drawer, field, "");
+            audit.actions.push({ action: "Leave blank", target: field, value: "optional sparse field" });
+            continue;
+          }
           // Primary Email is the meaningful contact value for Customer and
           // ContactPoint. Do not invent an alternate address unless the user
           // explicitly configured one in the per-table editor/JSON.
@@ -402,14 +453,19 @@
             audit.actions.push({ action: "Skip", target: field, value: "not configured" });
             continue;
           }
+          const profileField = field.replace(/_c$/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+          const profileValue = cdpRecordProfiles.value(profileField, {
+            position: tableSequence, count: recordsPerTable, sequence: tableSequence,
+            runDate: dummySourceRunDate, ui: true
+          });
           const hasConfiguredValue = Object.hasOwn(configuredValues, field);
-          const configuredValue = hasConfiguredValue
+          const configuredValue = hasConfiguredValue && profileValue === undefined
             ? configuredValues[field]
-            : defaultFieldValue(field, context);
+            : defaultFieldValue(field, context, table);
           // Generated values already carry their meaningful per-record value;
           // reserve automatic suffixing for an explicit user-configured value.
-          const value = hasConfiguredValue
-            ? configuredValueFor(configuredValue, field, table.cdpTable, drawer, context, recordsPerTable)
+          const value = hasConfiguredValue && profileValue === undefined
+            ? configuredValueFor(configuredValue, field, table.cdpTable, drawer, context, recordsPerTable, table.liveFields)
             : configuredValue;
           try {
             await chooseValue(drawer, field, value);
