@@ -1,5 +1,6 @@
 importScripts("templateStore.js");
 importScripts("recordProfiles.js");
+importScripts("deletePlanner.js");
 
 const CDP_CONNECTION_SEQUENCE_KEY = "cdpConfirmedConnectionSequencesV2";
 
@@ -157,6 +158,474 @@ async function fetchCdpMetadata(tabId, endpoint) {
     }
   });
   return result;
+}
+
+function tenantIdFromMetadata(response) {
+  const candidates = [response, response?.table, response?.data, ...metadataFieldList(response)];
+  const id = candidates.map((item) => Number(item?.tenantId)).find((value) => Number.isFinite(value) && value > 0);
+  if (!id) throw new Error("The selected table did not expose a tenant ID; Delete was not prepared.");
+  return id;
+}
+
+async function prepareDeleteMetadata(tabId, settings, purpose = "") {
+  if (settings?.legacyScope) throw new Error("Review the new Delete filters before preparing a job; this saved flow used exact source keys.");
+  const requested = String(settings?.tableId || "Customer").trim();
+  const tables = await loadLiveDataViewerTables(tabId);
+  const matches = tables.filter((table) => table.id === requested || table.label === requested);
+  if (matches.length !== 1) throw new Error(`Delete table ${requested} was not found uniquely in the active tenant.`);
+  const table = matches[0];
+  const rawMetadata = await fetchCdpMetadata(tabId, `tables/${encodeURIComponent(table.tableId || table.id)}`);
+  const fields = metadataFieldList(rawMetadata);
+  const tenantId = tenantIdFromMetadata(rawMetadata);
+  const suffix = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  const plan = CdpDeletePlanner.buildDeletePlan({ table, fields, sourceId: settings.sourceId, conditions: settings.conditions, tenantId, uniqueId: `cdp_delete_${suffix}`, purpose: purpose || table.label });
+  return plan;
+}
+
+async function prepareSegmentDeleteJob(tabId, plan, destinationName, reportFileName, deleteSchedule, additionalPreferences = {}) {
+  // Use the same visible UI path as a person. The unsupported external-segment
+  // POST returned 405 and could leave a job pointing at no visible segment.
+  const currentUrl = (await chrome.tabs.get(tabId)).url;
+  const jobName = plan.jobName;
+  if (!/^DEL_[A-Z0-9_]+_\d{2}[A-Z]{3}_\d{4}$/.test(jobName || "")) throw new Error("Delete job name was not generated from the segment purpose and timestamp.");
+  const segmentConfig = { segmentName: plan.segmentName, tableName: plan.tableName, sourceId: plan.sourceId, sourceIdField: plan.sourceIdField, conditions: plan.conditions };
+  await navigateAndWait(tabId, navigationUrl(currentUrl, "/segmentation/", "segments"));
+  await injectDeleteUi(tabId);
+  const start = await runDeleteUiStep(tabId, "startSegment", segmentConfig);
+  if (start?.ok === false) throw new Error(start.error);
+  if (!start?.value?.nameInputId) throw new Error("Segment name was not entered.");
+  await pressDeleteJobTab(tabId, start.value.nameInputId);
+  let baseOptionReady = false;
+  for (let attempt = 0; attempt < 3 && !baseOptionReady; attempt++) {
+    const state = await runDeleteUiStep(tabId, "baseObjectState", segmentConfig);
+    if (!state?.ok) throw new Error(state?.error || `Base Object ${segmentConfig.tableName} was not offered by the segment form.`);
+    if (state.value?.baseOptionReady) { baseOptionReady = true; break; }
+    if (!state.value?.controlPoint) throw new Error("Base Object selector has no clickable bounds.");
+    await dispatchDeleteMouseClick(tabId, state.value.controlPoint);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  if (!baseOptionReady) {
+    const state = await runDeleteUiStep(tabId, "baseObjectState", segmentConfig);
+    if (!state?.ok || !state.value?.baseOptionReady) throw new Error(state?.error || `Base Object ${segmentConfig.tableName} did not open after three verified clicks.`);
+  }
+  await clickDeleteBaseOption(tabId, segmentConfig.tableName);
+  const continued = await runNavigatingDeleteUiStep(tabId, "continueSegment", segmentConfig, "segmentBuilder");
+  if (continued?.ok === false) throw new Error(continued.error);
+  await waitForDeleteRoute(tabId, "segmentBuilder", "segment builder");
+  await waitForDeleteBuilderReady(tabId, segmentConfig);
+  await injectDeleteUi(tabId);
+  const requestedConditions = [
+    { field: segmentConfig.sourceIdField, operator: "matches", value: segmentConfig.sourceId },
+    ...segmentConfig.conditions.map((condition) => ({ field: condition, operator: condition.operator, value: condition.value }))
+  ];
+  for (const [index, condition] of requestedConditions.entries()) {
+    await revealDeleteAttribute(tabId, segmentConfig.tableName, condition.field.fieldId);
+    const request = { tableName: segmentConfig.tableName, ...condition, index };
+    const located = await runDeleteUiStep(tabId, "locateCondition", request);
+    if (!located?.ok || !located.value?.attributeReady) throw new Error(located?.error || `Segment attribute ${condition.field.fieldId} was not visible.`);
+    await clickDeleteAttribute(tabId, segmentConfig.tableName, condition.field.fieldId);
+    let prepared = await runDeleteUiStep(tabId, "prepareCondition", request);
+    if (!prepared?.ok) throw new Error(prepared?.error || `Could not add segment condition ${index + 1}.`);
+    if (prepared.value?.controlPoint) {
+      await dispatchDeleteMouseClick(tabId, prepared.value.controlPoint);
+      prepared = await runDeleteUiStep(tabId, "prepareCondition", request);
+      if (!prepared?.ok || prepared.value?.controlPoint) throw new Error(prepared?.error || `Segment operator ${condition.operator} did not open.`);
+    }
+    if (prepared.value?.optionId) await clickDeleteOperatorOption(tabId, prepared.value.optionId, condition.operator);
+    const inputReady = await runDeleteUiStep(tabId, "conditionInput", request);
+    if (!inputReady?.ok || !inputReady.value?.inputId) throw new Error(inputReady?.error || `Segment ${condition.field.fieldId} value input is unavailable.`);
+    await typeDeleteConditionValue(tabId, inputReady.value.inputId, condition.value, condition.operator);
+    const verified = await runDeleteUiStep(tabId, "verifyCondition", request);
+    if (!verified?.ok || !verified.value?.verified) throw new Error(verified?.error || `Segment condition ${index + 1} was not committed.`);
+  }
+  const finish = await runNavigatingDeleteUiStep(tabId, "finishSegment", segmentConfig, "segments");
+  if (finish?.ok === false) throw new Error(finish.error);
+  // A successful Save can replace the SPA document before the injected
+  // promise returns. The saved-list lookup below, not this return value, is
+  // the authoritative confirmation.
+  if (finish && !finish.value?.saveSubmitted) throw new Error(`Segment ${plan.segmentName} save was not submitted. Review the open builder; no Delete job was created.`);
+  await openDeleteVerificationList(tabId, navigationUrl(currentUrl, "/segmentation/", "segments"), "segments", "saved Segments list");
+  await injectDeleteUi(tabId);
+  const segmentResult = await runDeleteUiStep(tabId, "verifySegment", plan.segmentName);
+  if (segmentResult?.ok === false) throw new Error(segmentResult.error);
+  if (segmentResult?.value?.segmentName !== plan.segmentName) throw new Error(`Segment ${plan.segmentName} was not found in the saved Segments list; no Delete job was created.`);
+  let selectedDestinationName = destinationName;
+  try {
+    await navigateAndWait(tabId, navigationUrl(currentUrl, "/data/", "createDeleteJob"));
+    await injectDeleteUi(tabId);
+    const jobConfig = { jobName, segmentName: plan.segmentName, destinationName, reportFileName, additionalPreferences };
+    const started = await runDeleteUiStep(tabId, "startDeleteJob", jobConfig);
+    if (!started?.ok || !started.value?.nameInputId) throw new Error(started?.error || "Delete job name was not entered.");
+    await pressDeleteJobTab(tabId, started.value.nameInputId);
+    const picker = await runDeleteUiStep(tabId, "openDeleteJobSegment", jobConfig);
+    if (!picker?.ok || !picker.value?.optionReady) throw new Error(picker?.error || `Delete segment ${plan.segmentName} was not offered.`);
+    await clickDeleteSegmentOption(tabId, plan.segmentName);
+    const report = await runDeleteUiStep(tabId, "continueDeleteJob", jobConfig);
+    if (!report?.ok || !report.value?.destinationOptionReady || !report.value?.actualDestinationName) throw new Error(report?.error || "Delete report destination was not offered.");
+    await clickDeleteDestinationOption(tabId, report.value.actualDestinationName);
+    const filename = await runDeleteUiStep(tabId, "prepareDeleteJobSchedule", jobConfig);
+    if (!filename?.ok || !filename.value?.filenameInputId) throw new Error(filename?.error || "Delete report filename was not entered.");
+    selectedDestinationName = filename.value.actualDestinationName;
+    await pressDeleteJobTab(tabId, filename.value.filenameInputId);
+    const schedulePage = await runDeleteUiStep(tabId, "openDeleteJobSchedule", jobConfig);
+    if (!schedulePage?.ok || !schedulePage.value?.scheduleReady) throw new Error(schedulePage?.error || "Delete schedule page was not ready.");
+    await applyTrustedNewScheduler(tabId, { ...normalizeNewSchedulerConfig(deleteSchedule, "delete"), jobKind: "delete" });
+    const save = await runDeleteUiStep(tabId, "finishDeleteJob", jobConfig);
+    if (!save?.ok || !save.value?.savePoint) throw new Error(save?.error || "Delete job Save and close is not clickable.");
+    await dispatchDeleteMouseClick(tabId, save.value.savePoint);
+    if (new URL((await chrome.tabs.get(tabId)).url).searchParams.get("root") !== "integrations") {
+      const confirmation = await runNavigatingDeleteUiStep(tabId, "confirmDeleteJobSave", null, "integrations");
+      if (confirmation?.ok === false || (confirmation && !confirmation.value?.saveSubmitted)) throw new Error(confirmation?.error || "Delete job Save warning could not be confirmed.");
+    }
+    const saveOutcome = await waitForDeleteSaveOutcome(tabId);
+    if (saveOutcome === "success" && new URL((await chrome.tabs.get(tabId)).url).searchParams.get("root") !== "integrations") {
+      await navigateAndWait(tabId, navigationUrl(currentUrl, "/data/", "integrations"));
+    }
+    await injectDeleteUi(tabId);
+    const jobResult = await runDeleteUiStep(tabId, "verifyJob", jobName);
+    if (jobResult?.ok === false) throw new Error(jobResult.error);
+    if (jobResult?.value?.jobName !== jobName) throw new Error(`Delete job ${jobName} was not found in Integrations.`);
+  } catch (error) {
+    throw new Error(`Segment ${plan.segmentName} was saved, but its Delete job was not. Review the open wizard before retrying. ${error.message || error}`);
+  }
+  return { segmentName: plan.segmentName, jobName, destinationName: selectedDestinationName };
+}
+
+async function injectDeleteUi(tabId) {
+  await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["deleteUi.js"] });
+}
+
+async function revealDeleteAttribute(tabId, tableName, fieldId) {
+  const key = `${tableName}.${fieldId}`;
+  // Oracle's My Data search can ignore debugger-injected text. Navigate its
+  // actual tree instead; never select a similarly named field in another table.
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId }, world: "MAIN", args: [tableName, key],
+      func: (table, attributeKey) => {
+        const tree = document.getElementById("segment-data-model-browsermbtree");
+        if (!tree) return { ready: false, loading: true };
+        const roots = [...tree.querySelectorAll('li[role="treeitem"]')]
+          .filter((item) => item.firstElementChild?.querySelector('.qb-tree-node-label .oj-treeview-item-text')?.getAttribute("title") === table);
+        if (!roots.length) return { ready: false, loading: true };
+        if (roots.length !== 1) throw new Error(`Segment table ${table} is not unique in My Data.`);
+        const root = roots[0];
+        const icon = document.getElementById(attributeKey);
+        if (icon && tree.contains(icon) && icon.closest('li[role="treeitem"]')?.getClientRects().length) return { ready: true };
+        const collapsed = root.getAttribute("aria-expanded") === "false"
+          ? root : [...root.querySelectorAll('li[role="treeitem"][aria-expanded="false"]')][0];
+        if (!collapsed) return { ready: false, exhausted: true };
+        const disclosure = collapsed.firstElementChild?.querySelector(".oj-treeview-disclosure-icon");
+        if (!disclosure) throw new Error(`Segment tree branch ${collapsed.textContent.trim().slice(0, 80)} has no disclosure control.`);
+        disclosure.scrollIntoView({ block: "center" });
+        const rect = disclosure.getBoundingClientRect();
+        if (!rect.width || !rect.height) throw new Error("Segment tree disclosure is not clickable.");
+        return { ready: false, point: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } };
+      }
+    });
+    const state = results?.[0]?.result;
+    if (state?.ready) return;
+    if (state?.exhausted) break;
+    if (state?.point) await dispatchDeleteMouseClick(tabId, state.point);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  throw new Error(`Attribute ${key} was not found after expanding the visible ${tableName} tree; no segment was saved.`);
+}
+
+async function dispatchDeleteMouseClick(tabId, point, hoverDelayMs = 0) {
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+    if (hoverDelayMs) await new Promise((resolve) => setTimeout(resolve, hoverDelayMs));
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => undefined);
+  }
+}
+
+async function pressDeleteJobTab(tabId, inputId) {
+  const [{ result: focused }] = await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", args: [inputId], func: (id) => document.activeElement?.id === id });
+  if (!focused) throw new Error(`Delete wizard input ${inputId} lost focus before it could be committed.`);
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    const event = { key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: 0 };
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...event });
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyDown", ...event });
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...event });
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => undefined);
+  }
+}
+
+async function clickDeleteSegmentOption(tabId, segmentName) {
+  const [{ result: point }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [segmentName],
+    func: (name) => {
+      const picker = document.getElementById("segmentsList");
+      const listId = picker?.querySelector('[role="combobox"][aria-controls]')?.getAttribute("aria-controls");
+      const list = listId && document.getElementById(listId);
+      const options = [...(list?.querySelectorAll('[role="option"]') || [])].filter((item) => item.getClientRects().length && item.textContent.trim() === name);
+      if (options.length !== 1) throw new Error(`Delete segment option ${name} was not visible exactly once in the open picker.`);
+      options[0].scrollIntoView({ block: "center" });
+      const rect = options[0].getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+  });
+  await dispatchDeleteMouseClick(tabId, point);
+}
+
+async function clickDeleteDestinationOption(tabId, destinationName) {
+  const [{ result: point }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [destinationName],
+    func: (name) => {
+      const options = [...document.querySelectorAll('[role="row"],[role="option"]')]
+        .filter((item) => item.getClientRects().length && item.textContent.trim() === name);
+      if (options.length !== 1) throw new Error(`Report destination ${name} was not visible exactly once in the open picker.`);
+      options[0].scrollIntoView({ block: "center" });
+      const rect = options[0].getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+  });
+  await dispatchDeleteMouseClick(tabId, point);
+}
+
+async function clickDeleteAttribute(tabId, tableName, fieldId) {
+  const [{ result: point }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [tableName, fieldId],
+    func: (table, field) => {
+      const key = `${table}.${field}`;
+      const matches = [...document.querySelectorAll(".oj-ux-ico-plus[id]")]
+        .filter((element) => element.id === key && element.closest('li[role="treeitem"]')?.getClientRects().length);
+      if (matches.length !== 1) throw new Error(`Exact visible attribute ${key} was not found uniquely.`);
+      matches[0].scrollIntoView({ block: "center" });
+      const rect = matches[0].getBoundingClientRect();
+      if (!rect.width || !rect.height) throw new Error(`Attribute ${key} has no clickable bounds.`);
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+  });
+  await dispatchDeleteMouseClick(tabId, point, 150);
+}
+
+async function clickDeleteOperatorOption(tabId, optionId, operator) {
+  const labels = { matches: "Matches", startsWith: "Begins with", beginsWith: "Begins with", contains: "Contains", doesNotContain: "Does not contain", endsWith: "Ends with" };
+  const [{ result: point }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [optionId, labels[operator]],
+    func: (id, label) => {
+      const item = document.getElementById(id);
+      if (!item || item.getAttribute("role") !== "row" || item.textContent.trim() !== label || !item.getClientRects().length) {
+        throw new Error(`Operator option ${label} is no longer visible.`);
+      }
+      item.scrollIntoView({ block: "center" });
+      const rect = item.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+  });
+  await dispatchDeleteMouseClick(tabId, point);
+}
+
+async function typeDeleteConditionValue(tabId, inputId, value, operator) {
+  const [{ result: point }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [inputId],
+    func: (id) => {
+      const input = document.getElementById(id);
+      if (!input || input.disabled || !input.getClientRects().length) throw new Error(`Segment value input ${id} is unavailable.`);
+      input.scrollIntoView({ block: "center" });
+      const rect = input.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+  });
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    const [{ result: focused }] = await chrome.scripting.executeScript({
+      target: { tabId }, world: "MAIN", args: [inputId],
+      func: (id) => {
+        const input = document.getElementById(id);
+        if (document.activeElement?.id !== id) return { activeId: document.activeElement?.id || "" };
+        input.select();
+        return { activeId: id };
+      }
+    });
+    if (focused.activeId !== inputId) throw new Error(`Segment value input did not receive focus (active: ${focused.activeId || "none"}).`);
+    await chrome.debugger.sendCommand(target, "Input.insertText", { text: String(value) });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const [{ result: typed }] = await chrome.scripting.executeScript({
+      target: { tabId }, world: "MAIN", args: [inputId],
+      func: (id) => ({ value: document.getElementById(id)?.value, activeId: document.activeElement?.id || "" })
+    });
+    if (typed.value !== String(value)) throw new Error(`Segment value was not entered in ${inputId} (active: ${typed.activeId || "none"}).`);
+    const isMatch = operator === "matches";
+    const key = isMatch ? "Enter" : "Tab";
+    const keyCode = isMatch ? 13 : 9;
+    const completion = { key, code: key, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers: 0 };
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...completion });
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyDown", ...completion });
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...completion });
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => undefined);
+  }
+}
+
+async function clickDeleteBaseOption(tabId, tableName) {
+  const [{ result: point }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [tableName],
+    func: (name) => {
+      const options = [...document.querySelectorAll('#oj-listbox-results-master-entity-dropdown [role="option"]')]
+        .filter((element) => element.textContent.trim() === name && element.getClientRects().length);
+      if (options.length !== 1) throw new Error(`Base Object option ${name} was not visible exactly once.`);
+      options[0].scrollIntoView({ block: "center" });
+      const rect = options[0].getBoundingClientRect();
+      if (!rect.width || !rect.height) throw new Error(`Base Object option ${name} has no clickable bounds.`);
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+  });
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => undefined);
+  }
+}
+
+async function runDeleteUiStep(tabId, method, argument) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [method, argument ?? null],
+    func: async (step, value) => {
+      try {
+        if (typeof window.CdpDeleteUi?.[step] !== "function") throw new Error(`Delete UI step ${step} is unavailable on this page.`);
+        return { ok: true, value: await window.CdpDeleteUi[step](value) };
+      } catch (error) {
+        return { ok: false, error: String(error?.message || error) };
+      }
+    }
+  });
+  return result;
+}
+
+async function runNavigatingDeleteUiStep(tabId, method, argument, expectedRoot) {
+  try {
+    return await runDeleteUiStep(tabId, method, argument);
+  } catch (error) {
+    // Chrome can reject an in-flight injected promise when the UI replaces its
+    // document. Only treat that as navigational if the expected route is real.
+    const root = new URL((await chrome.tabs.get(tabId)).url).searchParams.get("root");
+    if (root === expectedRoot) return undefined;
+    throw error;
+  }
+}
+
+async function waitForDeleteRoute(tabId, root, label, timeout = 30000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    if (new URL(tab.url).searchParams.get("root") === root) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Delete UI did not open the ${label}. Review the open page for validation errors; no later step was run.`);
+}
+
+async function waitForDeleteSaveOutcome(tabId, timeout = 30000) {
+  const deadline = Date.now() + timeout;
+  let lastMessages = [];
+  let inspectionFailures = 0;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    const onIntegrations = new URL(tab.url).searchParams.get("root") === "integrations";
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN",
+        func: () => [...document.querySelectorAll("oj-message")]
+          .filter((message) => message.getClientRects().length > 0)
+          .map((message) => {
+            const title = message.querySelector(".oj-message-leading-header[title]")?.getAttribute("title")
+              || message.querySelector(".oj-message-title h1[title]")?.getAttribute("title")
+              || message.querySelector(".oj-message-title h1")?.textContent?.trim() || "";
+            const status = /^error$/i.test(title) || message.classList.contains("oj-error") ? "error"
+              : /^(success|confirmation)$/i.test(title) || message.classList.contains("oj-confirmation") || message.classList.contains("oj-success") ? "success" : "other";
+            const summary = message.querySelector(".oj-message-summary")?.textContent?.trim() || "";
+            const detail = message.querySelector(".oj-message-detail")?.textContent?.trim() || "";
+            return { status, title, text: [summary, detail].filter(Boolean).join(" — ").slice(0, 2000) };
+          })
+      });
+      inspectionFailures = 0;
+      lastMessages = result || [];
+      const error = lastMessages.find((message) => message.status === "error");
+      if (error) throw new Error(`Delete job save failed: ${error.text || error.title || "Oracle showed an Error toast."}`);
+      if (lastMessages.some((message) => message.status === "success")) return "success";
+      if (onIntegrations) return "navigated";
+    } catch (error) {
+      if (String(error?.message || "").startsWith("Delete job save failed:")) throw error;
+      // The document may be replaced while Oracle navigates after Save.
+      if (onIntegrations) return "navigated";
+      if (++inspectionFailures >= 5) throw new Error(`Could not inspect the Delete job save status: ${error?.message || error}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  const detail = lastMessages.map((message) => `${message.title || "Message"}: ${message.text}`).filter(Boolean).join("; ");
+  throw new Error(`Delete job save was not confirmed by an Oracle status toast or Integrations list within ${Math.ceil(timeout / 1000)} seconds. ${detail || "The wizard was left open; check its validation messages."}`);
+}
+
+async function waitForDeleteBuilderReady(tabId, { segmentName, tableName }, timeout = 60000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    if (new URL(tab.url).searchParams.get("root") !== "segmentBuilder") {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      continue;
+    }
+    let state;
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId }, world: "MAIN", args: [segmentName, tableName],
+        func: (name, table) => {
+          const editor = document.getElementById("enclosure-0-editor");
+          const list = document.getElementById("enclosure-0-editor-list-view");
+          const dropArea = document.getElementById("enclosure-0-editor-dnd");
+          const tree = document.getElementById("segment-data-model-browsermbtree");
+          const tableReady = [...(tree?.querySelectorAll('li[role="treeitem"]') || [])]
+            .some((item) => item.firstElementChild?.querySelector('.qb-tree-node-label .oj-treeview-item-text')?.getAttribute("title") === table);
+          return Boolean(document.querySelector("h1")?.textContent.includes(name)
+            && editor?.getClientRects().length && list?.classList.contains("oj-complete")
+            && dropArea?.getClientRects().length && tableReady);
+        }
+      });
+      state = results?.[0]?.result;
+    } catch (_) {
+      // Oracle can replace the document while the builder is mounting.
+    }
+    if (state === true) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Segment builder did not finish loading the condition drop area and ${tableName} attributes for ${segmentName}; no conditions were added.`);
+}
+
+async function openDeleteVerificationList(tabId, url, root, label) {
+  try {
+    await waitForDeleteRoute(tabId, root, label, 6000);
+  } catch (error) {
+    // Oracle can leave the editor open after Save. Open the list only after a
+    // short settle window; the exact-name lookup still has to prove persistence.
+    await navigateAndWait(tabId, url);
+  }
 }
 
 function normalizeLiveDataViewerTable(table) {
@@ -552,7 +1021,7 @@ async function selectedTransferTemplate(templateId) {
   const vault = await cdpReadTemplates();
   const template = vault.templates.find((item) => item.id === templateId);
   if (!template) throw new Error("Select a valid transfer template before running automation.");
-  if (template.kind === "direct") throw new Error("Select a file-transfer template for Export or Import jobs.");
+  if (template.kind === "direct") throw new Error("Select a file-transfer template for Export, Import, or Delete jobs.");
   if (!template.source?.type || !template.destination?.type) throw new Error("The selected transfer template is incomplete.");
   const profiles = await cdpReadConnectionProfiles();
   const resolve = (side) => {
@@ -1067,6 +1536,8 @@ function newSchedulerRunAt(schedule, presetKey, customTimeKey) {
   } else if (preset === "plusOneHour") {
     // The popup's +1 hour means exactly 60 minutes from now.
     result.setHours(result.getHours() + 1);
+  } else if (preset === "plusFourHours") {
+    result.setHours(result.getHours() + 4);
   } else {
     result.setMinutes(result.getMinutes() + (preset === "in30" ? 30 : 15), 0, 0);
   }
@@ -1089,9 +1560,9 @@ function normalizeNewSchedulerConfig(schedule = {}, kind = "import") {
     mode: "scheduled",
     frequency: "Daily",
     timeMode: "specific",
-    specificPreset: isExport ? "in15" : "in30",
+    specificPreset: isExport ? "in15" : kind === "delete" ? "plusFourHours" : "in30",
     intervalHours: "1",
-    intervalStartPreset: isExport ? "in15" : "in30",
+    intervalStartPreset: isExport ? "in15" : kind === "delete" ? "plusFourHours" : "in30",
     intervalEndTime: "23:59",
     ...schedule,
     // Import's new schedule page retains the existing On-demand choice.
@@ -1410,8 +1881,8 @@ async function activateRecurringMode(tabId) {
 
 async function applyTrustedNewScheduler(tabId, schedule = {}) {
   const normalized = { frequency: "Daily", timeMode: "specific", specificPreset: "in15", intervalHours: "1", intervalStartPreset: "in15", intervalEndTime: "23:59", ...schedule };
-  const isImportJob = normalized.jobKind === "import";
-  const schedulerGroup = `Scheduler · ${isImportJob ? "Import" : "Export"}`;
+  const isImportJob = normalized.jobKind === "import" || normalized.jobKind === "delete";
+  const schedulerGroup = `Scheduler · ${normalized.jobKind === "delete" ? "Delete" : isImportJob ? "Import" : "Export"}`;
   await waitForNewSchedulerState(tabId, { type: "ready" }, "schedule controls", Boolean, 120000);
   await appendRunLog("Schedule and Notify controls are ready.", "info", schedulerGroup, "Ready");
 
@@ -2613,7 +3084,11 @@ async function runConfiguredFlow(tabId, flow = {}) {
   if (activeSequences.has(tabId)) throw new Error("An E2E flow is already running in this tab.");
   const entityTimestamp = entityNameTag();
   const selectedSteps = new Set(flow.steps || ["dataViewer", "source", "destination", "export", "import", "publish", "verify"]);
-  const usesTransfer = [...selectedSteps].some((step) => ["source", "destination", "export", "import", "responsys"].includes(step));
+  // Validate the destructive scope against this tenant before creating any
+  // connection or data-feed job. The eventual Delete job is inactive.
+  const deletePlan = selectedSteps.has("delete") ? await prepareDeleteMetadata(tabId, flow.deleteSettings || {}, flow.connectionPurpose || "") : null;
+  const overrideDestinationName = String(flow.deleteSettings?.destinationName || "").trim();
+  const usesTransfer = [...selectedSteps].some((step) => ["source", "destination", "export", "import", "delete", "responsys"].includes(step));
   const selectedTemplate = usesTransfer ? await selectedTransferTemplate(flow.templateId) : null;
   const template = selectedTemplate ? { ...selectedTemplate, connectionPurpose: flow.connectionPurpose || "" } : null;
   const connectionSequence = template ? await nextConnectionSequence(template.id) : 0;
@@ -2646,7 +3121,6 @@ async function runConfiguredFlow(tabId, flow = {}) {
     const config = route[side];
     const readyKey = `${side}Ready`;
     if (route[readyKey]) return config;
-    if (route.defaultRoute) { route[readyKey] = true; return config; }
     const definition = side === "source"
       ? { filename: "source.js", label: `Create Source · ${route.template.name}`, saveSelector: "#create-source-saveClose" }
       : { filename: "destination.js", label: `Create Destination · ${route.template.name}`, saveSelector: "#dst-saveClose-btn" };
@@ -2665,7 +3139,8 @@ async function runConfiguredFlow(tabId, flow = {}) {
   // select the connection card explicitly in a custom flow.
   if (selectedSteps.has("import")) selectedSteps.add("source");
   if (selectedSteps.has("responsys")) selectedSteps.add("responsysSource");
-  if (selectedSteps.has("export")) selectedSteps.add("destination");
+  // Export and Delete request a destination on demand, so a per-table route
+  // does not also create an unused global destination.
   const stepDefinitions = [
     { id: "dataModel", label: "Data Models" },
     { id: "dataModelAttributes", label: "Add New Attributes" },
@@ -2675,6 +3150,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
     { id: "destination", filename: "destination.js", label: "Create Destination", saveSelector: "#dst-saveClose-btn" },
     { id: "export", filename: "exportJob.js", label: "Create Export Job", saveSelector: "#saveNclose-create-job" },
     { id: "import", filename: "importContacts.js", label: "Create Import Job", saveSelector: "#saveNclose-create-job" },
+    { id: "delete", label: "Prepare Segment and Delete Job" },
     { id: "responsys", filename: "importJob.js", label: "Create Responsys Import", saveSelector: "#saveNclose-create-job" }
   ].filter((step) => selectedSteps.has(step.id));
   const selectedJobSteps = stepDefinitions.filter((step) => step.id === "export" || step.id === "import" || step.id === "responsys");
@@ -2733,6 +3209,24 @@ async function runConfiguredFlow(tabId, flow = {}) {
       }
       if (step.id === "dataViewer") {
         await runDataViewerStep(tabId, flow, runId);
+        continue;
+      }
+      if (step.id === "delete") {
+        const supportedReportTypes = new Set(["Oracle Object Storage", "Secure FTP", "AWS", "Google Cloud Storage"]);
+        const exportJobs = runSnapshot.jobs.filter((job) => job.kind === "export" && supportedReportTypes.has(routeStates.get(job.templateId)?.destination?.type));
+        const { templateId: destinationTemplateId, relatedExport } = CdpDeletePlanner.chooseReportDestination({ tableName: deletePlan.tableName, exportJobs, defaultTemplateId: template.id });
+        const route = overrideDestinationName ? null : await routeTemplateFor("__deleteReport__", destinationTemplateId);
+        if (route && !supportedReportTypes.has(route.destination.type)) throw new Error("Delete reports support only OOS, SFTP, AWS, or GCS destinations. Enter an existing supported destination name.");
+        const destination = route ? await ensureRouteConnection(route, "destination") : { name: overrideDestinationName };
+        const host = new URL((await chrome.tabs.get(tabId)).url).hostname.split(".")[0];
+        const customExportTable = deletePlan.isCustom ? { label: deletePlan.tableName } : null;
+        const fileCode = jobObjectCode({ kind: "export", payloadName: deletePlan.tableName, customTable: customExportTable });
+        const namingTemplate = relatedExport ? routeStates.get(relatedExport.templateId)?.template || route?.template || template : route?.template || template;
+        const reportFileName = ["DELETE", fileCode, normalizedNamePart(host), transferPurposeCode(namingTemplate)].filter(Boolean).join("_");
+        const prepared = await prepareSegmentDeleteJob(tabId, deletePlan, destination.name, reportFileName, flow.deleteSchedule || flow.deleteSettings?.schedule, flow.deleteSettings?.additionalPreferences);
+        runSnapshot.jobs.push({ kind: "delete", name: prepared.jobName, templateId: route?.template.id || "", templateName: route?.template.name || "Existing destination", connectionName: prepared.destinationName, segmentName: prepared.segmentName, reportFileName, status: "created-review" });
+        await saveRunSnapshot({ ...runSnapshot, jobs: [...runSnapshot.jobs] });
+        await appendRunLog(`Created UI segment ${prepared.segmentName} and Delete job ${prepared.jobName}; destination ${prepared.destinationName}; report ${reportFileName}_<timestamp>_0.csv. Review its segment count, schedule, and active status before starting.`, "info", "Prepare Delete", "Review");
         continue;
       }
       if (step.id === "export" && useLegacyStagger && !runMetadata.exportScheduledAt) {

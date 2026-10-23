@@ -19,19 +19,37 @@ let advancedStepsExpanded = false;
 // the pending step while its sheet is open and select it only on Save & Return.
 let pendingFlowConfigurationStep = "";
 const QUICK_VISIBLE_LIMIT = 6;
-const DEFAULT_FLOW = ["dataModel", "dataModelAttributes", "dataViewer", "source", "destination", "export", "import", "responsys", "publish", "verify"];
+const DEFAULT_FLOW = ["dataModel", "dataModelAttributes", "dataViewer", "source", "destination", "export", "import", "delete", "responsys", "publish", "verify"];
+const DEFAULT_DELETE_SETTINGS = Object.freeze({ tableId: "Customer", sourceId: "CDP", destinationName: "", additionalPreferences: Object.freeze({ deleteLinked: true, truncateCustomer360: true, truncateCube: true }) });
+function normalizeDeleteSettings(saved) {
+  const value = { ...DEFAULT_DELETE_SETTINGS, ...(saved || {}) };
+  value.additionalPreferences = Object.fromEntries(Object.keys(DEFAULT_DELETE_SETTINGS.additionalPreferences).map((key) => [key, saved?.additionalPreferences?.[key] === undefined || saved.additionalPreferences[key] === true]));
+  value.conditions = Array.isArray(saved?.conditions)
+    ? saved.conditions.map((entry) => ({ field: String(entry?.field || ""), operator: entry?.operator === "beginsWith" ? "startsWith" : String(entry?.operator || "matches"), value: String(entry?.value || "") }))
+    : saved?.matchField !== undefined
+      ? [{ field: saved.matchField || "", operator: saved.matchOperator === "beginsWith" ? "startsWith" : saved.matchOperator || "matches", value: saved.matchValue || "" }, ...(saved.extraField || saved.extraValue ? [{ field: saved.extraField || "", operator: saved.extraOperator === "beginsWith" ? "startsWith" : saved.extraOperator || "matches", value: saved.extraValue || "" }] : [])]
+      : [{ field: "Email", operator: "startsWith", value: "delete" }];
+  if (saved?.sourceKeys !== undefined && saved?.sourceId === undefined) value.legacyScope = true;
+  if (saved?.destinationTemplateId) value.legacyScope = true;
+  delete value.sourceKeys;
+  delete value.conditionField;
+  delete value.conditionValue;
+  for (const key of ["matchField", "matchOperator", "matchValue", "extraField", "extraOperator", "extraValue", "destinationTemplateId"]) delete value[key];
+  return value;
+}
 const LEGACY_SCHEDULER = { schedulerUi: "legacy", mode: "scheduled", frequency: "Daily", startTime: "immediate" };
 function newSchedulerDefaults(kind = "import") {
   const isExport = /export/i.test(kind);
+  const isDelete = /delete/i.test(kind);
   return {
     schedulerUi: "new",
     mode: "scheduled",
     frequency: "Daily",
     timeMode: "specific",
-    specificPreset: isExport ? "in15" : "in30",
+    specificPreset: isExport ? "in15" : isDelete ? "plusFourHours" : "in30",
     customTime: "",
     intervalHours: "1",
-    intervalStartPreset: isExport ? "in15" : "in30",
+    intervalStartPreset: isExport ? "in15" : isDelete ? "plusFourHours" : "in30",
     intervalStartTime: "",
     intervalEndTime: "23:59"
   };
@@ -52,8 +70,8 @@ const state = {
   // A Custom Flow includes Import by default. Keep Customer selected on a
   // first-use popup so its primary Run action is immediately actionable.
   // Users can still clear this selection or choose any catalog table.
-  workingSetKey: "static:customer", schedulerUi: "new", schedulerTenant: "", importSettings: { customer: true }, importCustomSettings: {}, importMappingMode: "separateJobs", syncImportWithExport: true, transferRoutes: {}, singleImportTemplateId: "", exportPayloadName: "Customer", exportPayloads: ["Customer"], dataViewerSettings: { Customer: true, ContactPoint: true }, dataViewerOptions: { recordsPerTable: "", startingIndex: "", sourceId: "", parentSourceCustomerId: "", contactPointExplicitlyUnselected: false, dryRun: false }, dataViewerOverrides: {}, dataModelSettings: { Profile: true }, dataModelOptions: { dryRun: false }, dataModelAttributeEnabled: { Profile: true }, dataModelParents: Object.fromEntries(DATA_MODEL_GROUPS.map((group) => [group, { kind: "Customer", objectName: "" }])), dataModelAttributeGroup: "Profile", dataModelAttributeObjectName: "", dataModelAttributeColumns: {}, templateId: "", connectionPurpose: "", templates: [], schedulers: {
-    responsys: defaultScheduler("responsys"), quickImport: defaultScheduler("quickImport"), quickExport: defaultScheduler("quickExport"), flowImport: defaultScheduler("flowImport"), flowExport: defaultScheduler("flowExport"), flowResponsys: defaultScheduler("flowResponsys")
+  workingSetKey: "static:customer", schedulerUi: "new", schedulerTenant: "", importSettings: { customer: true }, importCustomSettings: {}, importMappingMode: "separateJobs", syncImportWithExport: true, transferRoutes: {}, singleImportTemplateId: "", deleteSettings: normalizeDeleteSettings(), exportPayloadName: "Customer", exportPayloads: ["Customer"], dataViewerSettings: { Customer: true, ContactPoint: true }, dataViewerOptions: { recordsPerTable: "", startingIndex: "", sourceId: "", parentSourceCustomerId: "", contactPointExplicitlyUnselected: false, dryRun: false }, dataViewerOverrides: {}, dataModelSettings: { Profile: true }, dataModelOptions: { dryRun: false }, dataModelAttributeEnabled: { Profile: true }, dataModelParents: Object.fromEntries(DATA_MODEL_GROUPS.map((group) => [group, { kind: "Customer", objectName: "" }])), dataModelAttributeGroup: "Profile", dataModelAttributeObjectName: "", dataModelAttributeColumns: {}, templateId: "", connectionPurpose: "", templates: [], schedulers: {
+    responsys: defaultScheduler("responsys"), quickImport: defaultScheduler("quickImport"), quickExport: defaultScheduler("quickExport"), flowImport: defaultScheduler("flowImport"), flowExport: defaultScheduler("flowExport"), flowDelete: defaultScheduler("flowDelete"), flowResponsys: defaultScheduler("flowResponsys")
   }
 };
 let jobPresets = [];
@@ -76,6 +94,7 @@ function flowPresetConfig() {
     syncImportWithExport: state.syncImportWithExport,
     transferRoutes: cloneConfig(state.transferRoutes),
     singleImportTemplateId: state.singleImportTemplateId,
+    deleteSettings: cloneConfig(state.deleteSettings),
     exportPayloadName: state.exportPayloadName,
     exportCustomTable: selectedExportCustomTable(),
     exportSchedule: cloneConfig(schedulerConfig("flowExport")),
@@ -113,9 +132,11 @@ function applyPresetConfig(config) {
     state.syncImportWithExport = config.syncImportWithExport !== false;
     state.transferRoutes = config.transferRoutes && typeof config.transferRoutes === "object" ? config.transferRoutes : {};
     state.singleImportTemplateId = config.singleImportTemplateId || state.templateId;
+    state.deleteSettings = normalizeDeleteSettings(config.deleteSettings);
     if (EXPORT_PAYLOAD_OPTIONS.includes(config.exportPayloadName) || LIVE_CUSTOM_TABLES.some((table) => table.label === config.exportCustomTable?.label)) state.exportPayloadName = config.exportCustomTable?.label || config.exportPayloadName;
     state.schedulers.flowExport = schedulerWithTenantUi("flowExport", config.exportSchedule);
     state.schedulers.flowImport = schedulerWithTenantUi("flowImport", config.importSchedule);
+    state.schedulers.flowDelete = schedulerWithTenantUi("flowDelete", config.deleteSettings?.schedule);
     state.schedulers.flowResponsys = schedulerWithTenantUi("flowResponsys", config.responsysSchedule);
     state.dataViewerSettings = Object.fromEntries((config.dataViewerTableIds || []).map((id) => [id, true]));
     state.dataModelSettings = Object.fromEntries((config.dataModelGroups || []).map((group) => [group, true]));
@@ -747,11 +768,11 @@ function renderOptionHint(id, total, visible, filter) {
   hint.textContent = `${remaining} more available — search to find`;
 }
 function specificPresetLabel(value) {
-  return ({ in15: "+15 min", in30: "+30 min", plusOneHour: "+1 hour", custom: "Custom" })[value] || "+15 min";
+  return ({ in15: "+15 min", in30: "+30 min", plusOneHour: "+1 hour", plusFourHours: "+4 hours", custom: "Custom" })[value] || "+15 min";
 }
 function schedulerSummary(config) { return scheduleSummary(config); }
 function schedulerConfig(key) { return { ...state.schedulers[key] }; }
-function schedulerKind(key) { return /export/i.test(key) ? "export" : "import"; }
+function schedulerKind(key) { return /export/i.test(key) ? "export" : /delete/i.test(key) ? "delete" : "import"; }
 function normalizeScheduler(key, saved) {
   // Saved drafts from the previous popup retain the legacy scheduler instead
   // of unexpectedly changing an established job's behavior.
@@ -768,6 +789,7 @@ function normalizeScheduler(key, saved) {
 }
 function schedulerWithTenantUi(key, saved) {
   const normalized = normalizeScheduler(key, saved);
+  if (key === "flowDelete") return { ...newSchedulerDefaults("delete"), ...normalized, schedulerUi: "new" };
   if (state.schedulerUi === "legacy") return { ...LEGACY_SCHEDULER, ...normalized, schedulerUi: "legacy" };
   return { ...newSchedulerDefaults(schedulerKind(key)), ...normalized, schedulerUi: "new" };
 }
@@ -814,6 +836,7 @@ function schedulerRow(label, options, value, onChange, disabled = false) {
 function renderSchedulers() {
   document.querySelectorAll("[data-scheduler]").forEach((container) => {
     const key = container.dataset.scheduler; const config = state.schedulers[key]; const lockStart = ["flowExport", "flowImport"].includes(key) && flowHasBothJobs() && config.schedulerUi === "legacy";
+    if (key === "flowDelete") state.deleteSettings.schedule = config;
     container.replaceChildren();
     if (config.schedulerUi === "legacy") {
       container.append(schedulerRow("Mode", [{ value: "onDemand", label: "On-demand" }, { value: "scheduled", label: "Scheduled" }], config.mode, (mode) => { config.mode = mode; persistDraft(); renderAll(); }));
@@ -833,9 +856,12 @@ function renderSchedulers() {
     const frequency = document.createElement("label"); frequency.className = "scheduler-select-row"; frequency.textContent = "Frequency";
     const select = document.createElement("select");
     [["Daily", "Daily"], ["Weekly, on selected Days", "Weekly"], ["Monthly, on selected Days", "Monthly (days)"], ["Monthly, on selected Dates", "Monthly (dates)"]].forEach(([value, label]) => select.append(new Option(label, value)));
-    select.value = config.frequency; select.addEventListener("change", () => { config.frequency = select.value; persistDraft(); renderAll(); }); frequency.append(select); newSchedule.append(frequency);
-    newSchedule.append(schedulerRow("Times", [{ value: "specific", label: "Specific" }, { value: "interval", label: "Interval" }], config.timeMode, (timeMode) => { config.timeMode = timeMode; persistDraft(); renderAll(); }));
-    const presets = [{ value: "in15", label: "+15 min" }, { value: "in30", label: "+30 min" }, { value: "plusOneHour", label: "+1 hour" }, { value: "custom", label: "Custom" }];
+    select.value = config.frequency; select.addEventListener("change", () => { config.frequency = select.value; persistDraft(); renderAll(); }); frequency.append(select);
+    const times = schedulerRow("Times", [{ value: "specific", label: "Specific" }, { value: "interval", label: "Interval" }], config.timeMode, (timeMode) => { config.timeMode = timeMode; persistDraft(); renderAll(); });
+    if (key === "flowDelete") {
+      const primary = document.createElement("div"); primary.className = "scheduler-primary"; primary.append(frequency, times); newSchedule.append(primary);
+    } else newSchedule.append(frequency, times);
+    const presets = [{ value: "in15", label: "+15 min" }, { value: "in30", label: "+30 min" }, { value: "plusOneHour", label: "+1 hour" }, ...(key === "flowDelete" ? [{ value: "plusFourHours", label: "+4 hours" }] : []), { value: "custom", label: "Custom" }];
     if (config.timeMode === "specific") {
       newSchedule.append(schedulerRow("Run time", presets, config.specificPreset, (specificPreset) => { config.specificPreset = specificPreset; persistDraft(); renderAll(); }));
       if (config.specificPreset === "custom") {
@@ -1202,6 +1228,47 @@ function renderFlow() {
   const exportRouteCount = selectedExportPayloads().length;
   setStepPills("flowExportValue", [...tablePills(selectedExportPayloads(), ""), exportRouteCount ? pill(`${exportRouteCount} route${exportRouteCount === 1 ? "" : "s"}`, "neutral") : null, ...schedulePills(state.schedulers.flowExport)]);
   setStepPills("flowImportCount", [...tablePills(selectedImportEntries(), ""), ...schedulePills(state.schedulers.flowImport)]);
+  const deletion = state.deleteSettings;
+  document.getElementById("flowDeleteSummary").textContent = `${deletion.tableId || "Customer"} · SourceID ${deletion.sourceId || "?"} · ${(deletion.conditions || []).length} condition(s) · ${scheduleSummary(state.schedulers.flowDelete)}`;
+  const deleteTable = document.getElementById("deleteTableId");
+  const choices = [...new Set(["Customer", "Account", ...DATA_VIEWER_TABLES.map((table) => table.id), deletion.tableId].filter(Boolean))];
+  deleteTable.replaceChildren(...choices.map((name) => { const option = document.createElement("option"); option.value = name; option.textContent = name; return option; }));
+  deleteTable.value = deletion.tableId || "Customer";
+  document.getElementById("deleteDestinationName").value = deletion.destinationName || "";
+  for (const [id, key] of [["deleteLinkedPreference", "deleteLinked"], ["deleteCustomer360Preference", "truncateCustomer360"], ["deleteCubePreference", "truncateCube"]]) {
+    document.getElementById(id).checked = deletion.additionalPreferences?.[key] === true;
+  }
+  const selectedDeleteTable = DATA_VIEWER_TABLES.find((item) => item.id === deletion.tableId || item.label === deletion.tableId);
+  const tableName = String(selectedDeleteTable?.label || deletion.tableId || "Customer");
+  const customCode = /profile/i.test(tableName) ? "PROFILE" : /behavior/i.test(tableName) ? "BEH" : /transaction/i.test(tableName) ? "TXN" : /product/i.test(tableName) ? "PRODUCT" : "OTH";
+  const fileCode = selectedDeleteTable?.isCustom || /_c$/i.test(tableName) ? customCode : tableName.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").toUpperCase();
+  const hostCode = liveCatalogOrigin ? new URL(liveCatalogOrigin).hostname.split(".")[0].toUpperCase() : "HOST";
+  const purposeCode = state.connectionPurpose.trim().replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").toUpperCase();
+  const segmentPurpose = purposeCode || tableName.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").toUpperCase();
+  const segmentDate = new Date();
+  const segmentStamp = `${String(segmentDate.getDate()).padStart(2, "0")}${["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"][segmentDate.getMonth()]}_${String(segmentDate.getHours()).padStart(2, "0")}${String(segmentDate.getMinutes()).padStart(2, "0")}`;
+  document.getElementById("deleteSegmentNamePreview").textContent = `SEGMENT_${segmentPurpose.slice(0, 128 - 8 - segmentStamp.length - 1)}_${segmentStamp}`;
+  document.getElementById("deleteReportNamePreview").textContent = ["DELETE", fileCode, hostCode, purposeCode].filter(Boolean).join("_") + "_yyyy-MM-dd-HH-mm-ss-SSS_0.csv";
+  document.getElementById("deleteSourceId").value = deletion.sourceId || "";
+  const conditionPanel = document.getElementById("deleteConditions");
+  const operators = [["matches", "Matches"], ["startsWith", "Starts with"], ["contains", "Contains"], ["doesNotContain", "Does not contain"], ["endsWith", "Ends with"]];
+  conditionPanel.replaceChildren(...(deletion.conditions || []).map((condition, index) => {
+    const row = document.createElement("div"); row.className = "delete-rule";
+    const number = document.createElement("span"); number.className = "delete-rule-number"; number.textContent = String(index + 2);
+    const field = document.createElement("input"); field.type = "text"; field.placeholder = "Field ID"; field.value = condition.field || ""; field.setAttribute("aria-label", `Condition ${index + 1} field`);
+    const operator = document.createElement("select"); operator.setAttribute("aria-label", `Condition ${index + 1} operator`); operator.replaceChildren(...operators.map(([value, label]) => new Option(label, value))); operator.value = condition.operator || "matches";
+    const value = document.createElement("input"); value.type = "text"; value.placeholder = "Value"; value.value = condition.value || ""; value.setAttribute("aria-label", `Condition ${index + 1} value`);
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "delete-condition-remove"; remove.textContent = "×"; remove.title = "Remove condition"; remove.setAttribute("aria-label", `Remove condition ${index + 1}`);
+    for (const [input, key] of [[field, "field"], [operator, "operator"], [value, "value"]]) {
+      input.addEventListener(input === operator ? "change" : "input", () => { state.deleteSettings.conditions[index][key] = input.value; persistDraft(); });
+      input.addEventListener(input === operator ? "blur" : "change", renderFlow);
+    }
+    remove.addEventListener("click", () => { state.deleteSettings.conditions.splice(index, 1); persistDraft(); renderFlow(); });
+    row.append(number, field, operator, value, remove);
+    return row;
+  }));
+  const deleteScopeComplete = Boolean(String(deletion.sourceId || "").trim() && deletion.conditions?.length && deletion.conditions.every((condition) => String(condition.field || "").trim() && String(condition.value || "").trim() && operators.some(([key]) => key === condition.operator)));
+  document.getElementById("deleteReviewLegacy").hidden = !deletion.legacyScope;
   const advancedSteps = document.getElementById("flowAdvancedSteps");
   const selectedExtras = document.getElementById("flowSelectedExtras");
   const extraCards = EXTRA_FLOW_STEP_ORDER.map((step) => document.querySelector(`[data-extra-step="${step}"]`)).filter(Boolean);
@@ -1219,8 +1286,10 @@ function renderFlow() {
   if (advancedStepsExpanded) flowView.append(run);
   else advancedToggle.after(run);
   run.textContent = steps.length === 1 ? "▶ Run step" : `▶ Run ${steps.length}-step workflow`;
-  const transferSelected = steps.some((step) => ["source", "destination", "export", "import", "responsys"].includes(step));
+  const transferSelected = steps.some((step) => ["source", "destination", "export", "import", "delete", "responsys"].includes(step));
   const blockedReason = !steps.length ? "Select a workflow step."
+    : steps.includes("delete") && deletion.legacyScope ? "Review the updated Delete filters for this saved flow."
+    : steps.includes("delete") && !deleteScopeComplete ? "Complete the Delete segment conditions."
     : transferSelected && !state.templateId ? "Select a transfer template."
       : steps.includes("import") && !selectedImportEntries().length ? "Select Import table(s) in Edit."
         : steps.includes("export") && !selectedExportPayloads().length ? "Select Export table(s) in Edit."
@@ -1263,7 +1332,7 @@ function renderAll() {
   const openDrawer = [...document.querySelectorAll(".sheet")].find((sheet) => !sheet.hidden);
   if (openDrawer) renderDrawerContext(openDrawer);
 }
-async function persistDraft() { await chrome.storage.local.set({ flowDraft: { templateId: state.templateId, workingSetKey: state.workingSetKey, importSettings: state.importSettings, importCustomSettings: state.importCustomSettings, importMappingMode: state.importMappingMode, syncImportWithExport: state.syncImportWithExport, transferRoutes: state.transferRoutes, singleImportTemplateId: state.singleImportTemplateId, exportPayloadName: state.exportPayloadName, exportPayloads: selectedExportPayloads(), dataViewerSettings: state.dataViewerSettings, dataViewerOptions: state.dataViewerOptions, dataViewerOverrides: state.dataViewerOverrides, dataModelSettings: state.dataModelSettings, dataModelOptions: state.dataModelOptions, dataModelAttributeEnabled: state.dataModelAttributeEnabled, dataModelParents: state.dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeColumns: state.dataModelAttributeColumns, connectionPurpose: state.connectionPurpose, schedulers: state.schedulers, flowSteps: selectedFlowSteps() } }); }
+async function persistDraft() { await chrome.storage.local.set({ flowDraft: { templateId: state.templateId, workingSetKey: state.workingSetKey, importSettings: state.importSettings, importCustomSettings: state.importCustomSettings, importMappingMode: state.importMappingMode, syncImportWithExport: state.syncImportWithExport, transferRoutes: state.transferRoutes, singleImportTemplateId: state.singleImportTemplateId, deleteSettings: state.deleteSettings, exportPayloadName: state.exportPayloadName, exportPayloads: selectedExportPayloads(), dataViewerSettings: state.dataViewerSettings, dataViewerOptions: state.dataViewerOptions, dataViewerOverrides: state.dataViewerOverrides, dataModelSettings: state.dataModelSettings, dataModelOptions: state.dataModelOptions, dataModelAttributeEnabled: state.dataModelAttributeEnabled, dataModelParents: state.dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeColumns: state.dataModelAttributeColumns, connectionPurpose: state.connectionPurpose, schedulers: state.schedulers, flowSteps: selectedFlowSteps() } }); }
 function setStatus(status) { const running = /^Running:/.test(status || ""); statusEl.textContent = status || "No automation running"; statusDot.classList.toggle("idle", !running); stopButton.hidden = !running; const flowLaunchStatus = document.getElementById("flowLaunchStatus"); if (flowLaunchStatus && status) { flowLaunchStatus.textContent = status; flowLaunchStatus.hidden = false; flowLaunchStatus.dataset.validation = "false"; } }
 function setApiLoadStatus(status) {
   for (const id of ["dataViewerRunStatus", "flowDataViewerRunStatus"]) {
@@ -1278,6 +1347,7 @@ function closeAfterLaunch() {
   window.setTimeout(() => window.close(), 1000);
 }
 async function send(message, label, runInfo) { try { const customTransferStep = message.type === "run-custom-flow" && message.flow.steps.some((step) => ["source", "destination", "export", "import", "responsys"].includes(step)); const needsTemplate = !["run-publish-all", "run-data-viewer", "run-data-model", "run-data-model-attributes", "run-custom-flow", "run-fusion-user"].includes(message.type) || customTransferStep; if (!state.templateId && templateSelect.value && fileTemplates().some((template) => template.id === templateSelect.value)) state.templateId = templateSelect.value; if (needsTemplate && !state.templateId) throw new Error("Select a transfer template first."); const tabId = await activeTab(); const status = `Running: ${label}`; const pendingRun = { ...(runInfo || { summary: label, details: label }), startedAt: Date.now(), logs: [{ at: Date.now(), level: "info", message: `Started: ${label}` }] }; await chrome.storage.local.set({ pendingRun, e2eStatus: status, ...(needsTemplate ? { lastTemplateId: state.templateId } : {}) }); setStatus(status); if (message.type === "run-api-custom-records") setApiLoadStatus(status); const response = await chrome.runtime.sendMessage({ ...message, tabId, connectionPurpose: state.connectionPurpose.trim(), ...(needsTemplate ? { templateId: state.templateId } : {}) }); if (!response?.ok) throw new Error(response?.error || `${label} did not start.`); if (message.type === "run-api-custom-records") setApiLoadStatus("API load completed. Check the CDP data object and Activity log for the response."); const fusionStatus = document.getElementById("fusionUserRunStatus"); if (message.type === "run-fusion-user" && fusionStatus) fusionStatus.textContent = "User form is ready for review. Save and Close was not selected."; } catch (error) { const detail = error.message || error; setStatus(`Failed: ${detail}`); if (message.type === "run-api-custom-records") setApiLoadStatus(`Failed before API request: ${detail}`); const fusionStatus = document.getElementById("fusionUserRunStatus"); if (fusionStatus) fusionStatus.textContent = `Failed: ${detail}`; } }
+async function send(message, label, runInfo) { try { if (message.type === "run-custom-flow") message.flow.deleteSettings = { ...state.deleteSettings }; const customTransferStep = message.type === "run-custom-flow" && message.flow.steps.some((step) => ["source", "destination", "export", "import", "delete", "responsys"].includes(step)); const needsTemplate = !["run-publish-all", "run-data-viewer", "run-data-model", "run-data-model-attributes", "run-custom-flow", "run-fusion-user"].includes(message.type) || customTransferStep; if (!state.templateId && templateSelect.value && fileTemplates().some((template) => template.id === templateSelect.value)) state.templateId = templateSelect.value; if (needsTemplate && !state.templateId) throw new Error("Select a transfer template first."); const tabId = await activeTab(); const status = `Running: ${label}`; const pendingRun = { ...(runInfo || { summary: label, details: label }), startedAt: Date.now(), logs: [{ at: Date.now(), level: "info", message: `Started: ${label}` }] }; await chrome.storage.local.set({ pendingRun, e2eStatus: status, ...(needsTemplate ? { lastTemplateId: state.templateId } : {}) }); setStatus(status); if (message.type === "run-api-custom-records") setApiLoadStatus(status); const response = await chrome.runtime.sendMessage({ ...message, tabId, connectionPurpose: state.connectionPurpose.trim(), ...(needsTemplate ? { templateId: state.templateId } : {}) }); if (!response?.ok) throw new Error(response?.error || `${label} did not start.`); if (message.type === "run-api-custom-records") setApiLoadStatus("API load completed. Check the CDP data object and Activity log for the response."); const fusionStatus = document.getElementById("fusionUserRunStatus"); if (message.type === "run-fusion-user" && fusionStatus) fusionStatus.textContent = "User form is ready for review. Save and Close was not selected."; } catch (error) { const detail = error.message || error; setStatus(`Failed: ${detail}`); if (message.type === "run-api-custom-records") setApiLoadStatus(`Failed: ${detail}`); const fusionStatus = document.getElementById("fusionUserRunStatus"); if (fusionStatus) fusionStatus.textContent = `Failed: ${detail}`; } }
 
 // Use the same stateful configuration sheets as a full popup view.  Returning commits the
 // current draft so the corresponding main-flow card always reflects the saved selections.
@@ -1383,7 +1453,7 @@ document.getElementById("runDataModelBtn").addEventListener("click", () => { try
 document.getElementById("runDataModelAttributesBtn").addEventListener("click", () => { try { const objectName = state.dataModelAttributeObjectName.trim(); if (!objectName) return setStatus("Enter the existing Data Model object name."); const group = state.dataModelAttributeGroup; const columnOverrides = dataModelColumnOverridesForRun([group]); send({ type: "run-data-model-attributes", group, objectName, columnOverrides }, "Add New Attributes", { summary: `Add New Attributes — ${group} · ${objectName}`, details: `Add ${dataModelColumnCount(group)} new attributes to ${objectName}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
 document.getElementById("runCustomFlowBtn").addEventListener("click", () => { try { const steps = selectedFlowSteps(); if (!catalogReady && (steps.includes("import") || steps.includes("export") || steps.includes("dataViewer"))) return setStatus("Table catalog is still loading."); const dataViewerTableIds = selectedDataViewerTables().map((table) => table.id); const dataModelGroups = selectedDataModelGroups(); if (steps.includes("import") && !selectedImportEntries().length) return setStatus("Select at least one Import table."); if (steps.includes("export") && !selectedExportPayloads().length) return setStatus("Select at least one Export table."); if (steps.includes("dataViewer") && !dataViewerTableIds.length) return setStatus("Select at least one Data Viewer table."); if (steps.includes("dataModel") && !dataModelGroups.length) return setStatus("Select at least one Data Model object group."); const canUseCreatedDataModelObject = steps.includes("dataModel") && dataModelGroups.includes(state.dataModelAttributeGroup) && !state.dataModelOptions.dryRun; if (steps.includes("dataModelAttributes") && !state.dataModelAttributeObjectName.trim() && !canUseCreatedDataModelObject) return setStatus("Enter the Data Model object name, or create that same type in this live flow."); const staggerJobs = flowHasBothJobs(); const customDataViewer = { ...dataViewerRunOptions(), saveRecords: true }; const dataModelAttributeGroups = steps.includes("dataModel") && !state.dataModelOptions.dryRun ? selectedDataModelAttributeGroups() : []; const columnGroups = [...new Set([...(steps.includes("dataModelAttributes") ? [state.dataModelAttributeGroup] : []), ...dataModelAttributeGroups])]; const dataModelParents = steps.includes("dataModel") && !state.dataModelOptions.dryRun ? dataModelParentsForRun(dataModelGroups) : {}; send({ type: "run-custom-flow", flow: { steps, importTableIds: selectedTableIds(), importCustomTables: selectedImportCustomTables(), importMappingMode: state.importMappingMode, syncImportWithExport: state.syncImportWithExport, transferRoutes: state.transferRoutes, singleImportTemplateId: state.singleImportTemplateId || state.templateId, exportPayloadName: state.exportPayloadName, exportPayloads: selectedExportPayloads(), exportCustomTables: LIVE_CUSTOM_TABLES.filter((table) => selectedExportPayloads().includes(table.label)), exportSchedule: schedulerConfig("flowExport"), importSchedule: schedulerConfig("flowImport"), responsysSchedule: schedulerConfig("flowResponsys"), staggerJobs, dataViewerTableIds, dataModelGroups, dataModelAttributeGroups, dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeObjectName: state.dataModelAttributeObjectName.trim(), dataModelColumnOverrides: dataModelColumnOverridesForRun(columnGroups), saveDataModelObjects: !state.dataModelOptions.dryRun, ...customDataViewer } }, "Workflow", { summary: `Workflow — ${steps.length} steps`, details: `Workflow — ${steps.join(" → ")}` }); } catch (error) { setStatus(`Failed: ${error.message || error}`); } });
 templateSelect.addEventListener("change", async () => { state.templateId = templateSelect.value; if (!state.singleImportTemplateId) state.singleImportTemplateId = state.templateId; await chrome.storage.local.set({ lastTemplateId: state.templateId }); renderTemplates(); renderAll(); persistDraft(); });
-connectionPurposeInput.addEventListener("input", () => { state.connectionPurpose = connectionPurposeInput.value; chrome.storage.local.set({ lastConnectionPurpose: state.connectionPurpose }); persistDraft(); });
+connectionPurposeInput.addEventListener("input", () => { state.connectionPurpose = connectionPurposeInput.value; chrome.storage.local.set({ lastConnectionPurpose: state.connectionPurpose }); persistDraft(); renderFlow(); });
 document.getElementById("select-primary-object").addEventListener("change", (event) => applyWorkingSet(workingSetOptions().find((table) => table.workingSetKey === event.target.value)));
 document.getElementById("btn-refresh-tables").addEventListener("click", () => refreshLiveDataViewerTables());
 document.getElementById("tenantSchedulerNew").addEventListener("click", () => saveTenantSchedulerPreference("new"));
@@ -1407,6 +1477,15 @@ document.getElementById("stopE2EBtn").addEventListener("click", async () => { tr
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => { closeSheets(); showView(button.dataset.view); }));
 document.querySelectorAll("[data-activity-section]").forEach((button) => button.addEventListener("click", () => showActivitySection(button.dataset.activitySection)));
 document.querySelectorAll("[data-open-sheet]").forEach((button) => button.addEventListener("click", () => { attributeEditorForCreationGroup = ""; pendingFlowConfigurationStep = button.dataset.flowConfig || ""; if (button.dataset.openSheet === "dataModel") { dataModelConfigurationContext = button.dataset.flowConfig === "dataModel" ? "flow" : "standalone"; selectDefaultDataModelGroup(); } if (button.dataset.openSheet === "dataModelAttributes") dataModelConfigurationContext = button.dataset.flowConfig ? "flow" : "standalone"; openSheet(button.dataset.openSheet); renderAll(); }));
+for (const [id, key] of [["deleteTableId", "tableId"], ["deleteSourceId", "sourceId"], ["deleteDestinationName", "destinationName"]]) {
+  document.getElementById(id).addEventListener(id === "deleteTableId" ? "change" : "input", (event) => { state.deleteSettings[key] = event.target.value.trim(); persistDraft(); if (id === "deleteTableId") renderFlow(); });
+  document.getElementById(id).addEventListener("change", renderFlow);
+}
+for (const [id, key] of [["deleteLinkedPreference", "deleteLinked"], ["deleteCustomer360Preference", "truncateCustomer360"], ["deleteCubePreference", "truncateCube"]]) {
+  document.getElementById(id).addEventListener("change", (event) => { state.deleteSettings.additionalPreferences[key] = event.target.checked; persistDraft(); });
+}
+document.getElementById("deleteAddCondition").addEventListener("click", () => { state.deleteSettings.conditions.push({ field: "", operator: "matches", value: "" }); persistDraft(); renderFlow(); });
+document.getElementById("deleteReviewLegacy").addEventListener("click", () => { delete state.deleteSettings.legacyScope; persistDraft(); renderFlow(); });
 document.querySelectorAll("[data-close-sheet]").forEach((button) => button.addEventListener("click", async () => { commitFlowConfiguration(); await persistDraft(); closeSheets(); }));
 document.getElementById("quickImportSearch").addEventListener("input", renderTableChoices); document.getElementById("quickExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("flowImportSearch").addEventListener("input", renderTableChoices); document.getElementById("flowExportSearch").addEventListener("input", renderPayloadChoices); document.getElementById("dataViewerSearch").addEventListener("input", renderDataViewerChoices); document.getElementById("flowDataViewerSearch").addEventListener("input", renderDataViewerChoices);
 document.getElementById("dataViewerRecordsPerTable").addEventListener("input", (event) => { state.dataViewerOptions.recordsPerTable = event.target.value; persistDraft(); renderDataViewerChoices(); });
@@ -1479,6 +1558,7 @@ function resetWorkflowSession() {
   state.dataModelAttributeColumns = {};
   state.transferRoutes = {};
   state.singleImportTemplateId = "";
+  state.deleteSettings = normalizeDeleteSettings();
   document.querySelectorAll('input[id^="flow-"][type="checkbox"]').forEach((input) => { input.checked = false; });
   renderTemplates();
 }
@@ -1497,10 +1577,11 @@ async function initialize() {
     connectionPurposeInput.value = state.connectionPurpose;
     if (flowDraft) { state.workingSetKey = flowDraft.workingSetKey || state.workingSetKey; state.importSettings = flowDraft.importSettings || {}; state.importMappingMode = flowDraft.importMappingMode === "separate" ? "separate" : "combined"; state.exportPayloads = Array.isArray(flowDraft.exportPayloads) ? flowDraft.exportPayloads : [flowDraft.exportPayloadName || "Customer"]; state.exportPayloadName = String(flowDraft.exportPayloadName || state.exportPayloads[0] || ""); state.dataViewerSettings = flowDraft.dataViewerSettings || { Customer: true, ContactPoint: true }; state.dataViewerOptions = { ...state.dataViewerOptions, ...(flowDraft.dataViewerOptions || {}) }; state.dataViewerOverrides = flowDraft.dataViewerOverrides || {}; state.dataModelSettings = flowDraft.dataModelSettings || {}; state.dataModelOptions = { ...state.dataModelOptions, ...(flowDraft.dataModelOptions || {}) }; state.dataModelAttributeEnabled = flowDraft.dataModelAttributeEnabled || {}; state.dataModelParents = flowDraft.dataModelParents || state.dataModelParents; if (!flowDraft.dataModelAttributeEnabled && flowDraft.dataModelOptions?.addAttributes) DATA_MODEL_GROUPS.forEach((group) => { if (state.dataModelSettings[group]) state.dataModelAttributeEnabled[group] = true; }); state.dataModelAttributeGroup = DATA_MODEL_GROUPS.includes(flowDraft.dataModelAttributeGroup) ? flowDraft.dataModelAttributeGroup : "Profile"; state.dataModelAttributeObjectName = flowDraft.dataModelAttributeObjectName || ""; state.dataModelAttributeColumns = flowDraft.dataModelAttributeColumns || Object.fromEntries(Object.entries(flowDraft.dataModelColumnOverrides || {}).map(([group, additions]) => [group, [...dataModelDefaultColumns(group), ...(Array.isArray(additions) ? additions : [])]])); if (state.dataViewerSettings.customer && !state.dataViewerSettings.Customer) { state.dataViewerSettings.Customer = true; delete state.dataViewerSettings.customer; } if (state.dataViewerSettings.Customer && !state.dataViewerSettings.ContactPoint && !state.dataViewerOptions.contactPointExplicitlyUnselected) state.dataViewerSettings.ContactPoint = true; const savedSchedulers = flowDraft.schedulers || {}; state.schedulers = Object.fromEntries(Object.keys(state.schedulers).map((key) => [key, normalizeScheduler(key, savedSchedulers[key]) ])); if (Array.isArray(flowDraft.flowSteps)) { const legacyDefaultSteps = ["dataViewer", "source", "destination", "export", "import", "publish", "verify"]; const isLegacyDefault = legacyDefaultSteps.every((step) => flowDraft.flowSteps.includes(step)); const keepRunningFlow = /^Running:/.test(e2eStatus || ""); DEFAULT_FLOW.forEach((step) => { document.getElementById(`flow-${step}`).checked = !isLegacyDefault || keepRunningFlow ? flowDraft.flowSteps.includes(step) : false; }); } }
     if (flowDraft) { if (state.templates.some((template) => template.id === flowDraft.templateId && template.kind !== "direct")) state.templateId = flowDraft.templateId; state.syncImportWithExport = flowDraft.syncImportWithExport !== false; state.transferRoutes = flowDraft.transferRoutes && typeof flowDraft.transferRoutes === "object" ? flowDraft.transferRoutes : {}; state.singleImportTemplateId = flowDraft.singleImportTemplateId || ""; if (["combined", "separate", "separateJobs"].includes(flowDraft.importMappingMode)) state.importMappingMode = flowDraft.importMappingMode; }
-    // Existing-object targets are intentional per-run input. Never restore a
     if (flowDraft?.importCustomSettings && typeof flowDraft.importCustomSettings === "object") state.importCustomSettings = flowDraft.importCustomSettings;
+    // Existing-object targets are intentional per-run input. Never restore a
     // prior target when this popup is reopened.
     state.dataModelAttributeObjectName = "";
+    if (flowDraft?.deleteSettings && typeof flowDraft.deleteSettings === "object") state.deleteSettings = normalizeDeleteSettings(flowDraft.deleteSettings);
     if (!flowDraft?.dataModelAttributeGroup && DATA_MODEL_GROUPS.includes(lastDataModelAttributeGroup)) state.dataModelAttributeGroup = lastDataModelAttributeGroup;
     // Drafts saved before the Custom Flow picker had a first-use selection
     // contain an empty import map. Migrate those drafts so the default flow
