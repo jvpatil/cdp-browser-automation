@@ -1,6 +1,7 @@
 importScripts("templateStore.js");
 importScripts("recordProfiles.js");
 importScripts("deletePlanner.js");
+importScripts("systemScheduleSync.js");
 
 const CDP_CONNECTION_SEQUENCE_KEY = "cdpConfirmedConnectionSequencesV2";
 
@@ -155,6 +156,40 @@ async function fetchCdpMetadata(tabId, endpoint) {
       });
       if (!response.ok) throw new Error(`CDP metadata request failed (${response.status}).`);
       return response.json();
+    }
+  });
+  return result;
+}
+
+async function requestCdpScheduleApi(tabId, path, method = "GET", body = null, tenantId = "") {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [path, method, body, tenantId],
+    func: async (requestedPath, requestedMethod, payload, resolvedTenantId) => {
+      if (!/^\/api\/cx-unity-api\/triggered-schedules(?:\/[A-Za-z0-9_-]+)?$/.test(requestedPath)) throw new Error("Unrecognized CDP schedule endpoint.");
+      const tenantKey = location.hostname.split(".")[0];
+      if (!tenantKey || !/\.cdp\.ocs\.oc-test\.com$/.test(location.hostname)) throw new Error("Open the matching Oracle CDP test tenant first.");
+      const appId = `urn_opc_resource_fusion_${tenantKey}_unity_APPID`;
+      const csrfCookie = document.cookie.split(/;\s*/).find((item) => /^XSRF-TOKEN=/i.test(item));
+      const csrfToken = csrfCookie ? decodeURIComponent(csrfCookie.slice(csrfCookie.indexOf("=") + 1)) : document.querySelector('meta[name="csrf-token"]')?.content || "";
+      const headers = {
+        Accept: "application/json, text/javascript, */*; q=0.01",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-RESOURCE-SERVICE-INSTANCE-IDENTITY-APPNAME": appId,
+        "x-cxu-tenantId": appId,
+        "x-mcps-tenantkey": tenantKey,
+        "x-platform": "KEYSTONE"
+      };
+      if (resolvedTenantId) headers["x-mcps-tenantId"] = String(resolvedTenantId);
+      if (requestedMethod !== "GET") {
+        headers["Content-Type"] = "application/json";
+        if (csrfToken) headers["X-Csrf-Token"] = csrfToken;
+      }
+      const response = await fetch(location.origin + requestedPath, { method: requestedMethod, credentials: "same-origin", headers, ...(payload ? { body: JSON.stringify(payload) } : {}) });
+      const responseText = await response.text();
+      if (!response.ok) throw new Error(`Oracle schedule ${requestedMethod} failed (${response.status}): ${responseText.slice(0, 400)}`);
+      if (!responseText.trim()) return null;
+      try { return JSON.parse(responseText); }
+      catch (_) { throw new Error(`Oracle schedule ${requestedMethod} returned non-JSON content; the CDP session may have expired.`); }
     }
   });
   return result;
@@ -2733,6 +2768,93 @@ async function saveRunSnapshot(snapshot) {
   await chrome.storage.local.set({ runSnapshots: next });
 }
 
+async function prepareSystemScheduleSync(tabId, runId) {
+  const tab = await chrome.tabs.get(tabId);
+  const host = new URL(tab.url).hostname;
+  const { runHistory = [] } = await chrome.storage.local.get({ runHistory: [] });
+  const entry = runHistory.find((item) => item?.snapshot?.runId === runId);
+  if (!entry || entry.outcome !== "completed") throw new Error("Select a completed workflow with Import and Delete jobs.");
+  if (entry.snapshot.tenantHost !== host) throw new Error("Open the same CDP tenant used by this workflow before syncing.");
+  const imports = (entry.snapshot.jobs || []).filter((job) => job.kind === "import");
+  const deletes = (entry.snapshot.jobs || []).filter((job) => job.kind === "delete");
+  if (!imports.length || deletes.length !== 1) throw new Error("This workflow must contain Import jobs and exactly one Delete job.");
+  const metadata = await fetchCdpMetadata(tabId, "jobs");
+  const importJobs = imports.map((item) => CdpSystemScheduleSync.exactJob(metadata, item.name));
+  const deleteJob = CdpSystemScheduleSync.exactJob(metadata, deletes[0].name);
+  const tenantId = importJobs[0]?.tenantId || deleteJob?.tenantId || "";
+  const schedules = await requestCdpScheduleApi(tabId, "/api/cx-unity-api/triggered-schedules", "GET", null, tenantId);
+  const systemJobs = CdpSystemScheduleSync.records(metadata).filter((item) => ["DW", "ANALYTICS"].includes(String(item.jobType || item.type || item.jobId || "").toUpperCase()));
+  const plans = importJobs.map((importJob) => CdpSystemScheduleSync.buildSyncPlan({ importJob, deleteJob, triggeredSchedules: schedules, systemJobs }));
+  const first = plans[0];
+  if (!plans.every((plan) => JSON.stringify([plan.frequency, plan.days, plan.importTime, plan.dw.first, plan.resolution.first]) === JSON.stringify([first.frequency, first.days, first.importTime, first.dw.first, first.resolution.first]))) {
+    throw new Error("Import jobs have different schedules; one DW/ID pair cannot safely follow them all.");
+  }
+  const fingerprint = JSON.stringify([host, runId, first.dw.body, first.resolution.body]);
+  return { plan: first, fingerprint, tenantId };
+}
+
+async function recordSystemScheduleSync(runId, message, level = "info", sync = null) {
+  const { runHistory = [] } = await chrome.storage.local.get({ runHistory: [] });
+  const updated = runHistory.map((entry) => {
+    if (entry?.snapshot?.runId !== runId) return entry;
+    return {
+      ...entry,
+      logs: [...(entry.logs || []), { at: Date.now(), level, action: "DW/ID schedule sync", message }].slice(-500),
+      snapshot: sync ? { ...entry.snapshot, systemScheduleSync: sync } : entry.snapshot
+    };
+  });
+  await chrome.storage.local.set({ runHistory: updated });
+}
+
+async function applySystemScheduleSync(tabId, runId, expectedFingerprint) {
+  if (activeSequences.has(tabId)) throw new Error("Wait for the current automation flow to finish before syncing schedules.");
+  const { plan, fingerprint, tenantId } = await prepareSystemScheduleSync(tabId, runId);
+  if (!expectedFingerprint || expectedFingerprint !== fingerprint) throw new Error("The live schedules changed since preview. Review the times again.");
+  const path = "/api/cx-unity-api/triggered-schedules";
+  const write = async (item, body, method) => requestCdpScheduleApi(tabId, method === "POST" ? path : `${path}/${encodeURIComponent(item.scheduleId)}`, method, body, tenantId);
+  let firstWritten = false;
+  let secondWritten = false;
+  try {
+    await write(plan.dw, plan.dw.body, plan.dw.method);
+    firstWritten = true;
+    await write(plan.resolution, plan.resolution.body, plan.resolution.method);
+    secondWritten = true;
+    const readback = await requestCdpScheduleApi(tabId, path, "GET", null, tenantId);
+    for (const item of [plan.dw, plan.resolution]) {
+      const actual = CdpSystemScheduleSync.records(readback).find((candidate) => candidate.scheduleId === item.scheduleId);
+      if (!CdpSystemScheduleSync.sameSchedule(actual?.schedule, item.body.schedule)) {
+        throw new Error(`${item.kind} trigger did not confirm the requested schedule on read-back.`);
+      }
+    }
+    const summary = `DW ${plan.dw.first}/${plan.dw.second}; ID ${plan.resolution.first}/${plan.resolution.second} (${plan.timezone}, ${plan.frequency}). Oracle saved both schedules; actual firings remain to be verified. Clock-based; late upstream jobs may overlap.`;
+    await recordSystemScheduleSync(runId, `Configured ${summary}`, "info", { at: Date.now(), summary, verification: "schedule-readback", dw: plan.dw.body, resolution: plan.resolution.body });
+    return { summary };
+  } catch (error) {
+    const restored = [];
+    let observed = [];
+    try { observed = CdpSystemScheduleSync.records(await requestCdpScheduleApi(tabId, path, "GET", null, tenantId)); }
+    catch (_) { restored.push("Could not inspect current trigger state before rollback"); }
+    const appearsApplied = (item) => {
+      const current = observed.find((candidate) => candidate.scheduleId === item.scheduleId)?.schedule;
+      return Boolean(current && JSON.stringify(current.times) === JSON.stringify(item.body.schedule.times));
+    };
+    const restore = async (item) => {
+      try {
+        if (item.previous) await write(item, item.previous, "PUT");
+        else await write(item, null, "DELETE");
+        restored.push(`${item.kind} restored`);
+      } catch (restoreError) {
+        restored.push(`${item.kind} rollback failed: ${restoreError.message || restoreError}`);
+      }
+    };
+    if (secondWritten || appearsApplied(plan.resolution)) await restore(plan.resolution);
+    if (firstWritten || appearsApplied(plan.dw)) await restore(plan.dw);
+    const detail = `${error.message || error} ${restored.join("; ") || "No trigger rollback needed."}`;
+    await recordSystemScheduleSync(runId, detail, "error");
+    throw new Error(detail);
+  }
+}
+
 function assertSequenceActive(tabId, runId, label) {
   const activeSequence = activeSequences.get(tabId);
   if (!activeSequence || activeSequence.runId !== runId || activeSequence.cancelled) {
@@ -3182,6 +3304,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
   await chrome.storage.local.set({ e2eRun: runMetadata });
   const runSnapshot = {
     runId,
+    tenantHost: new URL((await chrome.tabs.get(tabId)).url).hostname,
     startedAt: runMetadata.startedAt,
     origin: flow.origin || "custom-flow",
     template: template ? { id: template.id, name: template.name, sourceType: template.sourceType, destinationType: template.destinationType, fileContract: template.fileContract || {} } : null,
@@ -3224,7 +3347,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
         const namingTemplate = relatedExport ? routeStates.get(relatedExport.templateId)?.template || route?.template || template : route?.template || template;
         const reportFileName = ["DELETE", fileCode, normalizedNamePart(host), transferPurposeCode(namingTemplate)].filter(Boolean).join("_");
         const prepared = await prepareSegmentDeleteJob(tabId, deletePlan, destination.name, reportFileName, flow.deleteSchedule || flow.deleteSettings?.schedule, flow.deleteSettings?.additionalPreferences);
-        runSnapshot.jobs.push({ kind: "delete", name: prepared.jobName, templateId: route?.template.id || "", templateName: route?.template.name || "Existing destination", connectionName: prepared.destinationName, segmentName: prepared.segmentName, reportFileName, status: "created-review" });
+        runSnapshot.jobs.push({ kind: "delete", name: prepared.jobName, templateId: route?.template.id || "", templateName: route?.template.name || "Existing destination", connectionName: prepared.destinationName, segmentName: prepared.segmentName, reportFileName, scheduler: flow.deleteSchedule || flow.deleteSettings?.schedule || {}, status: "created-review" });
         await saveRunSnapshot({ ...runSnapshot, jobs: [...runSnapshot.jobs] });
         await appendRunLog(`Created UI segment ${prepared.segmentName} and Delete job ${prepared.jobName}; destination ${prepared.destinationName}; report ${reportFileName}_<timestamp>_0.csv. Review its segment count, schedule, and active status before starting.`, "info", "Prepare Delete", "Review");
         continue;
@@ -4182,6 +4305,21 @@ chrome.runtime.onMessage.addListener((message) => {
     finalizeRunHistory("completed");
     clearFlowDraft();
     break;
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "preview-system-schedule-sync") {
+    prepareSystemScheduleSync(message.tabId, message.runId)
+      .then(({ plan, fingerprint }) => sendResponse({ ok: true, plan, fingerprint }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+  if (message?.type === "apply-system-schedule-sync") {
+    applySystemScheduleSync(message.tabId, message.runId, message.fingerprint)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
   }
 });
 

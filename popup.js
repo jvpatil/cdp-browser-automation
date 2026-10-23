@@ -617,6 +617,7 @@ function snapshotSummary(snapshot) {
 }
 function renderRunHistory(history = []) {
   const entries = Array.isArray(history) ? history.slice(0, 5) : [];
+  if (selectedLogRun?.snapshot?.runId) selectedLogRun = entries.find((entry) => entry.snapshot?.runId === selectedLogRun.snapshot.runId) || null;
   const activityCount = document.getElementById("activityCount");
   if (activityCount) { activityCount.hidden = !entries.length; activityCount.textContent = String(entries.length); }
   if (!entries.length) { runHistoryEl.textContent = "No completed runs yet."; renderActivityLogs(); return; }
@@ -630,7 +631,44 @@ function renderRunHistory(history = []) {
     const detail = document.createElement("div"); detail.className = "detail"; detail.textContent = `${new Date(entry.finishedAt || entry.startedAt || Date.now()).toLocaleString()} · ${entry.detail || entry.details || ""}${audit ? ` · ${audit}` : ""}`;
     const logButton = document.createElement("button"); logButton.type = "button"; logButton.className = "history-log-toggle"; logButton.textContent = "View log";
     logButton.addEventListener("click", () => { selectedLogRun = entry; showActivitySection("logs"); });
-    top.append(summary, outcome); item.append(top, detail, logButton); return item;
+    top.append(summary, outcome); item.append(top, detail, logButton);
+    const snapshot = entry.snapshot;
+    if (entry.outcome === "completed" && snapshot?.runId && snapshot.tenantHost && snapshot.jobs?.some((job) => job.kind === "import") && snapshot.jobs?.some((job) => job.kind === "delete")) {
+      const syncButton = document.createElement("button"); syncButton.type = "button"; syncButton.className = "history-sync-toggle"; syncButton.textContent = snapshot.systemScheduleSync ? "Resync DW/ID schedules" : "Sync DW/ID schedules";
+      const syncPanel = document.createElement("div"); syncPanel.className = "history-sync-panel"; syncPanel.hidden = !snapshot.systemScheduleSync;
+      if (snapshot.systemScheduleSync) syncPanel.textContent = `Configured: ${snapshot.systemScheduleSync.summary}`;
+      syncButton.addEventListener("click", async () => {
+        syncButton.disabled = true; syncPanel.hidden = false; syncPanel.textContent = "Checking live jobs and schedules…";
+        try {
+          const tabId = await activeTab();
+          const response = await chrome.runtime.sendMessage({ type: "preview-system-schedule-sync", tabId, runId: snapshot.runId });
+          if (!response?.ok) throw new Error(response?.error || "Could not preview system schedules.");
+          const plan = response.plan;
+          const preview = document.createElement("div");
+          preview.textContent = `Replace existing DW/ID trigger times (${plan.frequency}, ${plan.timezone}). DW: ${plan.dw.first} and ${plan.dw.second}; ID: ${plan.resolution.first} and ${plan.resolution.second}. Import and Delete must finish before their follow-up times; this schedule does not wait for completion.`;
+          const confirm = document.createElement("button"); confirm.type = "button"; confirm.className = "history-sync-confirm"; confirm.textContent = "Confirm schedule sync";
+          confirm.addEventListener("click", async () => {
+            confirm.disabled = true; syncPanel.append(" Applying…");
+            try {
+              const applied = await chrome.runtime.sendMessage({ type: "apply-system-schedule-sync", tabId: await activeTab(), runId: snapshot.runId, fingerprint: response.fingerprint });
+              if (!applied?.ok) throw new Error(applied?.error || "Schedule sync failed.");
+              syncPanel.textContent = `Configured. ${applied.summary}`;
+              setStatus("DW/ID schedules configured. Verify their next runs in Oracle.");
+            } catch (error) {
+              syncPanel.textContent = `Failed: ${error.message || error}`;
+              setStatus(`Failed: ${error.message || error}`);
+              confirm.disabled = false;
+            }
+          });
+          syncPanel.replaceChildren(preview, confirm);
+        } catch (error) {
+          syncPanel.textContent = `Cannot sync: ${error.message || error}`;
+          setStatus(`Failed: ${error.message || error}`);
+        } finally { syncButton.disabled = false; }
+      });
+      item.append(syncButton, syncPanel);
+    }
+    return item;
   }));
   renderActivityLogs();
 }
@@ -1229,7 +1267,7 @@ function renderFlow() {
   setStepPills("flowExportValue", [...tablePills(selectedExportPayloads(), ""), exportRouteCount ? pill(`${exportRouteCount} route${exportRouteCount === 1 ? "" : "s"}`, "neutral") : null, ...schedulePills(state.schedulers.flowExport)]);
   setStepPills("flowImportCount", [...tablePills(selectedImportEntries(), ""), ...schedulePills(state.schedulers.flowImport)]);
   const deletion = state.deleteSettings;
-  document.getElementById("flowDeleteSummary").textContent = `${deletion.tableId || "Customer"} · SourceID ${deletion.sourceId || "?"} · ${(deletion.conditions || []).length} condition(s) · ${scheduleSummary(state.schedulers.flowDelete)}`;
+  setStepPills("flowDeleteSummary", [...tablePills(deletion.tableId ? [deletion.tableId] : []), ...schedulePills(state.schedulers.flowDelete)]);
   const deleteTable = document.getElementById("deleteTableId");
   const choices = [...new Set(["Customer", "Account", ...DATA_VIEWER_TABLES.map((table) => table.id), deletion.tableId].filter(Boolean))];
   deleteTable.replaceChildren(...choices.map((name) => { const option = document.createElement("option"); option.value = name; option.textContent = name; return option; }));
@@ -1333,7 +1371,14 @@ function renderAll() {
   if (openDrawer) renderDrawerContext(openDrawer);
 }
 async function persistDraft() { await chrome.storage.local.set({ flowDraft: { templateId: state.templateId, workingSetKey: state.workingSetKey, importSettings: state.importSettings, importCustomSettings: state.importCustomSettings, importMappingMode: state.importMappingMode, syncImportWithExport: state.syncImportWithExport, transferRoutes: state.transferRoutes, singleImportTemplateId: state.singleImportTemplateId, deleteSettings: state.deleteSettings, exportPayloadName: state.exportPayloadName, exportPayloads: selectedExportPayloads(), dataViewerSettings: state.dataViewerSettings, dataViewerOptions: state.dataViewerOptions, dataViewerOverrides: state.dataViewerOverrides, dataModelSettings: state.dataModelSettings, dataModelOptions: state.dataModelOptions, dataModelAttributeEnabled: state.dataModelAttributeEnabled, dataModelParents: state.dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeColumns: state.dataModelAttributeColumns, connectionPurpose: state.connectionPurpose, schedulers: state.schedulers, flowSteps: selectedFlowSteps() } }); }
-function setStatus(status) { const running = /^Running:/.test(status || ""); statusEl.textContent = status || "No automation running"; statusDot.classList.toggle("idle", !running); stopButton.hidden = !running; const flowLaunchStatus = document.getElementById("flowLaunchStatus"); if (flowLaunchStatus && status) { flowLaunchStatus.textContent = status; flowLaunchStatus.hidden = false; flowLaunchStatus.dataset.validation = "false"; } }
+function compactStatus(status) {
+  const full = String(status || "");
+  if (!full.startsWith("Failed:")) return full;
+  if (/Delete job save failed:|was saved, but its Delete job was not/i.test(full)) return "Failed: Delete job was not saved. See Activity for details.";
+  const detail = full.slice("Failed:".length).trim().split(/[\n{]/, 1)[0].split(/\.\s/, 1)[0].trim();
+  return `Failed: ${detail.length > 90 ? `${detail.slice(0, 87).trimEnd()}…` : detail || "Run failed"}. See Activity for details.`;
+}
+function setStatus(status) { const running = /^Running:/.test(status || ""); const displayed = compactStatus(status); statusEl.textContent = displayed || "No automation running"; statusDot.classList.toggle("idle", !running); stopButton.hidden = !running; const flowLaunchStatus = document.getElementById("flowLaunchStatus"); if (flowLaunchStatus && status) { flowLaunchStatus.textContent = displayed; flowLaunchStatus.hidden = false; flowLaunchStatus.dataset.validation = "false"; } }
 function setApiLoadStatus(status) {
   for (const id of ["dataViewerRunStatus", "flowDataViewerRunStatus"]) {
     const element = document.getElementById(id);
@@ -1477,6 +1522,30 @@ document.getElementById("stopE2EBtn").addEventListener("click", async () => { tr
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => { closeSheets(); showView(button.dataset.view); }));
 document.querySelectorAll("[data-activity-section]").forEach((button) => button.addEventListener("click", () => showActivitySection(button.dataset.activitySection)));
 document.querySelectorAll("[data-open-sheet]").forEach((button) => button.addEventListener("click", () => { attributeEditorForCreationGroup = ""; pendingFlowConfigurationStep = button.dataset.flowConfig || ""; if (button.dataset.openSheet === "dataModel") { dataModelConfigurationContext = button.dataset.flowConfig === "dataModel" ? "flow" : "standalone"; selectDefaultDataModelGroup(); } if (button.dataset.openSheet === "dataModelAttributes") dataModelConfigurationContext = button.dataset.flowConfig ? "flow" : "standalone"; openSheet(button.dataset.openSheet); renderAll(); }));
+document.querySelectorAll(".flow-step-top").forEach((header) => {
+  const editor = header.querySelector(".flow-configure[data-open-sheet]");
+  const checkbox = header.querySelector('input[type="checkbox"]');
+  const title = header.querySelector(".flow-step-title span");
+  const activate = () => {
+    if (editor) editor.click();
+    else if (checkbox && !checkbox.disabled) { checkbox.checked = !checkbox.checked; checkbox.dispatchEvent(new Event("change", { bubbles: true })); }
+  };
+  header.addEventListener("click", (event) => {
+    if (event.target.closest("input, button")) return;
+    event.preventDefault(); // Do not let the wrapping label also toggle the checkbox.
+    activate();
+  });
+  if (title) {
+    title.tabIndex = 0;
+    title.setAttribute("role", "button");
+    title.setAttribute("aria-label", `${editor ? "Edit" : "Toggle"} ${title.textContent.trim()}`);
+    title.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      activate();
+    });
+  }
+});
 for (const [id, key] of [["deleteTableId", "tableId"], ["deleteSourceId", "sourceId"], ["deleteDestinationName", "destinationName"]]) {
   document.getElementById(id).addEventListener(id === "deleteTableId" ? "change" : "input", (event) => { state.deleteSettings[key] = event.target.value.trim(); persistDraft(); if (id === "deleteTableId") renderFlow(); });
   document.getElementById(id).addEventListener("change", renderFlow);
