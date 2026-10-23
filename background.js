@@ -217,6 +217,17 @@ async function prepareDeleteMetadata(tabId, settings, purpose = "") {
   return plan;
 }
 
+async function resolveTableDeleteTarget(tabId, settings) {
+  const requested = String(settings?.tableId || "").trim();
+  if (!requested || String(settings?.confirmedTableId || "").trim() !== requested) {
+    throw new Error("Confirm the exact full-table Delete target before preparing its job.");
+  }
+  const liveTables = await loadLiveDataViewerTables(tabId);
+  const matches = liveTables.filter((table) => table.id === requested || table.label === requested);
+  if (matches.length !== 1) throw new Error("Select one published table in the active tenant for entire-table deletion.");
+  return matches[0];
+}
+
 async function prepareSegmentDeleteJob(tabId, plan, destinationName, reportFileName, deleteSchedule, additionalPreferences = {}) {
   // Use the same visible UI path as a person. The unsupported external-segment
   // POST returned 405 and could leave a job pointing at no visible segment.
@@ -326,6 +337,48 @@ async function prepareSegmentDeleteJob(tabId, plan, destinationName, reportFileN
   return { segmentName: plan.segmentName, jobName, destinationName: selectedDestinationName };
 }
 
+async function prepareTableDeleteJob(tabId, target, destinationName, reportFileName, deleteSchedule, additionalPreferences = {}) {
+  // The table itself must be explicitly confirmed. Linked-record deletion is
+  // unavailable for table mode; the two tenant-wide options reflect the
+  // individually selected controls in Delete setup.
+  const jobName = CdpDeletePlanner.deleteTableJobName(target?.label);
+  if (!target?.tableId) throw new Error("Select a published table in the active tenant.");
+  const currentUrl = (await chrome.tabs.get(tabId)).url;
+  const jobConfig = { mode: "table", jobName, tableName: target.label, destinationName, reportFileName, additionalPreferences: CdpDeletePlanner.tableDeletePreferences(additionalPreferences) };
+  await navigateAndWait(tabId, navigationUrl(currentUrl, "/data/", "createDeleteJob"));
+  await injectDeleteUi(tabId);
+  const started = await runDeleteUiStep(tabId, "startDeleteJob", jobConfig);
+  if (!started?.ok || !started.value?.nameInputId) throw new Error(started?.error || "Delete job name was not entered.");
+  await pressDeleteJobTab(tabId, started.value.nameInputId);
+  const picker = await runDeleteUiStep(tabId, "openDeleteJobTable", jobConfig);
+  if (!picker?.ok || !picker.value?.optionReady) throw new Error(picker?.error || `Dedicated table ${target.label} was not offered in Delete.`);
+  await clickDeleteTableOption(tabId, target.label);
+  const report = await runDeleteUiStep(tabId, "continueDeleteJob", jobConfig);
+  if (!report?.ok || !report.value?.destinationOptionReady || !report.value?.actualDestinationName) throw new Error(report?.error || "Delete report destination was not offered.");
+  await clickDeleteDestinationOption(tabId, report.value.actualDestinationName);
+  const filename = await runDeleteUiStep(tabId, "prepareDeleteJobSchedule", jobConfig);
+  if (!filename?.ok || !filename.value?.filenameInputId) throw new Error(filename?.error || "Delete report filename was not entered.");
+  await pressDeleteJobTab(tabId, filename.value.filenameInputId);
+  const schedulePage = await runDeleteUiStep(tabId, "openDeleteJobSchedule", jobConfig);
+  if (!schedulePage?.ok || !schedulePage.value?.scheduleReady) throw new Error(schedulePage?.error || "Delete schedule page was not ready.");
+  await applyTrustedNewScheduler(tabId, { ...normalizeNewSchedulerConfig(deleteSchedule, "delete"), jobKind: "delete" });
+  const save = await runDeleteUiStep(tabId, "finishDeleteJob", jobConfig);
+  if (!save?.ok || !save.value?.savePoint) throw new Error(save?.error || "Delete job Save and close is not clickable.");
+  await dispatchDeleteMouseClick(tabId, save.value.savePoint);
+  if (new URL((await chrome.tabs.get(tabId)).url).searchParams.get("root") !== "integrations") {
+    const confirmation = await runNavigatingDeleteUiStep(tabId, "confirmDeleteJobSave", null, "integrations");
+    if (confirmation?.ok === false || (confirmation && !confirmation.value?.saveSubmitted)) throw new Error(confirmation?.error || "Delete job Save warning could not be confirmed.");
+  }
+  const saveOutcome = await waitForDeleteSaveOutcome(tabId);
+  if (saveOutcome === "success" && new URL((await chrome.tabs.get(tabId)).url).searchParams.get("root") !== "integrations") {
+    await navigateAndWait(tabId, navigationUrl(currentUrl, "/data/", "integrations"));
+  }
+  await injectDeleteUi(tabId);
+  const verified = await runDeleteUiStep(tabId, "verifyJob", jobName);
+  if (!verified?.ok || verified.value?.jobName !== jobName) throw new Error(verified?.error || `Delete job ${jobName} was not found in Integrations.`);
+  return { jobName, tableName: target.label, destinationName: filename.value.actualDestinationName };
+}
+
 async function injectDeleteUi(tabId) {
   await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["deleteUi.js"] });
 }
@@ -408,6 +461,23 @@ async function clickDeleteSegmentOption(tabId, segmentName) {
       const list = listId && document.getElementById(listId);
       const options = [...(list?.querySelectorAll('[role="option"]') || [])].filter((item) => item.getClientRects().length && item.textContent.trim() === name);
       if (options.length !== 1) throw new Error(`Delete segment option ${name} was not visible exactly once in the open picker.`);
+      options[0].scrollIntoView({ block: "center" });
+      const rect = options[0].getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+  });
+  await dispatchDeleteMouseClick(tabId, point);
+}
+
+async function clickDeleteTableOption(tabId, tableName) {
+  const [{ result: point }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [tableName],
+    func: (name) => {
+      const picker = document.getElementById("dataObjectList");
+      const listId = picker?.querySelector('[role="combobox"][aria-controls]')?.getAttribute("aria-controls");
+      const list = listId && document.getElementById(listId);
+      const options = [...(list?.querySelectorAll('[role="option"]') || [])].filter((item) => item.getClientRects().length && item.textContent.trim() === name);
+      if (options.length !== 1) throw new Error(`Full-table Delete option ${name} was not visible exactly once.`);
       options[0].scrollIntoView({ block: "center" });
       const rect = options[0].getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
@@ -755,7 +825,7 @@ function importFallbackConfig(delimiter = ",") {
   };
 }
 
-function parseCsvRow(row) {
+function parseCsvRow(row, delimiter = ",") {
   const values = [];
   let value = "";
   let quoted = false;
@@ -763,7 +833,7 @@ function parseCsvRow(row) {
     const char = row[index];
     if (char === '"' && row[index + 1] === '"') { value += '"'; index += 1; }
     else if (char === '"') quoted = !quoted;
-    else if (char === "," && !quoted) { values.push(value.trim()); value = ""; }
+    else if (char === delimiter && !quoted) { values.push(value.trim()); value = ""; }
     else value += char;
   }
   values.push(value.trim());
@@ -858,11 +928,12 @@ async function buildImportConfig(tableIds, delimiter = ",") {
 
 function customObjectCode(table) {
   const value = String(table?.label || table?.cdpTable || table?.tableId || "").toLowerCase();
-  if (value.includes("profile")) return "PROFILE";
-  if (value.includes("behavior")) return "BEH";
-  if (value.includes("transaction")) return "TXN";
-  if (value.includes("product")) return "PRODUCT";
-  return "OTH";
+  const base = value.includes("profile") ? "PROFILE"
+    : value.includes("behavior") ? "BEH"
+      : value.includes("transaction") ? "TXN"
+        : value.includes("product") ? "PRODUCT" : "OTH";
+  return CdpDeletePlanner.pairedDeleteSourceName(table?.label || table?.cdpTable || table?.tableId)
+    ? `${base}_DELETE` : base;
 }
 const CUSTOM_IMPORT_SOURCE_ORDER = ["PROFILE", "BEH", "TXN", "PRODUCT", "OTH"];
 
@@ -871,6 +942,14 @@ function importHeaderForField(field) {
   // names (for example "Column - SourceProfile…") are UI-only and must not
   // define the source-file contract. Preserve fieldId, including `_c`.
   return String(field?.fieldId || "").trim().toLowerCase();
+}
+
+function liveSourceAttributeId(table, fields) {
+  const expected = `Source${String(table?.tableId || table?.cdpTable || table?.label || "")}ID`;
+  const declared = String(table?.sourceAttribute || "").trim();
+  return fields.find((field) => importHeaderKey(field.fieldId) === importHeaderKey(declared || expected))?.fieldId
+    || fields.find((field) => importHeaderKey(field.fieldId) === importHeaderKey(expected))?.fieldId
+    || declared || expected;
 }
 
 function sourceKeySampleValue(field, table, sequence = 1) {
@@ -966,23 +1045,37 @@ function customImportMappingRules(entries) {
   return { fieldTargetAttributes, fieldStaticTransforms };
 }
 
-async function buildCustomImportConfig(tabId, tables, delimiter = ",", mappingMode = "combined") {
+async function buildCustomImportConfig(tabId, tables, delimiter = ",", mappingMode = "combined", selectedTables = tables) {
   const separator = csvDelimiter(delimiter);
   const selected = (tables || [])
     .filter((table) => table?.isCustom && table?.tableId && table?.cdpTable)
-    .sort((left, right) => CUSTOM_IMPORT_SOURCE_ORDER.indexOf(customObjectCode(left)) - CUSTOM_IMPORT_SOURCE_ORDER.indexOf(customObjectCode(right)));
+    .sort((left, right) => {
+      const leftCode = customObjectCode(left), rightCode = customObjectCode(right);
+      return CUSTOM_IMPORT_SOURCE_ORDER.indexOf(leftCode.replace(/_DELETE$/, "")) - CUSTOM_IMPORT_SOURCE_ORDER.indexOf(rightCode.replace(/_DELETE$/, ""))
+        || Number(leftCode.endsWith("_DELETE")) - Number(rightCode.endsWith("_DELETE"));
+    });
+  const importSelection = (selectedTables || []).filter((table) => table?.isCustom && table?.tableId && table?.cdpTable);
   if (!selected.length) throw new Error("Select at least one published custom object.");
   const sources = [];
   for (const table of selected) {
-    const allFields = await loadLiveDataViewerFields(tabId, table);
-    const required = new Set(["sourceid", importFieldKey(table.sourceAttribute)]);
+    const pairedName = CdpDeletePlanner.pairedDeleteSourceName(table.label);
+    const pairedCandidates = pairedName ? importSelection.filter((candidate) => String(candidate.label || "").replace(/_c$/i, "").toLowerCase() === pairedName.toLowerCase()) : [];
+    if (pairedCandidates.length > 1) throw new Error(`Import selection has multiple possible sources for ${table.label}.`);
+    const csvTable = pairedCandidates[0] || table;
+    const targetFields = csvTable === table ? null : await loadLiveDataViewerFields(tabId, table);
+    const allFields = await loadLiveDataViewerFields(tabId, csvTable);
+    const csvSourceFieldId = liveSourceAttributeId(csvTable, allFields);
+    const targetSourceFieldId = targetFields ? liveSourceAttributeId(table, targetFields) : csvSourceFieldId;
+    const targetKeys = targetFields ? new Set(targetFields.map((field) => importHeaderSemanticKey(field.fieldId))) : null;
+    const required = new Set(["sourceid", importFieldKey(csvSourceFieldId)]);
     for (const field of allFields) {
       if (/^source.+id$/i.test(importFieldKey(field))) required.add(importFieldKey(field));
     }
     const mappingFields = allFields.filter((field) =>
       (!field.systemAttribute || required.has(importFieldKey(field))) &&
       !isAuditImportField(field) &&
-      !isDerivedImportField(field, allFields)
+      !isDerivedImportField(field, allFields) &&
+      (!targetKeys || targetKeys.has(importHeaderSemanticKey(field.fieldId)) || importHeaderSemanticKey(field.fieldId) === importHeaderSemanticKey(csvSourceFieldId))
     );
     if (!mappingFields.length) throw new Error(`CDP did not return mappable fields for ${table.label}.`);
     const entriesByHeader = new Map();
@@ -991,7 +1084,7 @@ async function buildCustomImportConfig(tabId, tables, delimiter = ",", mappingMo
       if (entriesByHeader.has(header)) throw new Error(`Custom object ${table.label} has duplicate Import display headers.`);
       entriesByHeader.set(header, {
         header,
-        value: importSampleValueForField(field, table),
+        value: importSampleValueForField(field, csvTable),
         targets: [table.cdpTable]
       });
     }
@@ -1000,14 +1093,12 @@ async function buildCustomImportConfig(tabId, tables, delimiter = ",", mappingMo
     // They are nevertheless required by the import contract. Add them
     // explicitly so their source-file headers are mapped to this custom
     // object as well as to any downstream bridge records.
-    const tableSourceFieldId = String(
-      table.sourceAttribute || `Source${String(table.cdpTable || table.label || "").replace(/[^A-Za-z0-9]/g, "")}ID`
-    ).trim();
+    const tableSourceFieldId = csvSourceFieldId;
     const requiredSourceEntries = [
       { header: "sourceid", value: "CDP" },
       {
         header: importHeaderForField({ fieldId: tableSourceFieldId }),
-        value: sourceKeySampleValue({ fieldId: tableSourceFieldId }, table)
+        value: sourceKeySampleValue({ fieldId: tableSourceFieldId }, csvTable)
       }
     ];
     for (const requiredSource of requiredSourceEntries) {
@@ -1022,12 +1113,19 @@ async function buildCustomImportConfig(tabId, tables, delimiter = ",", mappingMo
     }
     const entries = [...entriesByHeader.values()];
     const mappingRules = customImportMappingRules(entries);
+    if (csvTable !== table) {
+      const bridgeHeader = importHeaderForField({ fieldId: csvSourceFieldId });
+      mappingRules.fieldTargetAttributes[bridgeHeader] ||= {};
+      mappingRules.fieldTargetAttributes[bridgeHeader][table.cdpTable] = [targetSourceFieldId];
+      mappingRules.requiredTargetMappings = [{ sourceHeader: bridgeHeader, tableName: table.cdpTable, targetAttribute: targetSourceFieldId }];
+    }
     sources.push({
       table,
       sourceCode: customObjectCode(table),
       targetTables: [...new Set(entries.flatMap((entry) => entry.targets))],
       fieldToTable: Object.fromEntries(entries.map((entry) => [entry.header, entry.targets])),
       ...mappingRules,
+      csvTable,
       parentBridge: "Customer + ContactPoint",
       mappingEntries: entries,
       csvContent: `${entries.map((entry) => csvCell(entry.header, separator)).join(separator)}\n${entries.map((entry) => csvCell(entry.value, separator)).join(separator)}\n`
@@ -1041,7 +1139,12 @@ async function buildCustomImportConfig(tabId, tables, delimiter = ",", mappingMo
       else entriesByHeader.set(entry.header, { ...entry, targets: [...entry.targets] });
     }
     const entries = [...entriesByHeader.values()];
-    return { sources: [{ sourceCode: "COMBINED", targetTables: [...new Set(entries.flatMap((entry) => entry.targets))], fieldToTable: Object.fromEntries(entries.map((entry) => [entry.header, entry.targets])), ...customImportMappingRules(entries), parentBridge: "Customer + ContactPoint", csvContent: entries.map((entry) => csvCell(entry.header, separator)).join(separator) + "\n" + entries.map((entry) => csvCell(entry.value, separator)).join(separator) + "\n" }] };
+    const combinedRules = customImportMappingRules(entries);
+    for (const source of sources) for (const [header, perTable] of Object.entries(source.fieldTargetAttributes || {})) {
+      combinedRules.fieldTargetAttributes[header] ||= {};
+      for (const [target, names] of Object.entries(perTable)) combinedRules.fieldTargetAttributes[header][target] = names;
+    }
+    return { sources: [{ sourceCode: "COMBINED", targetTables: [...new Set(entries.flatMap((entry) => entry.targets))], fieldToTable: Object.fromEntries(entries.map((entry) => [entry.header, entry.targets])), ...combinedRules, requiredTargetMappings: sources.flatMap((source) => source.requiredTargetMappings || []), parentBridge: "Customer + ContactPoint", csvContent: entries.map((entry) => csvCell(entry.header, separator)).join(separator) + "\n" + entries.map((entry) => csvCell(entry.value, separator)).join(separator) + "\n" }] };
   }
   return { sources };
 }
@@ -1121,19 +1224,24 @@ function normalizedNamePart(value, fallback = "") {
     .toUpperCase() || fallback;
 }
 
+// Preserve the purpose's entered casing while keeping generated identifiers safe.
+function purposeNamePart(value) {
+  return String(value || "").trim()
+    .replace(/[^a-z0-9]+/gi, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 function sharedJobTag(sequence = null) {
   return String(sequence?.jobTag || sequence?.entityTag || entityNameTag()).toUpperCase();
 }
 
-function sharedConnectionTime(sequence = null) {
-  const tag = String(sequence?.entityTag || entityNameTag());
-  const match = tag.match(/_(\d{4})$/);
-  return match ? match[1] : tag.replace(/[^0-9]/g, "").slice(-4);
+function sharedConnectionTag(sequence = null) {
+  return String(sequence?.entityTag || entityNameTag()).toUpperCase();
 }
 
 function transferJobName(template, connection, operation, sequence) {
   const provider = normalizedNamePart(connectionProviderCode(connection?.type), "CDP");
-  const purpose = normalizedNamePart(template?.connectionPurpose);
+  const purpose = purposeNamePart(template?.connectionPurpose);
   const operationCode = normalizedNamePart(operation, "JOB");
   return [operationCode, provider, purpose, sharedJobTag(sequence)].filter(Boolean).join("_");
 }
@@ -1141,11 +1249,11 @@ function transferJobName(template, connection, operation, sequence) {
 function connectionRuntime(template, side, sequence = null) {
   const connection = template[side];
   const provider = normalizedNamePart(connectionProviderCode(connection.type), "CDP");
-  const purpose = normalizedNamePart(template.connectionPurpose);
-  const time = sharedConnectionTime(sequence);
+  const purpose = purposeNamePart(template.connectionPurpose);
+  const tag = sharedConnectionTag(sequence);
   const ordinal = Number(sequence?.ordinal || 1);
   const suffix = ordinal > 1 ? "_" + String(ordinal).padStart(2, "0") : "";
-  const name = [provider, purpose, time + suffix].filter(Boolean).join("_");
+  const name = [provider, purpose, tag + suffix].filter(Boolean).join("_");
   return {
     side,
     type: connection.type,
@@ -1156,17 +1264,17 @@ function connectionRuntime(template, side, sequence = null) {
 }
 
 function transferPurposeCode(template) {
-  return normalizedNamePart(template?.connectionPurpose);
+  return purposeNamePart(template?.connectionPurpose);
 }
 
 function responsysSourceRuntime(template, sequence = null) {
   const runtime = connectionRuntime(template, "source", sequence);
   const provider = normalizedNamePart(connectionProviderCode(runtime.type), "CDP");
   const purpose = transferPurposeCode(template);
-  const time = sharedConnectionTime(sequence);
+  const tag = sharedConnectionTag(sequence);
   const ordinal = Number(sequence?.ordinal || 1);
   const suffix = ordinal > 1 ? "_" + String(ordinal).padStart(2, "0") : "";
-  runtime.name = [provider, purpose, "RESPONSYS", time + suffix].filter(Boolean).join("_");
+  runtime.name = [provider, purpose, "RESPONSYS", tag + suffix].filter(Boolean).join("_");
   return runtime;
 }
 
@@ -1186,9 +1294,20 @@ function jobObjectCode(request) {
   return "COMBINED";
 }
 
+function shortJobObjectCode(request) {
+  const codes = request.kind === "export"
+    ? [request.customTable ? customObjectCode(request.customTable) : normalizedNamePart(request.payloadName, "OBJECT")]
+    : [...(request.customTables || []).map(customObjectCode), ...(request.tableIds || []).map((id) => normalizedNamePart(id, "OBJECT"))];
+  if (!codes.length) return "OBJECT";
+  const shortCodes = codes.map((code) => code.replace(/_DELETE$/, "_DEL"));
+  if (shortCodes.length === 1) return shortCodes[0];
+  const families = new Set(shortCodes.map((code) => code.replace(/_DEL$/, "")));
+  return families.size === 1 ? `${[...families][0]}_SET` : "MULTI";
+}
+
 function jobNameForRequest(request) {
   const prefix = request.kind === "export" ? "EXP" : "IMP";
-  return [prefix, jobObjectCode(request), transferPurposeCode(request.template), sharedJobTag(request.connectionSequence)]
+  return [prefix, shortJobObjectCode(request), transferPurposeCode(request.template), sharedJobTag(request.connectionSequence)]
     .filter(Boolean)
     .join("_");
 }
@@ -1634,9 +1753,11 @@ async function readNewSchedulerState(tabId, probe) {
         return Boolean(document.querySelector("oj-cx-unity-job-schedule-settings") || document.querySelector("oj-cx-unity-job-schedule-recurring"));
       }
       if (requestedProbe.type === "frequency-input") {
-        const input = [...document.querySelectorAll("input[aria-controls='lovDropdown_requency']")]
-          .find((element) => visible(element) || visible(element.closest("oj-select-single")));
-        return rectangle(input?.closest("oj-select-single, .oj-text-field-container") || input);
+        const input = document.getElementById("requency|input")
+          || [...document.querySelectorAll("input[aria-controls='lovDropdown_requency']")]
+            .find((element) => visible(element) || visible(element.closest("oj-select-single")));
+        const trigger = input?.closest("oj-select-single")?.querySelector(".oj-searchselect-arrow, .oj-searchselect-open-icon");
+        return rectangle(visible(trigger) ? trigger : input);
       }
       if (requestedProbe.type === "import-frequency-input") {
         const input = document.getElementById("requency|input")
@@ -1654,9 +1775,10 @@ async function readNewSchedulerState(tabId, probe) {
         return rectangle(option?.closest("[role='option'], [role='gridcell'], li, oj-option") || option);
       }
       if (requestedProbe.type === "frequency-value") {
-        const input = [...document.querySelectorAll("input[aria-controls='lovDropdown_requency']")]
-          .find((element) => visible(element) || visible(element.closest("oj-select-single")));
-        return input?.value || "";
+        const input = document.getElementById("requency|input")
+          || [...document.querySelectorAll("input[aria-controls='lovDropdown_requency']")]
+            .find((element) => visible(element) || visible(element.closest("oj-select-single")));
+        return String(input?.value || "").trim();
       }
       if (requestedProbe.type === "recurring-run") {
         // CDP/JET generates the radio id dynamically and can reflect its
@@ -1973,11 +2095,16 @@ async function applyTrustedNewScheduler(tabId, schedule = {}) {
   }
   await appendRunLog("Run mode = Recurring.", "info", schedulerGroup, "Select");
 
-  if (isImportJob) {
-    await selectImportSchedulerFrequency(tabId, normalized.frequency);
-  } else {
-    await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, { type: "frequency-input" }, "frequency selector"), "frequency selector");
-    await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, { type: "frequency-option", value: normalized.frequency }, `${normalized.frequency} option`), "frequency option");
+  await waitForNewSchedulerState(tabId, { type: "frequency-input" }, "frequency selector");
+  const requestedFrequency = String(normalized.frequency).trim().toLowerCase();
+  const currentFrequency = String(await readNewSchedulerState(tabId, { type: "frequency-value" }) || "").trim().toLowerCase();
+  if (currentFrequency !== requestedFrequency) {
+    if (isImportJob) {
+      await selectImportSchedulerFrequency(tabId, normalized.frequency);
+    } else {
+      await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, { type: "frequency-input" }, "frequency selector"), "frequency selector");
+      await trustedSchedulerClick(tabId, await waitForNewSchedulerState(tabId, { type: "frequency-option", value: normalized.frequency }, `${normalized.frequency} option`), "frequency option");
+    }
   }
   await waitForNewSchedulerState(tabId, { type: "frequency-value" }, `${normalized.frequency} selection`, (value) => String(value).trim().toLowerCase() === String(normalized.frequency).trim().toLowerCase());
   await appendRunLog(`Frequency = ${normalized.frequency}.`, "info", schedulerGroup, "Select");
@@ -2614,6 +2741,7 @@ function normalizeJobRunRequest(request = {}) {
     payloadName: request.payloadName || "Customer",
     tableIds: Array.isArray(request.tableIds) ? [...request.tableIds] : [],
     customTables: Array.isArray(request.customTables) ? request.customTables.filter((table) => table?.isCustom && table?.tableId && table?.cdpTable) : [],
+    selectedCustomTables: Array.isArray(request.selectedCustomTables) ? request.selectedCustomTables : request.customTables || [],
     customTable: request.customTable?.isCustom && request.customTable?.tableId && request.customTable?.cdpTable ? request.customTable : null,
     mappingMode: request.mappingMode === "separate" ? "separate" : "combined",
     jobName: request.jobName || "",
@@ -2652,6 +2780,47 @@ function buildJobRuntimeConfig(request) {
   };
 }
 
+function combineImportMappingSources(sources, delimiter = ",") {
+  const separator = csvDelimiter(delimiter);
+  const fields = new Map();
+  const targetTables = new Set();
+  const fieldTargetAttributes = {};
+  const fieldStaticTransforms = {};
+  const requiredTargetMappings = [];
+  for (const source of sources) {
+    const [headerLine = "", valueLine = ""] = String(source.csvContent || "").split(/\r?\n/);
+    const headers = parseCsvRow(headerLine, separator);
+    const values = parseCsvRow(valueLine, separator);
+    if (headers.length !== values.length) throw new Error(`Import mapping source ${source.sourceCode || "unknown"} has invalid sample CSV.`);
+    headers.forEach((header, index) => {
+      if (!fields.has(header)) fields.set(header, { value: values[index], tables: new Set() });
+      for (const table of source.fieldToTable?.[header] || []) fields.get(header).tables.add(table);
+    });
+    for (const table of source.targetTables || []) targetTables.add(table);
+    for (const [header, perTable] of Object.entries(source.fieldTargetAttributes || {})) {
+      fieldTargetAttributes[header] ||= {};
+      for (const [table, attributes] of Object.entries(perTable)) {
+        fieldTargetAttributes[header][table] = [...new Set([...(fieldTargetAttributes[header][table] || []), ...attributes])];
+      }
+    }
+    for (const [header, perTable] of Object.entries(source.fieldStaticTransforms || {})) {
+      fieldStaticTransforms[header] ||= {};
+      for (const [table, attributes] of Object.entries(perTable)) {
+        fieldStaticTransforms[header][table] = { ...(fieldStaticTransforms[header][table] || {}), ...attributes };
+      }
+    }
+    requiredTargetMappings.push(...source.requiredTargetMappings || []);
+  }
+  const headers = [...fields.keys()];
+  return {
+    sourceCode: "COMBINED",
+    targetTables: [...targetTables],
+    fieldToTable: Object.fromEntries([...fields].map(([header, entry]) => [header, [...entry.tables]])),
+    fieldTargetAttributes, fieldStaticTransforms, requiredTargetMappings,
+    csvContent: `${headers.map((header) => csvCell(header, separator)).join(separator)}\n${headers.map((header) => csvCell(fields.get(header).value, separator)).join(separator)}\n`
+  };
+}
+
 async function runImportJobRequest(tabId, rawRequest) {
   const request = normalizeJobRunRequest({ ...rawRequest, kind: "import" });
   const filename = request.variant === "responsys" ? "importJob.js" : "importContacts.js";
@@ -2661,20 +2830,18 @@ async function runImportJobRequest(tabId, rawRequest) {
     try {
       const sources = [];
       if (request.tableIds.length) {
-        sources.push({
-          ...(await buildImportConfig(request.tableIds, request.template.fileContract?.delimiter)),
-          sourceCode: request.tableIds.length === 1
-            ? normalizedNamePart(request.tableIds[0], "CUSTOMER")
-            : "COMBINED"
+        const groups = request.mappingMode === "separate" ? request.tableIds.map((id) => [id]) : [request.tableIds];
+        for (const ids of groups) sources.push({
+          ...(await buildImportConfig(ids, request.template.fileContract?.delimiter)),
+          sourceCode: ids.length === 1 ? normalizedNamePart(ids[0], "CUSTOMER") : "COMBINED"
         });
       }
       if (request.customTables.length) {
-        const customImport = await buildCustomImportConfig(tabId, request.customTables, request.template.fileContract?.delimiter, request.mappingMode);
+        const customImport = await buildCustomImportConfig(tabId, request.customTables, request.template.fileContract?.delimiter, request.mappingMode, request.selectedCustomTables);
         sources.push(...customImport.sources);
       }
-      importConfig = {
-        sources
-      };
+      importConfig = { sources: request.mappingMode === "combined" && sources.length > 1
+        ? [combineImportMappingSources(sources, request.template.fileContract?.delimiter)] : sources };
     } catch (error) {
       if (!request.allowImportFallback) throw error;
       console.warn("Could not load editable Import CSV files; using bundled fallback.", error);
@@ -2723,7 +2890,7 @@ async function runImportJobBatch(tabId, rawRequest) {
       ...entry,
       mappingMode: "combined"
     });
-    results.push(await runImportJobRequest(tabId, { ...rawRequest, ...entry, mappingMode: "combined", jobName }));
+    results.push(await runImportJobRequest(tabId, { ...rawRequest, ...entry, selectedCustomTables: rawRequest.customTables || [], mappingMode: "combined", jobName }));
   }
   return { ...results[results.length - 1], results };
 }
@@ -2990,7 +3157,7 @@ async function dataModelColumnsForGroup(group, columnOverrides = {}) {
   ];
 }
 
-async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {}, entityTimestamp = entityNameTag() } = {}) {
+async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {}, deleteCopyGroups = [], objectNameOverrides = {}, entityTimestamp = entityNameTag() } = {}) {
   const tab = await chrome.tabs.get(tabId);
   const task = TASKS["dataModel.js"];
   await navigateAndWait(tabId, navigationUrl(tab.url, task.path, task.root));
@@ -3001,8 +3168,13 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
   const selectedGroups = [...new Set(groups)].filter((group) => DATA_MODEL_GROUPS.includes(group));
   if (!selectedGroups.length) throw new Error("Select at least one Data Model object group.");
   const createdObjects = {};
+  const createdTables = {};
+  const deleteCopies = {};
   const configuredAttributeGroups = new Set((attributeGroups.length ? attributeGroups : (addAttributes ? selectedGroups : [])).filter((group) => DATA_MODEL_GROUPS.includes(group)));
-  for (const group of selectedGroups) {
+  const copies = new Set(saveObjects ? deleteCopyGroups.filter((group) => selectedGroups.includes(group)) : []);
+  const pairDate = new Date();
+  const pairNames = Object.fromEntries(selectedGroups.map((group) => [group, CdpDeletePlanner.deleteTablePairNames(purpose, pairDate, group)]));
+  for (const { group, isDeleteCopy } of selectedGroups.flatMap((group) => [{ group, isDeleteCopy: false }, ...(copies.has(group) ? [{ group, isDeleteCopy: true }] : [])])) {
     assertSequenceActive(tabId, runId, "Data Model dry run");
     await appendRunLog(`${group}: opening Create data object.`, "info", `Data Model · ${group}`, "Click");
     let saved = false;
@@ -3011,9 +3183,12 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
         target: { tabId }, world: "MAIN", args: [group],
         func: async (selectedGroup) => window.cdpDataModelOpenGroup(selectedGroup)
       });
-      const name = dataModelDryRunName(group, purpose, entityTimestamp);
+      const name = isDeleteCopy ? pairNames[group].targetName : copies.has(group)
+        ? pairNames[group].sourceName
+        : objectNameOverrides[group] || pairNames[group].sourceName;
       const generated = await commitJetDataModelObjectName(tabId, name);
       if (generated.skipped) {
+        if (copies.has(group)) throw new Error(`${group} pair cannot be completed because ${generated.name} was skipped: ${generated.reason}`);
         await appendRunLog(`Skipped: ${generated.name}. ${generated.reason}`, "warn", `Data Model · ${group}`, "Skip");
         continue;
       }
@@ -3035,7 +3210,11 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
           func: async () => window.cdpDataModelSave()
         });
         saved = true;
-        createdObjects[group] = generated.name;
+        if (isDeleteCopy) deleteCopies[group] = { name: generated.name, tableId: generated.objectId, resourceName: resource.resourceName };
+        else {
+          createdObjects[group] = generated.name;
+          createdTables[group] = { name: generated.name, tableId: generated.objectId, resourceName: resource.resourceName };
+        }
         await appendRunLog("Object saved successfully.", "info", `Data Model · ${group}`, "Save");
         // Complete this object while its group/detail context is active.
         if (configuredAttributeGroups.has(group)) {
@@ -3076,10 +3255,10 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
     }
   }
   await appendRunLog(saveObjects ? "Selected Data Model objects were saved." : "Selected Data Model groups validated without saving objects.");
-  return { createdObjects };
+  return { createdObjects, createdTables, deleteCopies };
 }
 
-async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {} } = {}) {
+async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, saveObjects = false, attributeGroups = [], addAttributes = false, columnOverrides = {}, parentByGroup = {}, deleteCopyGroups = [] } = {}) {
   if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
   const runId = crypto.randomUUID();
   let failed = false;
@@ -3088,7 +3267,7 @@ async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, s
   activeSequences.set(tabId, { runId, cancelled: false, status: `Running: ${runLabel}` });
   await setE2EStatus(`Running: ${runLabel}`, tabId);
   try {
-    const result = await runDataModelStep(tabId, runId, { purpose, groups, saveObjects, attributeGroups, addAttributes, columnOverrides, parentByGroup });
+    const result = await runDataModelStep(tabId, runId, { purpose, groups, saveObjects, attributeGroups, addAttributes, columnOverrides, parentByGroup, deleteCopyGroups });
   } catch (error) {
     failed = true;
     failureDetail = error.message || String(error);
@@ -3202,13 +3381,45 @@ async function runDataModelAttributes(tabId, options = {}) {
   }
 }
 
+function importRouteNameKey(name) { return String(name || "").replace(/_c$/i, "").toLowerCase(); }
+
+function importRouteTemplateId(flow, label) {
+  const direct = flow.transferRoutes?.[label];
+  if (direct) return direct;
+  const sourceName = CdpDeletePlanner.pairedDeleteSourceName(label);
+  const original = sourceName && [...(flow.exportPayloads || []), ...(flow.importCustomTables || []).map((table) => table.label)]
+    .find((name) => importRouteNameKey(name) === importRouteNameKey(sourceName));
+  return original && flow.transferRoutes?.[original] || flow.templateId;
+}
+
+async function singleImportTemplateId(flow) {
+  if (flow.importMappingMode === "separateJobs") return "";
+  const catalog = await loadTableCatalog();
+  const labels = [
+    ...(flow.importTableIds || []).map((id) => catalog.importsById[id]?.label || id),
+    ...(flow.importCustomTables || []).map((table) => table.label || table.cdpTable)
+  ];
+  const routeIds = [...new Set(labels.map((label) => importRouteTemplateId(flow, label)).filter(Boolean))];
+  if (routeIds.length > 1) throw new Error("One Import job needs one source template. Align transfer routes or choose Job per table.");
+  const selected = routeIds[0] || flow.templateId;
+  if (flow.singleImportTemplateId && flow.singleImportTemplateId !== selected) {
+    throw new Error("Saved Import template conflicts with the selected transfer route. Align routes or choose Job per table.");
+  }
+  return selected;
+}
+
 async function runConfiguredFlow(tabId, flow = {}) {
   if (activeSequences.has(tabId)) throw new Error("An E2E flow is already running in this tab.");
   const entityTimestamp = entityNameTag();
   const selectedSteps = new Set(flow.steps || ["dataViewer", "source", "destination", "export", "import", "publish", "verify"]);
+  const importTemplateId = selectedSteps.has("import") ? await singleImportTemplateId(flow) : "";
+  const tableDelete = selectedSteps.has("delete") && flow.deleteSettings?.mode === "table";
+  if (tableDelete && (selectedSteps.has("dataModel") || selectedSteps.has("dataModelAttributes"))) throw new Error("Publish the DELETE table before creating its full-table Delete job.");
   // Validate the destructive scope against this tenant before creating any
-  // connection or data-feed job. The eventual Delete job is inactive.
-  const deletePlan = selectedSteps.has("delete") ? await prepareDeleteMetadata(tabId, flow.deleteSettings || {}, flow.connectionPurpose || "") : null;
+  // connection or data-feed job. Creation does not execute deletion, but the
+  // wizard may save an active recurring schedule; review it before the first run.
+  const deletePlan = selectedSteps.has("delete") && !tableDelete ? await prepareDeleteMetadata(tabId, flow.deleteSettings || {}, flow.connectionPurpose || "") : null;
+  const dedicatedTarget = tableDelete ? await resolveTableDeleteTarget(tabId, flow.deleteSettings) : null;
   const overrideDestinationName = String(flow.deleteSettings?.destinationName || "").trim();
   const usesTransfer = [...selectedSteps].some((step) => ["source", "destination", "export", "import", "delete", "responsys"].includes(step));
   const selectedTemplate = usesTransfer ? await selectedTransferTemplate(flow.templateId) : null;
@@ -3313,6 +3524,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
     connections: {},
     jobs: []
   };
+  if (tableDelete) runSnapshot.deleteTarget = { name: dedicatedTarget.label, tableId: dedicatedTarget.tableId };
   await saveRunSnapshot(runSnapshot);
   await chrome.storage.local.set({ activeRunSnapshotId: runId });
   let completed = false;
@@ -3322,7 +3534,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
     for (const step of stepDefinitions) {
       await setE2EStatus(`Running: ${step.label}`, tabId);
       if (step.id === "dataModel") {
-        const result = await runDataModelStep(tabId, runId, { purpose: flow.connectionPurpose || "", groups: flow.dataModelGroups, saveObjects: Boolean(flow.saveDataModelObjects), attributeGroups: flow.dataModelAttributeGroups || [], addAttributes: Boolean(flow.addDataModelAttributes), columnOverrides: flow.dataModelColumnOverrides || {}, parentByGroup: flow.dataModelParents || {}, entityTimestamp });
+        const result = await runDataModelStep(tabId, runId, { purpose: flow.connectionPurpose || "", groups: flow.dataModelGroups, saveObjects: Boolean(flow.saveDataModelObjects), attributeGroups: flow.dataModelAttributeGroups || [], deleteCopyGroups: flow.dataModelDeleteCopyGroups || [], addAttributes: Boolean(flow.addDataModelAttributes), columnOverrides: flow.dataModelColumnOverrides || {}, parentByGroup: flow.dataModelParents || {}, entityTimestamp });
         Object.assign(createdDataModelObjects, result.createdObjects || {});
         continue;
       }
@@ -3335,21 +3547,25 @@ async function runConfiguredFlow(tabId, flow = {}) {
         continue;
       }
       if (step.id === "delete") {
+        if (tableDelete && !dedicatedTarget?.tableId) throw new Error("Select and confirm a published table for entire-table deletion.");
         const supportedReportTypes = new Set(["Oracle Object Storage", "Secure FTP", "AWS", "Google Cloud Storage"]);
         const exportJobs = runSnapshot.jobs.filter((job) => job.kind === "export" && supportedReportTypes.has(routeStates.get(job.templateId)?.destination?.type));
-        const { templateId: destinationTemplateId, relatedExport } = CdpDeletePlanner.chooseReportDestination({ tableName: deletePlan.tableName, exportJobs, defaultTemplateId: template.id });
+        const { templateId: destinationTemplateId, relatedExport } = CdpDeletePlanner.chooseReportDestination({ tableName: tableDelete ? dedicatedTarget.label : deletePlan.tableName, exportJobs, defaultTemplateId: template.id });
         const route = overrideDestinationName ? null : await routeTemplateFor("__deleteReport__", destinationTemplateId);
         if (route && !supportedReportTypes.has(route.destination.type)) throw new Error("Delete reports support only OOS, SFTP, AWS, or GCS destinations. Enter an existing supported destination name.");
         const destination = route ? await ensureRouteConnection(route, "destination") : { name: overrideDestinationName };
         const host = new URL((await chrome.tabs.get(tabId)).url).hostname.split(".")[0];
-        const customExportTable = deletePlan.isCustom ? { label: deletePlan.tableName } : null;
-        const fileCode = jobObjectCode({ kind: "export", payloadName: deletePlan.tableName, customTable: customExportTable });
+        const reportTableName = tableDelete ? dedicatedTarget.label : deletePlan.tableName;
+        const customExportTable = tableDelete || deletePlan.isCustom ? { label: reportTableName } : null;
+        const fileCode = jobObjectCode({ kind: "export", payloadName: reportTableName, customTable: customExportTable });
         const namingTemplate = relatedExport ? routeStates.get(relatedExport.templateId)?.template || route?.template || template : route?.template || template;
         const reportFileName = ["DELETE", fileCode, normalizedNamePart(host), transferPurposeCode(namingTemplate)].filter(Boolean).join("_");
-        const prepared = await prepareSegmentDeleteJob(tabId, deletePlan, destination.name, reportFileName, flow.deleteSchedule || flow.deleteSettings?.schedule, flow.deleteSettings?.additionalPreferences);
-        runSnapshot.jobs.push({ kind: "delete", name: prepared.jobName, templateId: route?.template.id || "", templateName: route?.template.name || "Existing destination", connectionName: prepared.destinationName, segmentName: prepared.segmentName, reportFileName, scheduler: flow.deleteSchedule || flow.deleteSettings?.schedule || {}, status: "created-review" });
+        const prepared = tableDelete
+          ? await prepareTableDeleteJob(tabId, dedicatedTarget, destination.name, reportFileName, flow.deleteSchedule || flow.deleteSettings?.schedule, flow.deleteSettings?.additionalPreferences)
+          : await prepareSegmentDeleteJob(tabId, deletePlan, destination.name, reportFileName, flow.deleteSchedule || flow.deleteSettings?.schedule, flow.deleteSettings?.additionalPreferences);
+        runSnapshot.jobs.push({ kind: "delete", name: prepared.jobName, templateId: route?.template.id || "", templateName: route?.template.name || "Existing destination", connectionName: prepared.destinationName, segmentName: prepared.segmentName || "", tableName: tableDelete ? dedicatedTarget.label : "", reportFileName, scheduler: flow.deleteSchedule || flow.deleteSettings?.schedule || {}, status: "created-review" });
         await saveRunSnapshot({ ...runSnapshot, jobs: [...runSnapshot.jobs] });
-        await appendRunLog(`Created UI segment ${prepared.segmentName} and Delete job ${prepared.jobName}; destination ${prepared.destinationName}; report ${reportFileName}_<timestamp>_0.csv. Review its segment count, schedule, and active status before starting.`, "info", "Prepare Delete", "Review");
+        await appendRunLog(`${tableDelete ? `Created entire-table Delete job ${prepared.jobName} for ${dedicatedTarget.label}` : `Created UI segment ${prepared.segmentName} and Delete job ${prepared.jobName}`}; destination ${prepared.destinationName}; report ${reportFileName}_<timestamp>_0.csv. Review its scope, schedule, and active status before starting.`, "info", "Prepare Delete", "Review");
         continue;
       }
       if (step.id === "export" && useLegacyStagger && !runMetadata.exportScheduledAt) {
@@ -3382,9 +3598,9 @@ async function runConfiguredFlow(tabId, flow = {}) {
         } else if (flow.importMappingMode === "separateJobs") {
           const catalog = await loadTableCatalog();
           const entries = [...(flow.importTableIds || []).map((tableId) => ({ label: catalog.importsById[tableId]?.label || tableId, tableIds: [tableId], customTables: [] })), ...(flow.importCustomTables || []).map((customTable) => ({ label: customTable.label || customTable.cdpTable, tableIds: [], customTables: [customTable] }))];
-          for (const entry of entries) { const route = await routeTemplateFor(entry.label); const connection = await ensureRouteConnection(route, "source"); await recordJob(await runImportJobRequest(tabId, { origin: flow.origin || "custom-flow", runId, template: route.template, connectionSequence: route.sequence, connection, schedule, variant: flow.importVariant || "generic", ...entry, mappingMode: "combined", jobName: flow.importJobName, description: flow.importDescription, notification: flow.notification, monitor, runMetadata, allowImportFallback: flow.allowImportFallback })); }
+          for (const entry of entries) { const route = await routeTemplateFor(entry.label, importRouteTemplateId(flow, entry.label)); const connection = await ensureRouteConnection(route, "source"); await recordJob(await runImportJobRequest(tabId, { origin: flow.origin || "custom-flow", runId, template: route.template, connectionSequence: route.sequence, connection, schedule, variant: flow.importVariant || "generic", ...entry, selectedCustomTables: flow.importCustomTables || [], mappingMode: "combined", jobName: flow.importJobName, description: flow.importDescription, notification: flow.notification, monitor, runMetadata, allowImportFallback: flow.allowImportFallback })); }
         } else {
-          const route = await routeTemplateFor("__singleImport__", flow.singleImportTemplateId || template.id);
+          const route = await routeTemplateFor("__singleImport__", importTemplateId);
           const connection = await ensureRouteConnection(route, "source");
           await recordJob(await runImportJobRequest(tabId, { origin: flow.origin || "custom-flow", runId, template: route.template, connectionSequence: route.sequence, connection, schedule, variant: flow.importVariant || "generic", tableIds: flow.importTableIds || (flow.importCustomTables?.length ? [] : ["customer", "contactPoint"]), customTables: flow.importCustomTables || [], mappingMode: flow.importMappingMode || "combined", jobName: flow.importJobName, description: flow.importDescription, notification: flow.notification, monitor, runMetadata, allowImportFallback: flow.allowImportFallback }));
         }
@@ -4358,7 +4574,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message?.type === "run-data-model") {
-    runDataModel(message.tabId, { purpose: message.connectionPurpose, groups: message.groups, saveObjects: message.saveObjects, attributeGroups: message.attributeGroups || [], addAttributes: message.addAttributes, columnOverrides: message.columnOverrides || {}, parentByGroup: message.parentByGroup || {} })
+    runDataModel(message.tabId, { purpose: message.connectionPurpose, groups: message.groups, saveObjects: message.saveObjects, attributeGroups: message.attributeGroups || [], addAttributes: message.addAttributes, columnOverrides: message.columnOverrides || {}, parentByGroup: message.parentByGroup || {}, deleteCopyGroups: message.deleteCopyGroups || [] })
       .then(() => sendResponse({ ok: true }))
       .catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
     return true;
@@ -4389,6 +4605,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       steps: ["import"],
       importTableIds: message.tableIds,
       importCustomTables: message.customTables || [],
+      importMappingMode: ["combined", "separate", "separateJobs"].includes(message.importMappingMode) ? message.importMappingMode : "separate",
+      transferRoutes: message.transferRoutes || {},
       importSchedule: message.schedule,
       staggerJobs: false
     })
