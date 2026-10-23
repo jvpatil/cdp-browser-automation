@@ -2,9 +2,9 @@
 // Keep exact decimal/int64 values as strings until the API wire serializer.
 (() => {
   const pad = (value, width = 2) => String(value).padStart(width, "0");
-  const kind = (position, count) => count === 1 ? "upper"
+  const kind = (position, count) => count === 1 ? "elevated"
     : position === 1 ? "happy"
-      : position === 2 ? "upper"
+      : position === 2 ? "elevated"
         : position === 3 ? "minimum"
           : position === 4 ? "sparse" : "variation";
   const sourceKey = (sequence, runDate, position, count) => {
@@ -27,13 +27,13 @@
         textvalue: "Customer requested an Oracle CX product demonstration.",
         arraystringvalues: ["Oracle CX", "Email subscriber"]
       },
-      upper: {
-        tinyintvalue: 127, smallintvalue: 32767, intvalue: 2147483647,
-        bigintvalue: "9223372036854775807", floatvalue: 3.402823e38, doublevalue: 1.79e308,
-        decimalvalue: "99999999999999.9999", booleanvalue: true,
-        datevalue: utcDate, timestampvalue: stamp(utcDate, "23:59:59"),
-        textvalue: "Café ग्राहक — multilingual boundary record with Unicode text.",
-        arraystringvalues: ["International", "High precision"]
+      elevated: {
+        tinyintvalue: 42, smallintvalue: 4200, intvalue: 750000,
+        bigintvalue: "2345678901234", floatvalue: 42.5, doublevalue: 80.3,
+        decimalvalue: "1499.9500", booleanvalue: true,
+        datevalue: utcDate, timestampvalue: stamp(isoTime.slice(0, 10), isoTime.slice(11)),
+        textvalue: "Customer requested a multi-product Oracle CX demonstration.",
+        arraystringvalues: ["Oracle CX", "Product demonstration"]
       },
       minimum: {
         tinyintvalue: -128, smallintvalue: -32768, intvalue: -2147483648,
@@ -55,7 +55,7 @@
       }
     };
     if (fieldKey === "email") {
-      if (profile === "upper") return `jagan.boundary+${sequence}@example.com`;
+      if (profile === "elevated") return `jagan.customer.high+${sequence}@example.com`;
       if (profile === "minimum") return `jagan.minimum+${sequence}@example.org`;
       if (profile === "variation") return `jagan.customer+${sequence}@xn--bcher-kva.example`;
       return "jagannath.patil@oracle.com";

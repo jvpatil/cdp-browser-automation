@@ -8,20 +8,20 @@ const sample = (field, position, count, ui = false) => profiles.value(field, {
   position, count, sequence: position, runDate: date, ui
 });
 
-test("one record is the upper boundary", () => {
-  assert.equal(profiles.kind(1, 1), "upper");
-  assert.equal(sample("tinyintvalue", 1, 1), 127);
-  assert.equal(sample("intvalue", 1, 1), 2147483647);
-  assert.equal(sample("bigintvalue", 1, 1), "9223372036854775807");
-  assert.equal(sample("decimalvalue", 1, 1), "99999999999999.9999");
-  assert.equal(sample("timestampvalue", 1, 1), "2026-10-16 23:59:59");
-  assert.equal(sample("timestampvalue", 1, 1, true), "2026-10-16T23:59:59");
+test("one record uses elevated non-boundary values", () => {
+  assert.equal(profiles.kind(1, 1), "elevated");
+  assert.equal(sample("tinyintvalue", 1, 1), 42);
+  assert.equal(sample("intvalue", 1, 1), 750000);
+  assert.equal(sample("bigintvalue", 1, 1), "2345678901234");
+  assert.equal(sample("decimalvalue", 1, 1), "1499.9500");
+  assert.equal(sample("timestampvalue", 1, 1), "2026-10-16 10:20:30");
+  assert.equal(sample("timestampvalue", 1, 1, true), "2026-10-16T10:20:30");
   assert.match(sample("email", 1, 1), /^[^@\s]+@[^@\s]+\.[^@\s]+$/);
 });
 
 test("two through five records follow the requested priority", () => {
   assert.deepEqual([1, 2, 3, 4, 5].map((position) => profiles.kind(position, 5)),
-    ["happy", "upper", "minimum", "sparse", "variation"]);
+    ["happy", "elevated", "minimum", "sparse", "variation"]);
   assert.equal(sample("tinyintvalue", 3, 5), -128);
   assert.equal(sample("decimalvalue", 3, 5), "0.0000");
   assert.equal(sample("textvalue", 3, 5), "");
