@@ -1,18 +1,76 @@
 {
-  "sharedTypeColumns": [
-    { "name": "ArrayStringValues", "dataType": "array - string" },
-    { "name": "BigIntValue", "dataType": "bigint" },
-    { "name": "BooleanValue", "dataType": "boolean" },
-    { "name": "DateValue", "dataType": "date" },
-    { "name": "DecimalValue", "dataType": "decimal" },
-    { "name": "DoubleValue", "dataType": "double" },
-    { "name": "FloatValue", "dataType": "float" },
-    { "name": "IntValue", "dataType": "int" },
-    { "name": "SmallIntValue", "dataType": "smallint" },
-    { "name": "TextValue", "dataType": "text" },
-    { "name": "TimestampValue", "dataType": "timestamp" },
-    { "name": "TinyIntValue", "dataType": "tinyint" }
-  ],
+  "typeCoverageByGroup": {
+    "Profile": [
+      { "name": "InterestTags_AS", "dataType": "array - string" },
+      { "name": "LoyaltyPointsBalance_I64", "dataType": "bigint" },
+      { "name": "IsLoyaltyMember_B", "dataType": "boolean" },
+      { "name": "MembershipStartDate_DT", "dataType": "date" },
+      { "name": "LifetimeSpend_N18P4", "dataType": "decimal" },
+      { "name": "EngagementIndex_F64", "dataType": "double" },
+      { "name": "SatisfactionScore_F32", "dataType": "float" },
+      { "name": "AnnualIncome_I32", "dataType": "int" },
+      { "name": "ReferralCount_I16", "dataType": "smallint" },
+      { "name": "ProfileNotes_TXT", "dataType": "text" },
+      { "name": "LastEngagementAt_TS", "dataType": "timestamp" },
+      { "name": "HouseholdSize_I8", "dataType": "tinyint" }
+    ],
+    "Behavioral": [
+      { "name": "EventTags_AS", "dataType": "array - string" },
+      { "name": "LifetimeEventCount_I64", "dataType": "bigint" },
+      { "name": "IsConversionEvent_B", "dataType": "boolean" },
+      { "name": "ActivityDate_DT", "dataType": "date" },
+      { "name": "CartAmount_N18P4", "dataType": "decimal" },
+      { "name": "SessionDurationSeconds_F64", "dataType": "double" },
+      { "name": "ScrollDepthPercent_F32", "dataType": "float" },
+      { "name": "PageViewCount_I32", "dataType": "int" },
+      { "name": "ClickCount_I16", "dataType": "smallint" },
+      { "name": "EventDescription_TXT", "dataType": "text" },
+      { "name": "EventOccurredAt_TS", "dataType": "timestamp" },
+      { "name": "InteractionScore_I8", "dataType": "tinyint" }
+    ],
+    "Transactional": [
+      { "name": "ItemCategories_AS", "dataType": "array - string" },
+      { "name": "TotalUnitsProcessed_I64", "dataType": "bigint" },
+      { "name": "IsRefunded_B", "dataType": "boolean" },
+      { "name": "SettlementDate_DT", "dataType": "date" },
+      { "name": "NetAmount_N18P4", "dataType": "decimal" },
+      { "name": "TaxRatePercent_F64", "dataType": "double" },
+      { "name": "DiscountPercent_F32", "dataType": "float" },
+      { "name": "UnitsSold_I32", "dataType": "int" },
+      { "name": "InstallmentCount_I16", "dataType": "smallint" },
+      { "name": "TransactionNotes_TXT", "dataType": "text" },
+      { "name": "PaymentCompletedAt_TS", "dataType": "timestamp" },
+      { "name": "PaymentAttempts_I8", "dataType": "tinyint" }
+    ],
+    "Product": [
+      { "name": "FeatureTags_AS", "dataType": "array - string" },
+      { "name": "LifetimeUnitsSold_I64", "dataType": "bigint" },
+      { "name": "IsAvailable_B", "dataType": "boolean" },
+      { "name": "LaunchDate_DT", "dataType": "date" },
+      { "name": "ListPrice_N18P4", "dataType": "decimal" },
+      { "name": "AverageRating_F64", "dataType": "double" },
+      { "name": "WeightKg_F32", "dataType": "float" },
+      { "name": "StockQuantity_I32", "dataType": "int" },
+      { "name": "WarrantyMonths_I16", "dataType": "smallint" },
+      { "name": "ProductDescription_TXT", "dataType": "text" },
+      { "name": "LastRestockedAt_TS", "dataType": "timestamp" },
+      { "name": "PriorityRank_I8", "dataType": "tinyint" }
+    ],
+    "Other": [
+      { "name": "ServiceTags_AS", "dataType": "array - string" },
+      { "name": "ContractValueInCents_I64", "dataType": "bigint" },
+      { "name": "IsRenewalEligible_B", "dataType": "boolean" },
+      { "name": "ContractStartDate_DT", "dataType": "date" },
+      { "name": "AnnualContractValue_N18P4", "dataType": "decimal" },
+      { "name": "UtilizationPercent_F64", "dataType": "double" },
+      { "name": "HealthScore_F32", "dataType": "float" },
+      { "name": "EmployeeCount_I32", "dataType": "int" },
+      { "name": "OfficeCount_I16", "dataType": "smallint" },
+      { "name": "AccountNotes_TXT", "dataType": "text" },
+      { "name": "LastContactAt_TS", "dataType": "timestamp" },
+      { "name": "RiskScore_I8", "dataType": "tinyint" }
+    ]
+  },
   "groups": {
     "Profile": [
       { "name": "CustomerType", "dataType": "string" },

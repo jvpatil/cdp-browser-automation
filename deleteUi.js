@@ -226,17 +226,47 @@
     }, `segment option ${config.segmentName}`);
     return { optionReady: true };
   }
+  async function openDeleteJobTable(config) {
+    click(await waitFor(() => {
+      const element = document.querySelector("#job-details-continue-editjob button");
+      return visible(element) && !element.disabled ? element : null;
+    }, "enabled Job details Continue"));
+    const radio = await waitFor(() => document.querySelector('input[name="delete-type"][value="TRUNCATE_TABLE"]'), "Delete entire data objects option");
+    click(radio.closest("label") || radio);
+    if (!radio.checked) throw new Error("Delete entire data objects was not selected.");
+    const picker = await waitFor(() => document.getElementById("dataObjectList"), "Data objects picker");
+    await openDropdown(picker.querySelector(".oj-select-accessible-container") || picker, () => {
+      const listId = picker.querySelector('[role="combobox"][aria-controls]')?.getAttribute("aria-controls");
+      const list = listId && document.getElementById(listId);
+      return list && (option(config.tableName, list) || [...document.querySelectorAll(".oj-listbox-drop .oj-listbox-search input")].find(visible));
+    }, `Data object option ${config.tableName}`);
+    const listId = picker.querySelector('[role="combobox"][aria-controls]')?.getAttribute("aria-controls");
+    const selectedOption = () => { const list = listId && document.getElementById(listId); return list ? option(config.tableName, list) : null; };
+    if (!selectedOption()) {
+      const search = [...document.querySelectorAll(".oj-listbox-drop .oj-listbox-search input")].find(visible);
+      if (!search) throw new Error("The Data objects picker did not expose a search field.");
+      setInput(search, config.tableName);
+      await waitFor(selectedOption, `exact Data object ${config.tableName}`, 15000);
+    }
+    return { optionReady: true };
+  }
   async function continueDeleteJob(config) {
-    const segmentPicker = await waitFor(() => document.getElementById("segmentsList"), "segment picker");
+    const tableMode = config.mode === "table";
+    const picker = await waitFor(() => document.getElementById(tableMode ? "dataObjectList" : "segmentsList"), tableMode ? "Data objects picker" : "segment picker");
+    const requestedName = tableMode ? config.tableName : config.segmentName;
     await waitFor(() => {
-      const selected = [...segmentPicker.querySelectorAll(".oj-select-selected-choice-label")].map((item) => item.textContent.trim());
-      return selected.length === 1 && selected[0] === config.segmentName;
-    }, `selected segment chip ${config.segmentName}`, 10000);
+      const selected = [...picker.querySelectorAll(".oj-select-selected-choice-label")].map((item) => item.textContent.trim());
+      return selected.length === 1 && selected[0] === requestedName;
+    }, `exactly one selected ${tableMode ? "Data object" : "segment"} chip ${requestedName}`, 10000);
     const preferences = await waitFor(() => {
       const element = document.getElementById("additionalPreferences");
       return visible(element) ? element : null;
     }, "Delete additional preferences");
+    if (tableMode && preferences.querySelector('input[type="checkbox"][value="deleteLinked"]')?.checked) {
+      throw new Error("Delete linked records is selected in full-table mode; refusing to save this job.");
+    }
     for (const key of ["deleteLinked", "truncateCustomer360", "truncateCube"]) {
+      if (tableMode && key === "deleteLinked") continue;
       const checkbox = preferences.querySelector(`input[type="checkbox"][value="${key}"]`);
       if (!checkbox || !visible(checkbox) || checkbox.disabled) throw new Error(`Delete preference ${key} is unavailable; refusing to save an unverified job.`);
       const requested = config.additionalPreferences?.[key] === true;
@@ -309,5 +339,5 @@
       && !element.closest("oj-message, [role='dialog'], oj-dialog")), `saved Delete job ${jobName}`, 30000);
     return { jobName };
   }
-  window.CdpDeleteUi = { startSegment, baseObjectState, continueSegment, locateCondition, prepareCondition, conditionInput, verifyCondition, finishSegment, verifySegment, startDeleteJob, openDeleteJobSegment, continueDeleteJob, prepareDeleteJobSchedule, openDeleteJobSchedule, finishDeleteJob, confirmDeleteJobSave, verifyJob };
+  window.CdpDeleteUi = { startSegment, baseObjectState, continueSegment, locateCondition, prepareCondition, conditionInput, verifyCondition, finishSegment, verifySegment, startDeleteJob, openDeleteJobSegment, openDeleteJobTable, continueDeleteJob, prepareDeleteJobSchedule, openDeleteJobSchedule, finishDeleteJob, confirmDeleteJobSave, verifyJob };
 })();

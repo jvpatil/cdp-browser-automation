@@ -42,6 +42,26 @@ test("exact numeric serializer preserves int64 and decimal JSON literals", () =>
   assert.match(json, /"TextValue_c":"Café ग्राहक"/);
 });
 
+test("API normal values stay away from numeric boundaries for every batch position", () => {
+  for (const sequence of [1, 6, 7, 999]) {
+    const context = { sequence, runDate: date };
+    const value = (field) => profiles.normalValue(field, context);
+    assert.ok(Number(value("bigintvalue")) < Number.MAX_SAFE_INTEGER);
+    assert.ok(Number(value("bigintvalue")) > 0);
+    assert.ok(value("tinyintvalue") > 0 && value("tinyintvalue") < 127);
+    assert.ok(value("smallintvalue") > 0 && value("smallintvalue") < 32767);
+    assert.ok(value("intvalue") > 0 && value("intvalue") < 2147483647);
+    assert.ok(Math.abs(value("floatvalue")) < 100);
+    assert.ok(Math.abs(value("doublevalue")) < 100);
+    assert.match(value("decimalvalue"), /^\d+\.\d{4}$/);
+    assert.match(value("datevalue"), /^2026-10-16$/);
+    assert.match(value("timestampvalue"), /^2026-10-16 10:20:30$/);
+    assert.match(value("email"), new RegExp(`^[a-z]+\\.[a-z]+\\.161026${String(sequence).padStart(3, "0")}@(gmail|yahoo|outlook)\\.com$`));
+    assert.ok(value("email").startsWith(`${value("firstname").toLowerCase()}.${value("lastname").toLowerCase()}.`));
+    assert.ok(value("textvalue"));
+  }
+});
+
 test("all profile values respect declared ranges and date shapes", () => {
   for (const count of [1, 2, 3, 4, 10]) {
     const keys = new Set();

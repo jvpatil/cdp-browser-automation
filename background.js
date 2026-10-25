@@ -59,7 +59,11 @@ async function loadDataModelColumnConfig() {
       .then((config) => {
         const groups = config?.groups && typeof config.groups === "object" && !Array.isArray(config.groups) ? config.groups : null;
         if (!groups) throw new Error("config/data-model-columns.json must contain a groups object.");
-        return { groups, sharedTypeColumns: Array.isArray(config.sharedTypeColumns) ? config.sharedTypeColumns : [] };
+        return {
+          groups,
+          typeCoverageByGroup: config.typeCoverageByGroup && typeof config.typeCoverageByGroup === "object" ? config.typeCoverageByGroup : {},
+          sharedTypeColumns: Array.isArray(config.sharedTypeColumns) ? config.sharedTypeColumns : []
+        };
       });
   }
   return dataModelColumnConfigPromise;
@@ -143,22 +147,43 @@ function metadataFieldList(response) {
 }
 
 async function fetchCdpMetadata(tabId, endpoint) {
-  const [{ result }] = await chrome.scripting.executeScript({
+  const [injection] = await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
     args: [endpoint],
     func: async (metadataEndpoint) => {
-      const tenant = String(location.hostname || "").split(".")[0];
-      if (!tenant) throw new Error("Could not determine the CDP tenant from the active tab.");
-      const response = await fetch(`${location.origin}/api-metadata/v1/${tenant}/metadata/${metadataEndpoint}`, {
-        credentials: "same-origin",
-        headers: { Accept: "application/json, text/javascript, */*; q=0.01", "X-Requested-With": "XMLHttpRequest" }
-      });
-      if (!response.ok) throw new Error(`CDP metadata request failed (${response.status}).`);
-      return response.json();
+      try {
+        const tenant = String(location.hostname || "").split(".")[0];
+        if (!tenant) throw new Error("Could not determine the CDP tenant from the active tab.");
+        const response = await fetch(`${location.origin}/api-metadata/v1/${tenant}/metadata/${metadataEndpoint}`, {
+          credentials: "same-origin",
+          redirect: "manual",
+          headers: { Accept: "application/json, text/javascript, */*; q=0.01", "X-Requested-With": "XMLHttpRequest" }
+        });
+        if (response.type === "opaqueredirect" || response.redirected || (response.status >= 300 && response.status < 400) || response.status === 401) {
+          throw new Error("CDP session expired. Sign in to this tenant, then click Refresh CDP tables.");
+        }
+        if (!response.ok) throw new Error(`CDP metadata request failed (${response.status}).`);
+        const contentType = response.headers?.get("content-type") || "";
+        if (contentType && !/json|javascript/i.test(contentType)) {
+          throw new Error("CDP metadata returned a sign-in page instead of JSON. Sign in to this tenant, then click Refresh CDP tables.");
+        }
+        let data;
+        try {
+          data = await response.json();
+        } catch (_) {
+          throw new Error("CDP metadata was not JSON. Sign in to this tenant, then click Refresh CDP tables.");
+        }
+        return { ok: true, data };
+      } catch (error) {
+        // Injection errors can otherwise surface as an undefined result, which
+        // looks like an empty table list and falsely reports a successful refresh.
+        return { ok: false, error: error?.message || String(error) };
+      }
     }
   });
-  return result;
+  if (!injection?.result?.ok) throw new Error(injection?.result?.error || "CDP metadata request did not complete.");
+  return injection.result.data;
 }
 
 async function requestCdpScheduleApi(tabId, path, method = "GET", body = null, tenantId = "") {
@@ -757,10 +782,8 @@ async function loadLiveDataViewerTables(tabId) {
     const table = normalizeLiveDataViewerTable(item);
     if (table) unique.set(table.id, table);
   }
-  return [...unique.values()].sort((left, right) => {
-    if (left.isCustom !== right.isCustom) return left.isCustom ? -1 : 1;
-    return left.label.localeCompare(right.label);
-  });
+  return [...unique.values()].sort((left, right) =>
+    left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
 }
 
 function liveDataViewerFieldsFromMetadata(response) {
@@ -782,11 +805,36 @@ function liveDataViewerFieldsFromMetadata(response) {
       // attribute as an arbitrary string.
       dataType: String(field?.dataType || field?.type?.dataType || field?.type?.name || "string").toLowerCase(),
       elementDataType: String(field?.type?.typeDescription?.dataType?.dataType || "").toLowerCase(),
+      precision: field?.type?.precision ?? field?.type?.typeDescription?.precision ?? field?.precision,
+      scale: field?.type?.scale ?? field?.type?.typeDescription?.scale ?? field?.scale,
       required: field?.required === true || /^true$/i.test(String(field?.required || "")),
       systemAttribute: rawSystemAttribute === true || /^true$/i.test(String(rawSystemAttribute || ""))
     });
   }
   return [...unique.values()];
+}
+
+async function validateTypeCodedLiveFields(fields, tableName) {
+  const codedFields = fields.filter((field) => /_(?:AS|I64|B|DT|N18P4|F64|F32|I32|I16|TXT|TS|I8)_c$/i.test(String(field.fieldId || "")));
+  if (!codedFields.length) return;
+  const config = await loadDataModelColumnConfig();
+  const expectedFields = new Map(Object.values(config.typeCoverageByGroup).flat()
+    .map((column) => [`${column.name}_c`.toLowerCase(), column]));
+  for (const field of codedFields) {
+    const configured = expectedFields.get(String(field.fieldId || "").toLowerCase());
+    if (!configured) continue;
+    const expected = configured.dataType === "array - string" ? "array" : configured.dataType;
+    const reported = String(field.dataType || "").toLowerCase();
+    const actual = ({ integer: "int", bool: "boolean", "array - string": "array" })[reported] || reported;
+    if (actual !== expected) throw new Error(`${tableName}.${field.fieldId} is ${actual}, but its type code requires ${expected}.`);
+    if (configured.dataType === "array - string" && field.elementDataType && field.elementDataType !== "string") {
+      throw new Error(`${tableName}.${field.fieldId} must be an array of strings.`);
+    }
+    if (configured.dataType === "decimal" && ((field.precision != null && Number(field.precision) !== 18)
+      || (field.scale != null && Number(field.scale) !== 4))) {
+      throw new Error(`${tableName}.${field.fieldId} is not decimal(18,4) in live CDP metadata.`);
+    }
+  }
 }
 
 async function loadLiveDataViewerFields(tabId, table) {
@@ -2252,14 +2300,18 @@ async function dataModelAttributeState(tabId) {
 
 async function commitJetDataModelAttributeName(tabId, attributeName) {
   const expectedName = String(attributeName || "").trim().toLowerCase();
+  const codedAttribute = /_(?:AS|I64|B|DT|N18P4|F64|F32|I32|I16|TXT|TS|I8)$/i.test(attributeName);
+  const expectedId = `${attributeName}_c`;
   // Use the original full-value entry method once the drawer is stable. The
   // drawer stability check—not per-character slowing—keeps JET from binding
   // the generated ID to the first character only.
   const typeAttributeName = () => typeJetInput(tabId, "attrNameInput|input", attributeName, "Attribute name");
   await typeAttributeName();
   let retriedAttributeCommit = false;
+  let correctedAttributeId = false;
   let latest = {};
   const idMatchesName = (attributeId) => {
+    if (codedAttribute) return String(attributeId || "").toLowerCase() === expectedId.toLowerCase();
     const nameKey = expectedName.replace(/[^a-z0-9]/g, "");
     const idKey = String(attributeId || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     // CDP may append _c, but the generated ID must begin with the whole Name.
@@ -2273,11 +2325,18 @@ async function commitJetDataModelAttributeName(tabId, attributeName) {
     if (actualName === expectedName && hasCompleteAttributeId && !state.invalid) {
       return { ...state, name: attributeName };
     }
+    // CDP can generate an ID without separators. Type-code fields need their
+    // exact, inspectable ID, so use the editable ID input when necessary.
+    if (codedAttribute && actualName === expectedName && !hasCompleteAttributeId && attempt >= 8 && !correctedAttributeId) {
+      correctedAttributeId = true;
+      await typeJetInput(tabId, "attrIdInput|input", expectedId, "Attribute ID");
+      continue;
+    }
     // Oracle JET can drop trailing keystrokes or generate the ID from only the
     // first character while the just-closed drawer is being reconciled. Once
     // the drawer has settled, re-enter the complete value so JET regenerates
     // the ID from the final Name rather than the initial keystroke.
-    if ((actualName !== expectedName || !hasCompleteAttributeId) && attempt >= 12 && !retriedAttributeCommit) {
+    if ((actualName !== expectedName || (!hasCompleteAttributeId && !correctedAttributeId)) && attempt >= 12 && !retriedAttributeCommit) {
       retriedAttributeCommit = true;
       await typeAttributeName();
       continue;
@@ -2295,7 +2354,7 @@ async function commitJetDataModelAttributeName(tabId, attributeName) {
     // still ensures CDP has cleared any stale validation state.
     return { ...latest, name: attributeName };
   }
-  throw new Error(`CDP did not generate an Attribute ID for ${attributeName}${latest.messages ? `: ${latest.messages}` : ""}`);
+  throw new Error(`CDP did not generate the expected Attribute ID ${codedAttribute ? expectedId : `for ${attributeName}`}${latest.messages ? `: ${latest.messages}` : ""}`);
 }
 
 async function commitJetConnectionName(tabId, connectionConfig) {
@@ -3088,7 +3147,11 @@ async function verifyPublishedJobs(tabId, options) {
 
 async function runDataViewerStep(tabId, flow, runId) {
   const recordsPerTable = flow.recordsPerTable ?? 1;
+  const startingIndex = flow.startingIndex ?? 1;
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
+  if (!Number.isSafeInteger(startingIndex) || startingIndex < 1 || startingIndex + recordsPerTable - 1 > 999) {
+    throw new Error("Record suffix start index plus records per table must stay within 1–999.");
+  }
   const sourceId = String(flow.sourceId || "").trim() || "CDP";
   const tableIds = [...new Set(flow.dataViewerTableIds || ["Customer"])];
   const tables = await resolveDataViewerTables(tabId, tableIds, flow.dataViewerOverrides || {}, flow.dataViewerParents || {});
@@ -3100,7 +3163,7 @@ async function runDataViewerStep(tabId, flow, runId) {
   await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["recordProfiles.js", "dataViewer.js"] });
   const [{ result: dataViewerResult }] = await chrome.scripting.executeScript({
     target: { tabId }, world: "MAIN",
-    args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, sourceAttribute: table.sourceAttribute, enterableFieldIds: table.enterableFieldIds, liveFields: table.liveFields, recordConfig: table.recordConfig })), { recordsPerTable, sourceId, saveRecords: Boolean(flow.saveRecords) }],
+    args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, sourceAttribute: table.sourceAttribute, enterableFieldIds: table.enterableFieldIds, liveFields: table.liveFields, recordConfig: table.recordConfig })), { recordsPerTable, startingIndex, sourceId, saveRecords: Boolean(flow.saveRecords) }],
     func: async (dataViewerTables, options) => {
       if (typeof window.runCdpDataViewer !== "function") throw new Error("Data Viewer automation did not load.");
       return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
@@ -3130,8 +3193,13 @@ function validateDataModelColumns(columns, group) {
     const name = String(column?.name || "").trim();
     const dataType = String(column?.dataType || "string").trim().toLowerCase();
     if (!name || name.length > 50) throw new Error(`${group} column ${index + 1} must have a name of 1–50 characters.`);
-    if (!/^[a-z][a-z0-9 ]*$/i.test(name)) throw new Error(`${group} column ${name} has unsupported characters.`);
+    if (!/^[a-z][a-z0-9_ ]*$/i.test(name)) throw new Error(`${group} column ${name} has unsupported characters.`);
     if (!DATA_MODEL_ATTRIBUTE_TYPES.has(dataType)) throw new Error(`${group} column ${name} uses unsupported data type ${dataType}.`);
+    const codedType = {
+      AS: "array - string", I64: "bigint", B: "boolean", DT: "date", N18P4: "decimal",
+      F64: "double", F32: "float", I32: "int", I16: "smallint", TXT: "text", TS: "timestamp", I8: "tinyint"
+    }[name.match(/_([A-Z0-9]+)$/)?.[1]];
+    if (codedType && codedType !== dataType) throw new Error(`${group} column ${name} must use ${codedType}, not ${dataType}.`);
     const key = normalizedDataModelColumnName(name);
     if (!key || usedNames.has(key)) throw new Error(`${group} has duplicate column ${name}.`);
     usedNames.add(key);
@@ -3147,7 +3215,7 @@ async function dataModelColumnsForGroup(group, columnOverrides = {}) {
   // edit or remove JSON defaults without the runner silently adding them back.
   const configured = Array.isArray(columnOverrides?.[group])
     ? columnOverrides[group]
-    : [...(config.sharedTypeColumns || []), defaults.find((column) => String(column?.name || "").toLowerCase() === "email") || { name: "Email", dataType: "string" }];
+    : [...(config.typeCoverageByGroup[group] || config.sharedTypeColumns || []), defaults.find((column) => String(column?.name || "").toLowerCase() === "email") || { name: "Email", dataType: "string" }];
   const columns = validateDataModelColumns(configured, group);
   // Older presets may still put Email first. Keep the requested creation
   // order consistent without changing the order of other attributes.
@@ -3304,6 +3372,9 @@ async function runDataModelAttributesStep(tabId, runId, { group, objectName, col
   await typeJetInput(tabId, objectSearch?.inputId || "search-input-text|input", targetObjectName,
     "Data Model object search", "Enter");
   await appendRunLog(`Target object = ${targetObjectName}; ${columns.length} attributes configured.`, "info", `Attributes · ${group}`, "Plan");
+  if (columns.some((column) => /_N18P4$/i.test(column.name))) {
+    await appendRunLog("N18P4 labels intended decimal(18,4) coverage. CDP's attribute editor confirms decimal type, but does not expose precision/scale; verify those limits in the tenant before relying on them.", "warn", `Attributes · ${group}`, "Validate");
+  }
   for (const column of columns) {
     assertSequenceActive(tabId, runId, "Data Model attribute creation");
     let attributeSaved = false;
@@ -3409,6 +3480,7 @@ async function singleImportTemplateId(flow) {
 }
 
 async function runConfiguredFlow(tabId, flow = {}) {
+  if (!String(flow.connectionPurpose || "").trim()) throw new Error("Enter a Purpose before running the workflow.");
   if (activeSequences.has(tabId)) throw new Error("An E2E flow is already running in this tab.");
   const entityTimestamp = entityNameTag();
   const selectedSteps = new Set(flow.steps || ["dataViewer", "source", "destination", "export", "import", "publish", "verify"]);
@@ -3789,6 +3861,7 @@ async function resolveDataViewerTables(tabId, selections, overrides = {}, parent
     if (liveTables.some((item) => item.id === table.id)) {
       const fields = await loadLiveDataViewerFields(tabId, table);
       if (!fields.length) throw new Error(`CDP did not return columns for ${table.cdpTable}.`);
+      await validateTypeCodedLiveFields(fields, table.cdpTable);
       table.liveFields = fields;
       table.enterableFieldIds = fields.filter((field) => !field.systemAttribute).map((field) => field.fieldId);
       table.parentTable = String(parentByTable?.[table.id] || parentByTable?.[table.cdpTable] || parentTableFromMetadataFields(fields) || "").trim();
@@ -3832,6 +3905,21 @@ function apiDummySourceKey(sequence, runDate = new Date()) {
   const pad = (value, width) => String(value).padStart(width, "0");
   const datePart = `${pad(runDate.getDate(), 2)}${pad(runDate.getMonth() + 1, 2)}${pad(runDate.getFullYear() % 100, 2)}`;
   return `${datePart}${pad(Math.max(1, Number(sequence) || 1), 3)}`;
+}
+
+function apiRecordPlan(recordsPerTable, startingIndex, includeDeleteTestRecords = false) {
+  if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
+  if (!Number.isSafeInteger(startingIndex) || startingIndex < 1 || startingIndex > 999) throw new Error("API start index must be a whole number from 1 through 999.");
+  const total = recordsPerTable * (includeDeleteTestRecords ? 2 : 1);
+  if (startingIndex + total - 1 > 999) throw new Error("Record suffix start index plus all API records cannot exceed 999.");
+  return Array.from({ length: total }, (_, index) => ({
+    sequence: startingIndex + index,
+    deleteTest: Boolean(includeDeleteTestRecords && index >= recordsPerTable)
+  }));
+}
+
+function apiDeleteTestEmail(sequence, runDate) {
+  return `delete.${apiDummySourceKey(sequence, runDate)}@gmail.com`;
 }
 
 function apiValueForLiveType(value, field) {
@@ -3889,7 +3977,7 @@ function apiFullPayloadField(field, sourceAttribute) {
   return apiSupportedSourceField(field, sourceAttribute);
 }
 
-function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}, runDate = new Date(), position = 1, count = 1) {
+function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}, runDate = new Date()) {
   const fieldId = String(field?.fieldId || "");
   const displayName = String(field?.displayName || fieldId);
   const configured = recordConfig.values?.[fieldId] ?? recordConfig.values?.[displayName];
@@ -3910,11 +3998,11 @@ function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}
     String(timestampDate.getUTCSeconds()).padStart(2, "0")
   ].join(":");
   const typed = (value) => apiValueForLiveType(value, field);
-  const profileValue = cdpRecordProfiles.value(normalized, { position, count, sequence, runDate });
+  const profileValue = cdpRecordProfiles.normalValue(normalized, { sequence, runDate });
   // SourceID identifies the CDP stream. Keep it stable even when a saved
   // record configuration contains an older override.
   if (normalized === "sourceid") return "CDP";
-  if (/^source.+id$/i.test(normalized)) return cdpRecordProfiles.sourceKey(sequence, runDate, position, count);
+  if (/^source.+id$/i.test(normalized)) return apiDummySourceKey(sequence, runDate);
   if (profileValue !== undefined) return typed(profileValue);
   // Customer birth components are real calendar values, not generic numeric
   // defaults. Keep them aligned with the generated BirthDate for this record.
@@ -3925,7 +4013,7 @@ function apiRecordFieldValue(field, table, sourceId, sequence, recordConfig = {}
   if (normalized === "properties") return typed({ category: "customer", source: "CDP" });
   // EmailFrequency is a choice field, not an email-address field.
   if (normalized === "emailfrequency") return typed("Every day");
-  if (/email/i.test(normalized) && (configuredValue === undefined || configuredValue === "" || configuredValue === "jagannath.patil@oracle.com" || configuredValue === "{{email}}")) return typed(cdpRecordProfiles.value("email", { position, count, sequence, runDate }) || recordEmailForSequence(sequence));
+  if (/email/i.test(normalized) && (configuredValue === undefined || configuredValue === "" || configuredValue === "jagannath.patil@oracle.com" || configuredValue === "{{email}}")) return typed(cdpRecordProfiles.normalValue("email", { sequence, runDate }) || recordEmailForSequence(sequence));
   if (configuredValue !== undefined && configuredValue !== "") {
     const substitute = (value) => String(value)
       .replace(/\{\{sourceId\}\}/g, sourceId)
@@ -4078,11 +4166,9 @@ async function postCustomRecordsToCdp(tabId, payload, tenantId, exactNumericFiel
   return result;
 }
 
-async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, startingIndex = 1, sourceId = "UI", saveRecords = true, dataViewerOverrides = {} } = {}) {
+async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, startingIndex = 1, sourceId = "UI", saveRecords = true, includeDeleteTestRecords = false, dataViewerOverrides = {} } = {}) {
   if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
-  if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
-  if (!Number.isSafeInteger(startingIndex) || startingIndex < 1 || startingIndex > 999) throw new Error("API start index must be a whole number from 1 through 999.");
-  if (startingIndex + recordsPerTable - 1 > 999) throw new Error("API start index plus records per table cannot exceed 999.");
+  const recordPlan = apiRecordPlan(recordsPerTable, startingIndex, includeDeleteTestRecords);
   const runId = crypto.randomUUID();
   let failed = false;
   activeSequences.set(tabId, { runId, cancelled: false, status: "Running: API Load Custom Records" });
@@ -4100,6 +4186,7 @@ async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, start
     let resolvedTenantId = null;
     const resolvedSourceId = String(sourceId || "").trim() || "CDP";
     const dummySourceRunDate = new Date();
+    let hasDeleteEmailField = false;
     for (const table of streamTables) {
       const metadata = await fetchCdpMetadata(tabId, "tables/" + encodeURIComponent(table.tableId || table.id));
       resolvedTenantId ||= metadataTenantId(metadata);
@@ -4113,6 +4200,7 @@ async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, start
       // versioned `table.liveFields` here, or required fields such as Email_c
       // can be missing from the stream payload.
       const liveFields = liveDataViewerFieldsFromMetadata(metadata);
+      await validateTypeCodedLiveFields(liveFields, table.cdpTable || table.label);
       liveFields.filter((field) => /^(bigint|decimal)$/i.test(field.dataType)).forEach((field) => exactNumericFields.add(field.fieldId));
       const fields = liveFields.filter((field) => (!field.systemAttribute || /^source(?:.+)?id$/i.test(importFieldKey(field)))
         && !isApiManagedField(field)
@@ -4123,29 +4211,32 @@ async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, start
       // when metadata classifies it as derived and therefore omits it from the
       // normal writable-field list. Example: SourceProfile_KiwiFix_04Sep_2239ID.
       const sourceAttribute = String(table.sourceAttribute || `Source${String(table.cdpTable || table.label || "").replace(/[^A-Za-z0-9]/g, "")}ID`).trim();
+      const emailField = fields.find((field) => importFieldKey(field) === "email" && !/(?:array|list|collection|map)/i.test(field.dataType));
+      if (emailField) hasDeleteEmailField = true;
       const records = [];
-      for (let offset = 0; offset < recordsPerTable; offset += 1) {
-        const sequence = startingIndex + offset;
-        const position = offset + 1;
-        const profile = cdpRecordProfiles.kind(position, recordsPerTable);
+      for (const { sequence, deleteTest } of recordPlan) {
         const record = {};
         for (const field of fields.filter((field) => apiSupportedSourceField(field, sourceAttribute))) {
-          record[field.fieldId] = profile === "sparse" && !field.required && !/^source(?:.+)?id$/i.test(importFieldKey(field))
-            ? null
-            : apiRecordFieldValue(field, table, resolvedSourceId, sequence, table.recordConfig, dummySourceRunDate, position, recordsPerTable);
+          record[field.fieldId] = apiRecordFieldValue(field, table, resolvedSourceId, sequence, table.recordConfig, dummySourceRunDate);
         }
         // SourceID is the stream-level origin marker. It is required alongside
         // the table-specific source attribute, but metadata can hide it from
         // the enterable-field collection.
         if (!Object.keys(record).some((key) => String(key).toLowerCase() === "sourceid")) record.SourceID = resolvedSourceId;
         if (sourceAttribute && record[sourceAttribute] === undefined) {
-          record[sourceAttribute] = apiRecordFieldValue({ fieldId: sourceAttribute, displayName: sourceAttribute }, table, resolvedSourceId, sequence, table.recordConfig, dummySourceRunDate, position, recordsPerTable);
+          record[sourceAttribute] = apiRecordFieldValue({ fieldId: sourceAttribute, displayName: sourceAttribute }, table, resolvedSourceId, sequence, table.recordConfig, dummySourceRunDate);
+        }
+        // Give the duplicate set distinct source keys; otherwise the stream
+        // would update the first set instead of adding deletion test records.
+        if (deleteTest && emailField) {
+          record[emailField.fieldId] = apiDeleteTestEmail(sequence, dummySourceRunDate);
         }
         records.push(record);
       }
       payload[resourceName] = records;
       await appendRunLog("Prepared " + records.length + " API record" + (records.length === 1 ? "" : "s") + " with " + fields.length + " writable fields for resource " + resourceName + " (starting index " + startingIndex + ").", "info", table.label, "Prepare");
     }
+    if (includeDeleteTestRecords && !hasDeleteEmailField) throw new Error("Delete-test copies require at least one selected table with a writable Email field.");
     if (!saveRecords) {
       await appendRunLog("Dry run: API request was not sent.", "info", "API Load", "Dry run");
       return { payload, dryRun: true };
@@ -4168,9 +4259,12 @@ async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, start
   }
 }
 
-async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false, dataViewerOverrides = {} } = {}) {
+async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, startingIndex = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false, dataViewerOverrides = {} } = {}) {
   if (activeSequences.has(tabId)) throw new Error("An automation flow is already running in this tab.");
   if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
+  if (!Number.isSafeInteger(startingIndex) || startingIndex < 1 || startingIndex + recordsPerTable - 1 > 999) {
+    throw new Error("Record suffix start index plus records per table must stay within 1–999.");
+  }
   const resolvedSourceId = String(sourceId || "").trim() || "CDP";
   const tables = await resolveDataViewerTables(tabId, tableIds, dataViewerOverrides);
   const runId = crypto.randomUUID();
@@ -4187,7 +4281,7 @@ async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, sourceId = 
     const [{ result: dataViewerResult }] = await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
-      args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, sourceAttribute: table.sourceAttribute, enterableFieldIds: table.enterableFieldIds, liveFields: table.liveFields, recordConfig: table.recordConfig })), { recordsPerTable, sourceId: resolvedSourceId, parentSourceCustomerId: String(parentSourceCustomerId || "").trim(), saveRecords: Boolean(saveRecords) }],
+      args: [tables.map((table) => ({ id: table.id, label: table.label, cdpTable: table.cdpTable, sourceAttribute: table.sourceAttribute, enterableFieldIds: table.enterableFieldIds, liveFields: table.liveFields, recordConfig: table.recordConfig })), { recordsPerTable, startingIndex, sourceId: resolvedSourceId, parentSourceCustomerId: String(parentSourceCustomerId || "").trim(), saveRecords: Boolean(saveRecords) }],
       func: async (dataViewerTables, options) => {
         if (typeof window.runCdpDataViewer !== "function") throw new Error("Data Viewer automation did not load.");
         return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
@@ -4586,13 +4680,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message?.type === "run-api-custom-records") {
-    runApiCustomRecords(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, startingIndex: message.startingIndex, sourceId: message.sourceId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
+    runApiCustomRecords(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, startingIndex: message.startingIndex, sourceId: message.sourceId, saveRecords: message.saveRecords, includeDeleteTestRecords: message.includeDeleteTestRecords, dataViewerOverrides: message.dataViewerOverrides })
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
     return true;
   }
   if (message?.type === "run-data-viewer") {
-    runDataViewer(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, sourceId: message.sourceId, parentSourceCustomerId: message.parentSourceCustomerId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
+    runDataViewer(message.tabId, message.tableIds, { recordsPerTable: message.recordsPerTable, startingIndex: message.startingIndex, sourceId: message.sourceId, parentSourceCustomerId: message.parentSourceCustomerId, saveRecords: message.saveRecords, dataViewerOverrides: message.dataViewerOverrides })
       .then(() => sendResponse({ ok: true }))
       .catch((error) => { finalizeRunHistory("failed", error.message || String(error)); sendResponse({ ok: false, error: error.message || String(error) }); });
     return true;
@@ -4619,6 +4713,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message?.type !== "run-task") return;
+  if (!String(message.connectionPurpose || "").trim()) {
+    sendResponse({ ok: false, error: "Enter a Purpose before creating a connection or job." });
+    return;
+  }
 
   if (["exportJob.js", "importJob.js", "importContacts.js"].includes(message.filename)) {
     const isExport = message.filename === "exportJob.js";

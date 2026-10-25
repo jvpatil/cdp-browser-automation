@@ -98,6 +98,9 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable, mappingO
         const STATIC_TRANSFORMS = mappingOptions.fieldStaticTransforms && typeof mappingOptions.fieldStaticTransforms === "object"
             ? mappingOptions.fieldStaticTransforms
             : {};
+        const REQUIRED_TARGET_MAPPINGS = Array.isArray(mappingOptions.requiredTargetMappings) ? mappingOptions.requiredTargetMappings : [];
+        const selectedTargetMappings = new Set();
+        const mappingKey = (header, table, attribute) => `${normalizeName(header)}|${normalizeName(table)}|${normalizeName(attribute)}`;
 
         const ruleForSource = (rules, sourceKey) => {
             const direct = rules[sourceKey];
@@ -522,6 +525,7 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable, mappingO
                         console.log(`      ✔ ${tableName}: Selected exact match "${columnTextRaw}"`);
                         matched = true;
                         matchedCount += 1;
+                        selectedTargetMappings.add(mappingKey(sourceKey, tableName, desiredTarget));
                         if (Object.prototype.hasOwnProperty.call(staticForTable, desiredTarget)) {
                             pendingStaticTransforms.push({ targetName: desiredTarget, value: staticForTable[desiredTarget] });
                         }
@@ -618,7 +622,8 @@ window.runCdpFieldMapping = async function (targetTables, fieldToTable, mappingO
         }
 
         console.log(`\nDone. Total rows mapped: ${mappedSourceFields.size}; skipped: ${processed.size - mappedSourceFields.size}`);
-        return { mappedRows: mappedSourceFields.size, attemptedRows: processed.size, skippedRows: processed.size - mappedSourceFields.size };
+        const missingTargetMappings = REQUIRED_TARGET_MAPPINGS.filter((entry) => !selectedTargetMappings.has(mappingKey(entry.sourceHeader, entry.tableName, entry.targetAttribute)));
+        return { mappedRows: mappedSourceFields.size, attemptedRows: processed.size, skippedRows: processed.size - mappedSourceFields.size, missingTargetMappings };
 
     } catch (err) {
         // The mapping screen is asynchronous and can be partially available.

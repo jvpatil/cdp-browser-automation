@@ -177,7 +177,7 @@
     return (words.map((word) => word[0]).join("") || "UI").toUpperCase();
   };
   const sourceObjectIdFor = (_tableName, context, tableSequence) => cdpRecordProfiles.sourceKey(
-    Math.max(1, Number(tableSequence) || 1), context.runDate, Math.max(1, Number(tableSequence) || 1), context.recordCount
+    Number(context.sequence), context.runDate, tableSequence, context.recordCount
   );
   const canonicalSourceKey = (field) => String(field || "")
     .replace(/^field-/, "")
@@ -228,9 +228,17 @@
     const fieldKey = logicalField.replace(/[^a-z0-9]/gi, "").toLowerCase();
     const profileValue = cdpRecordProfiles.value(fieldKey, {
       position: Number(context.tableSequence), count: context.recordCount,
-      sequence: Number(context.tableSequence), runDate: context.runDate, ui: true
+      sequence: Number(context.sequence), runDate: context.runDate, ui: true
     });
     if (profileValue !== undefined) return Array.isArray(profileValue) ? profileValue.join(", ") : String(profileValue);
+    const businessValue = cdpRecordProfiles.businessValue(fieldKey, {
+      sequence: Number(context.sequence), runDate: context.runDate
+    });
+    if (businessValue !== undefined) {
+      if (Array.isArray(businessValue)) return businessValue.join(", ");
+      if (typeof businessValue === "boolean") return businessValue ? "True" : "False";
+      return String(businessValue);
+    }
     const fieldType = String(table.liveFields?.find((item) => item.fieldId === field)?.dataType || "string").toLowerCase();
     const knownByKey = Object.fromEntries(Object.entries(known).map(([key, value]) => [key.replace(/[^a-z0-9]/gi, "").toLowerCase(), value]));
     const pick = (values) => values[(Math.max(1, Number(context.tableSequence) || 1) - 1) % values.length];
@@ -267,7 +275,7 @@
     if (/^source.*id$/i.test(fieldKey)) return sourceObjectIdFor("", context, context.tableSequence);
     if (knownByKey[fieldKey] !== undefined) return knownByKey[fieldKey];
     if (semanticValues[fieldKey]) return pick(semanticValues[fieldKey]);
-    if (fieldKey === "transactionid") return `ORD-${context.ddmmyy}${String(context.tableSequence).padStart(3, "0")}`;
+    if (fieldKey === "transactionid") return `ORD-${context.ddmmyy}${String(context.sequence).padStart(3, "0")}`;
     if (fieldKey === "orderstatus") return "Completed";
     if (fieldKey === "accountname") return "Northwind Enterprise";
     if (fieldKey === "accounttier") return "Gold";
@@ -282,12 +290,12 @@
     if (/(flag|^is|deliverable|active|enabled)/i.test(fieldKey)) return "True";
     if (/(age|amount|revenue|score|rank|count|number|quantity|year|month|day|level)/i.test(fieldKey)) return "1";
     if (/(phone|mobile|fax)/i.test(fieldKey)) return "9999999999";
-    if (/cookie/i.test(fieldKey)) return `session_${context.ddmmyy}${String(context.tableSequence).padStart(3, "0")}`;
+    if (/cookie/i.test(fieldKey)) return `session_${context.ddmmyy}${String(context.sequence).padStart(3, "0")}`;
     if (/url/i.test(fieldKey)) return "https://www.oracle.com/cx/";
     if (/name/i.test(fieldKey)) return `Enterprise ${logicalField.replace(/([A-Z])/g, " $1").replace(/_/g, " ").trim()} ${context.tableSequence}`;
     if (/description|comment|note/i.test(fieldKey)) return `${logicalField.replace(/([A-Z])/g, " $1").replace(/_/g, " ").trim()} for customer engagement record ${context.tableSequence}`;
-    if (/code/i.test(fieldKey)) return `CDP${String(context.tableSequence).padStart(3, "0")}`;
-    return `${logicalField.replace(/([A-Z])/g, " $1").replace(/_/g, " ").trim() || "Customer attribute"} ${context.ddmmyy}${String(context.tableSequence).padStart(3, "0")}`;
+    if (/code/i.test(fieldKey)) return `CDP${String(context.sequence).padStart(3, "0")}`;
+    return `${logicalField.replace(/([A-Z])/g, " $1").replace(/_/g, " ").trim() || "Customer attribute"} ${context.ddmmyy}${String(context.sequence).padStart(3, "0")}`;
   };
 
   // Oracle JET hosts (oj-input-date, oj-select-single, etc.) are not native
@@ -322,7 +330,7 @@
     // Email values are already sequenced by defaultFieldValue. Do not append a
     // second suffix before the @ sign (for example, jagan.test01-2@gmail.com).
     if (repeatCount <= 1 || !base || /email/i.test(field) || !suffixEligible(field, input)) return base;
-    const marker = context.tableSequence;
+    const marker = context.sequence;
     const at = base.indexOf("@");
     return at > 0 ? `${base.slice(0, at)}-${marker}${base.slice(at)}` : `${base}-${marker}`;
   };
@@ -391,9 +399,12 @@
     return textValue.length > 120 ? `${textValue.slice(0, 117)}...` : textValue;
   };
 
-  window.runCdpDataViewer = async ({ tables = [], recordsPerTable = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false } = {}) => {
+  window.runCdpDataViewer = async ({ tables = [], recordsPerTable = 1, startingIndex = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false } = {}) => {
     if (!Array.isArray(tables) || !tables.length || tables.some((table) => !table?.cdpTable)) throw new Error("At least one Data Viewer table is required.");
     if (!Number.isSafeInteger(recordsPerTable) || recordsPerTable < 1) throw new Error("Records per table must be a positive whole number.");
+    if (!Number.isSafeInteger(startingIndex) || startingIndex < 1 || startingIndex + recordsPerTable - 1 > 999) {
+      throw new Error("Record suffix start index plus records per table must stay within 1–999.");
+    }
     const resolvedSourceId = String(sourceId || "").trim() || "CDP";
     const resolvedParentSourceCustomerId = String(parentSourceCustomerId || "").trim();
     const dummySourceRunDate = new Date();
@@ -407,6 +418,7 @@
       await selectDataObject(table.cdpTable);
       generatedObjectIds[table.cdpTable] = [];
       for (let tableSequence = 1; tableSequence <= recordsPerTable; tableSequence += 1) {
+        const sequence = startingIndex + tableSequence - 1;
         const audit = { table: table.cdpTable, sequence: tableSequence, fields: [], keys: [], actions: [] };
         if (tableSequence === 1) audit.actions.push({ action: "Select", target: "Data object", value: table.cdpTable });
         setProgress(`${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
@@ -423,7 +435,7 @@
         setProgress(`Loading ${table.cdpTable} record ${tableSequence}/${recordsPerTable}`);
         await wait(() => drawerFormReady(drawer) ? drawer : null, `${table.cdpTable} record form to finish loading`, 60000);
         await chooseDrawerMode(drawer);
-        const context = valueContext(tableSequence, tableSequence, resolvedSourceId, "", dummySourceRunDate);
+        const context = valueContext(sequence, tableSequence, resolvedSourceId, "", dummySourceRunDate);
         context.recordCount = recordsPerTable;
         context.runDate = dummySourceRunDate;
         context.profile = cdpRecordProfiles.kind(tableSequence, recordsPerTable);
@@ -455,7 +467,7 @@
           }
           const profileField = field.replace(/_c$/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
           const profileValue = cdpRecordProfiles.value(profileField, {
-            position: tableSequence, count: recordsPerTable, sequence: tableSequence,
+            position: tableSequence, count: recordsPerTable, sequence,
             runDate: dummySourceRunDate, ui: true
           });
           const hasConfiguredValue = Object.hasOwn(configuredValues, field);
@@ -552,6 +564,6 @@
         completed.push({ ...audit, objectId: sourceObjectId, outcome: saveRecords ? "Saved" : "Dry run discarded" });
       }
     }
-    return { records: completed, recordsPerTable, sourceId: resolvedSourceId, saved: Boolean(saveRecords) };
+    return { records: completed, recordsPerTable, startingIndex, sourceId: resolvedSourceId, saved: Boolean(saveRecords) };
   };
 })();

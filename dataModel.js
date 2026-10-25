@@ -36,14 +36,8 @@
   }
 
   function addObjectControl() {
-    const list = document.querySelector(".oj-cxu-side-nav .data-obj-list") || document.querySelector(".data-obj-list");
-    if (!list) return null;
-    const controls = [...list.querySelectorAll("button, oj-button, [role=button], a, span")];
-    return controls.find((element) => {
-      const target = element.querySelector?.("button") || element;
-      const descriptor = `${element.getAttribute("aria-label") || ""} ${element.getAttribute("title") || ""} ${element.className || ""} ${target.className || ""}`;
-      return visible(element) && !target.disabled && /(^|[-_\s])plus($|[-_\s])|add.*(?:object|data)|create.*(?:object|data)/i.test(descriptor);
-    }) || null;
+    const control = document.getElementById("do-plus-icon");
+    return control?.isConnected && visible(control) && control.getAttribute("aria-disabled") !== "true" ? control : null;
   }
 
   function namedButton(label) {
@@ -77,6 +71,31 @@
   function dataObjectSearchToggle() {
     const control = document.querySelector("#cd-do-search .search-icon");
     return visible(control) ? control : null;
+  }
+
+  function dataObjectSearchDone() {
+    const control = document.querySelector("#cd-do-search .close-container");
+    return visible(control) ? control : null;
+  }
+
+  function dataObjectSearchExpanded() {
+    return document.querySelector("#cd-do-search .search-box-container")?.getAttribute("aria-pressed") === "true";
+  }
+
+  async function selectGroup(group) {
+    const tab = await waitFor(() => groupTab(group), `${group} tab`);
+    // Clicking the already-selected JET tab can re-render the object list and
+    // reopen its search after we have just closed it.
+    if (tab.getAttribute("aria-selected") !== "true") await click(tab);
+    await waitFor(() => groupTab(group)?.getAttribute("aria-selected") === "true" ? true : null,
+      `${group} tab selection`, 15000);
+  }
+
+  async function closeDataObjectSearch() {
+    if (!dataObjectSearchExpanded()) return;
+    await click(await waitFor(dataObjectSearchDone, "Data Model object search Done control", 10000));
+    await waitFor(() => !dataObjectSearchExpanded() ? true : null,
+      "Data Model object search to close", 10000);
   }
 
   function attributeDrawer() {
@@ -181,8 +200,23 @@
 
   window.cdpDataModelOpenGroup = async (group) => {
     if (!GROUPS.includes(group)) throw new Error(`Unsupported Data Model group: ${group}.`);
-    await click(await waitFor(() => groupTab(group), `${group} tab`));
-    await click(await waitFor(addObjectControl, `${group} add object control`));
+    await selectGroup(group);
+    // Search replaces the Data objects Create icon. The icon is not merely
+    // hidden: JET removes it from the DOM until search is closed.
+    await closeDataObjectSearch();
+    let add = null;
+    try {
+      add = await waitFor(addObjectControl, `${group} Data objects Create icon`, 10000);
+    } catch (_) {
+      // If JET left the header in an inconsistent state, switching groups
+      // forces a fresh header render. Never wait indefinitely for an absent +.
+      const otherGroup = GROUPS.find((candidate) => candidate !== group);
+      await selectGroup(otherGroup);
+      await selectGroup(group);
+      await closeDataObjectSearch();
+      add = await waitFor(addObjectControl, `${group} Data objects Create icon after group refresh`, 10000);
+    }
+    await click(add);
     await waitForDrawerInteractive();
     return { group };
   };
@@ -193,7 +227,7 @@
   // that trusted key sequence after this prepares the control.
   window.cdpDataModelPrepareObjectSearch = async (group) => {
     if (!GROUPS.includes(group)) throw new Error(`Unsupported Data Model group: ${group}.`);
-    await click(await waitFor(() => groupTab(group), `${group} tab`));
+    await selectGroup(group);
     let search = dataObjectSearchInput();
     if (!visible(search)) {
       await click(await waitFor(dataObjectSearchToggle, "Data Model object search icon"));

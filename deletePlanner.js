@@ -1,5 +1,58 @@
 /* Build scoped Oracle Unity segment/delete definitions. No network calls here. */
 (function (scope) {
+  function deleteTablePairNames(purpose, date = new Date(), group = "Profile") {
+    const type = ["Profile", "Behavioral", "Transactional", "Product", "Other"]
+      .find((candidate) => candidate.toLowerCase() === String(group || "").trim().toLowerCase());
+    if (!type) throw new Error("Select a supported custom data-model type.");
+    const stamp = `${String(date.getDate()).padStart(2, "0")}${["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"][date.getMonth()]}_${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(2, "0")}`;
+    const code = String(purpose || "TEST").trim().replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "") || "TEST";
+    // Oracle's object ID is capped at 40 characters and may acquire "_c".
+    // Leave room for that suffix and use one shared purpose for both objects.
+    const maxPurposeLength = 38 - `${type}_DELETE_`.length - 1 - stamp.length;
+    const sharedPurpose = code.slice(0, maxPurposeLength).replace(/_+$/g, "") || "TEST";
+    return { sourceName: `${type}_${sharedPurpose}_${stamp}`, targetName: `${type}_DELETE_${sharedPurpose}_${stamp}` };
+  }
+  function deleteTargetName(purpose, date = new Date(), group = "Profile") { return deleteTablePairNames(purpose, date, group).targetName; }
+  function pairedDeleteSourceName(targetName) {
+    const match = /^(PROFILE|BEHAVIORAL|TRANSACTIONAL|PRODUCT|OTHER)_DELETE_([A-Z0-9_]+)_(\d{2}[A-Z]{3}_\d{4})$/i.exec(String(targetName || "").replace(/_c$/i, ""));
+    return match ? `${match[1]}_${match[2]}_${match[3]}` : "";
+  }
+  function pairedDeleteTargetName(sourceName) {
+    const match = /^(PROFILE|BEHAVIORAL|TRANSACTIONAL|PRODUCT|OTHER)_([A-Z0-9_]+)_(\d{2}[A-Z]{3}_\d{4})$/i.exec(String(sourceName || "").replace(/_c$/i, ""));
+    return match ? `${match[1]}_DELETE_${match[2]}_${match[3]}` : "";
+  }
+  function preferredDeleteTableId(target, tables = []) {
+    if (!target?.id) return "";
+    const pairedName = pairedDeleteTargetName(target.label);
+    const paired = pairedName && tables.find((table) => table.isCustom && String(table.label || "").replace(/_c$/i, "").toUpperCase() === pairedName.toUpperCase());
+    return paired?.id || target.id;
+  }
+  function defaultDeleteScope(target, tables = []) {
+    const pairedId = preferredDeleteTableId(target, tables);
+    return target?.id && pairedId !== target.id
+      ? { mode: "table", tableId: pairedId }
+      : { mode: "segment", tableId: "Customer" };
+  }
+  function tableDeletePreferences(preferences = {}) {
+    return {
+      deleteLinked: false,
+      truncateCustomer360: preferences.truncateCustomer360 === true,
+      truncateCube: preferences.truncateCube === true
+    };
+  }
+  function deleteTableJobName(targetName, date = new Date()) {
+    const match = /^(PROFILE|BEHAVIORAL|TRANSACTIONAL|PRODUCT|OTHER)_DELETE_([A-Z0-9_]+)_(\d{2}[A-Z]{3}_\d{4})$/i.exec(String(targetName || "").replace(/_c$/i, ""));
+    if (!match) {
+      const tableCode = String(targetName || "").trim().replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").toUpperCase();
+      if (!tableCode) throw new Error("Select a table for the entire-table Delete job.");
+      const stamp = `${String(date.getDate()).padStart(2, "0")}${["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"][date.getMonth()]}_${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(2, "0")}`;
+      return `DEL_${tableCode.slice(0, 50 - 4 - stamp.length - 1).replace(/_+$/g, "")}_${stamp}`;
+    }
+    // Different object types can share one purpose and creation minute.
+    // Retain the established Profile name; qualify other types to avoid a
+    // Delete-job collision in the same tenant.
+    return `DEL_${match[1].toUpperCase() === "PROFILE" ? "" : `${match[1].toUpperCase()}_`}${match[2].toUpperCase()}_${match[3].toUpperCase()}`;
+  }
   function reference(tableAlias, fieldId, kind = "ctype", alias) {
     return { [kind]: ".ReferenceAttribute", tableName: tableAlias, attributeName: fieldId, ...(alias ? { alias } : {}) };
   }
@@ -96,6 +149,6 @@
     };
   }
 
-  scope.CdpDeletePlanner = { buildDeletePlan, buildDeleteJob, chooseReportDestination };
+  scope.CdpDeletePlanner = { buildDeletePlan, buildDeleteJob, chooseReportDestination, deleteTablePairNames, deleteTargetName, pairedDeleteSourceName, pairedDeleteTargetName, preferredDeleteTableId, defaultDeleteScope, tableDeletePreferences, deleteTableJobName };
   if (typeof module !== "undefined") module.exports = scope.CdpDeletePlanner;
 })(typeof globalThis !== "undefined" ? globalThis : this);

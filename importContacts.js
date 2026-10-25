@@ -344,8 +344,17 @@
           if(typeof window.runCdpFieldMapping!=="function"){
                 throw new Error("The shared Import Job field mapper was not loaded.");
           }
-          const mappingResult=await window.runCdpFieldMapping(sourceConfig.targetTables||window.__cdpImportConfig?.targetTables,sourceConfig.fieldToTable||window.__cdpImportConfig?.fieldToTable,{fieldTargetAttributes:sourceConfig.fieldTargetAttributes||window.__cdpImportConfig?.fieldTargetAttributes,fieldStaticTransforms:sourceConfig.fieldStaticTransforms||window.__cdpImportConfig?.fieldStaticTransforms});
+          const mappingResult=await window.runCdpFieldMapping(sourceConfig.targetTables||window.__cdpImportConfig?.targetTables,sourceConfig.fieldToTable||window.__cdpImportConfig?.fieldToTable,{fieldTargetAttributes:sourceConfig.fieldTargetAttributes||window.__cdpImportConfig?.fieldTargetAttributes,fieldStaticTransforms:sourceConfig.fieldStaticTransforms||window.__cdpImportConfig?.fieldStaticTransforms,requiredTargetMappings:sourceConfig.requiredTargetMappings||[]});
           console.info("Import field mapping result",mappingResult);
+          if(sourceConfig.requiredTargetMappings?.length&&(mappingResult?.error||mappingResult?.missingTargetMappings?.length)){
+                throw new Error(`DELETE-copy source-key bridge was not confirmed: ${JSON.stringify(mappingResult?.missingTargetMappings||sourceConfig.requiredTargetMappings)}. No job was saved.`);
+          }
+          if(sourceConfig.requireAllMappings){
+                const expected=Object.keys(sourceConfig.fieldToTable||{}).length;
+                if(mappingResult?.error||mappingResult?.mappedRows!==expected){
+                      throw new Error(`Dedicated Import target mapping is incomplete (${mappingResult?.mappedRows||0}/${expected}). No job was saved.`);
+                }
+          }
   };
     try{
         if(!location.href.includes("root=createConnectJob"))throw new Error("Open /data/?root=createConnectJob before running.");

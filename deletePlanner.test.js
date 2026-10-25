@@ -1,5 +1,40 @@
 const assert = require("node:assert/strict");
-const { buildDeletePlan, buildDeleteJob, chooseReportDestination } = require("./deletePlanner.js");
+const { buildDeletePlan, buildDeleteJob, chooseReportDestination, deleteTablePairNames, deleteTargetName, pairedDeleteSourceName, pairedDeleteTargetName, preferredDeleteTableId, defaultDeleteScope, tableDeletePreferences, deleteTableJobName } = require("./deletePlanner.js");
+
+assert.equal(deleteTargetName("27o1 cdrm", new Date(2026, 9, 22, 22, 45)), "Profile_DELETE_27o1_cdrm_22OCT_2245");
+assert.equal(deleteTableJobName("PROFILE_DELETE_27O1_CDRM_22OCT_2245"), "DEL_27O1_CDRM_22OCT_2245");
+assert.ok(deleteTargetName("A very long purpose with several descriptive words", new Date(2026, 9, 22, 22, 45)).length <= 38);
+assert.deepEqual(deleteTablePairNames("27o1 cdrm", new Date(2026, 9, 22, 22, 45)), { sourceName: "Profile_27o1_cdrm_22OCT_2245", targetName: "Profile_DELETE_27o1_cdrm_22OCT_2245" });
+assert.deepEqual(deleteTablePairNames("PreJDK", new Date(2026, 9, 23, 18, 6)), { sourceName: "Profile_PreJDK_23OCT_1806", targetName: "Profile_DELETE_PreJDK_23OCT_1806" });
+assert.equal(pairedDeleteTargetName("PROFILE_27O1_CDRM_22OCT_2245"), "PROFILE_DELETE_27O1_CDRM_22OCT_2245");
+assert.equal(pairedDeleteSourceName("PROFILE_DELETE_27O1_CDRM_22OCT_2245"), "PROFILE_27O1_CDRM_22OCT_2245");
+assert.equal(pairedDeleteSourceName("PROFILE_DELETE_27O1_CDRM_22OCT_2245_c"), "PROFILE_27O1_CDRM_22OCT_2245");
+assert.equal(pairedDeleteSourceName("PROFILE_27O1_CDRM_22OCT_2245"), "");
+assert.equal(pairedDeleteSourceName("Customer"), "");
+assert.equal(deleteTableJobName("Customer", new Date(2026, 9, 23, 15, 20)), "DEL_CUSTOMER_23OCT_1520");
+assert.equal(deleteTableJobName("Behavioral_27D_PF_23Oct_1520_c", new Date(2026, 9, 23, 15, 21)), "DEL_BEHAVIORAL_27D_PF_23OCT_1520_C_23OCT_1521");
+assert.equal(deleteTableJobName("Profile_DELETE_PreJDK_23OCT_1806"), "DEL_PREJDK_23OCT_1806");
+assert.throws(() => deleteTableJobName(""), /Select a table/);
+const sourceTable = { id: "profile-source", label: "PROFILE_27O1_CDRM_22OCT_2245_c", isCustom: true };
+const deleteCopy = { id: "profile-delete", label: "PROFILE_DELETE_27O1_CDRM_22OCT_2245_c", isCustom: true };
+assert.equal(preferredDeleteTableId(sourceTable, [sourceTable, deleteCopy]), deleteCopy.id);
+assert.equal(preferredDeleteTableId(sourceTable, [sourceTable]), sourceTable.id);
+assert.equal(preferredDeleteTableId({ id: "mixed-profile", label: "Profile_27O1_CDRM_22Oct_2245_c" }, [deleteCopy]), deleteCopy.id);
+assert.equal(preferredDeleteTableId({ id: "Customer", label: "Customer" }, [sourceTable, deleteCopy]), "Customer");
+assert.deepEqual(defaultDeleteScope(sourceTable, [sourceTable, deleteCopy]), { mode: "table", tableId: deleteCopy.id });
+assert.deepEqual(defaultDeleteScope(sourceTable, [sourceTable]), { mode: "segment", tableId: "Customer" });
+assert.deepEqual(defaultDeleteScope({ id: "Customer", label: "Customer" }, [sourceTable, deleteCopy]), { mode: "segment", tableId: "Customer" });
+assert.deepEqual(tableDeletePreferences({ deleteLinked: true, truncateCustomer360: true, truncateCube: true }), { deleteLinked: false, truncateCustomer360: true, truncateCube: true });
+assert.deepEqual(tableDeletePreferences({ truncateCustomer360: false, truncateCube: true }), { deleteLinked: false, truncateCustomer360: false, truncateCube: true });
+assert.deepEqual(tableDeletePreferences(), { deleteLinked: false, truncateCustomer360: false, truncateCube: false });
+for (const group of ["Behavioral", "Transactional", "Product", "Other"]) {
+  const pair = deleteTablePairNames("27o1 cdrm", new Date(2026, 9, 22, 22, 45), group);
+  assert.equal(pairedDeleteSourceName(pair.targetName), pair.sourceName);
+  assert.equal(pairedDeleteTargetName(pair.sourceName), pair.targetName);
+  assert.ok(pair.targetName.length <= 38);
+  assert.equal(deleteTableJobName(pair.targetName), `DEL_${group.toUpperCase()}_${pair.sourceName.slice(group.length + 1).toUpperCase()}`);
+}
+assert.notEqual(deleteTableJobName(deleteTablePairNames("test", new Date(2026, 9, 22, 22, 45), "Behavioral").targetName), deleteTableJobName(deleteTablePairNames("test", new Date(2026, 9, 22, 22, 45), "Profile").targetName));
 
 const table = { name: "Customer" };
 const fields = ["ID", "SourceID", "SourceCustomerID", "Email", "Region"].map((fieldId) => ({ fieldId }));
