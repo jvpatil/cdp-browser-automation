@@ -604,15 +604,37 @@ body { width:100%; min-width:0; }
 .delete-preference-options label:has(input:disabled){opacity:.5;cursor:not-allowed}
 .flow-step-top{cursor:pointer}.flow-step-top input,.flow-step-top button{cursor:pointer}.flow-step-title span[role="button"]:focus-visible{outline:2px solid var(--bronze);outline-offset:3px;border-radius:3px}
 .history-sync-toggle,.history-sync-confirm{margin-top:7px;padding:5px 8px;border:1px solid var(--bronze);border-radius:6px;color:var(--bronze);background:#14213d;font-size:10px;font-weight:800}.history-sync-toggle:disabled,.history-sync-confirm:disabled{opacity:.55}.history-sync-panel{margin-top:7px;padding:7px;border:1px solid var(--line);border-radius:6px;color:#dce6ef;background:#0c1d30;font-size:10px;line-height:1.45;overflow-wrap:anywhere}.history-sync-panel[hidden]{display:none}
-.delete-confirm-scope{display:flex;align-items:flex-start;gap:7px;color:#f3d7a8;font-size:10px;line-height:1.35;overflow-wrap:anywhere}.delete-panel .delete-confirm-scope input[type=checkbox]{width:15px;height:15px;min-width:15px;margin:0;padding:0;accent-color:var(--bronze)}
-#deleteTableScope[hidden],#deleteSegmentScope[hidden],#deleteSegmentPreview[hidden],#sheet-flowDelete .delete-preferences[hidden]{display:none!important}
+#deleteSegmentScope[hidden],#deleteSegmentPreview[hidden],#sheet-flowDelete .delete-preferences[hidden]{display:none!important}
 /* Each model choice has two rows; the shared .choice height only fits one. */
 #dataModelGroups .data-model-choice{height:auto;min-height:62px;padding:8px 10px;grid-template-rows:auto auto;row-gap:6px;align-content:center}
 #dataModelGroups .data-model-copy-label{margin-left:0;padding-left:22px;min-height:18px}
 /* A checked DELETE-copy option must not make an unselected model look selected. */
 #dataModelGroups .data-model-choice:not(:has(.data-model-type-label input:checked)){border-color:#3c5b78!important;background:var(--field)!important;box-shadow:none!important}
 </style>
-<header class="header" aria-label="Extension header"><div class="action-main"><span class="icon" aria-hidden="true">◉</span><span class="brand">CDP Browser Automation</span></div><span class="subtle">Active</span></header>
+<style>
+.log-toolbar{display:flex;align-items:center;gap:9px;margin:10px 1px 7px;color:var(--muted);font-size:10px}
+.log-toolbar button{border:1px solid var(--line);border-radius:6px;padding:5px 8px;color:var(--bronze);background:var(--field);font-size:10px;font-weight:800}
+.log-toolbar label{display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer}
+.log-toolbar input{width:13px;height:13px;margin:0;accent-color:var(--bronze)}
+.activity-log-output{max-height:min(52vh,460px);overflow-y:auto}
+.activity-log-group{margin:6px 0;border-color:var(--border-subtle);background:var(--bg-surface-elevated)}
+.activity-log-group summary{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 6px;padding:8px 8px 8px 20px;font-size:11px;list-style:none}
+.activity-log-group summary::-webkit-details-marker{display:none}
+.activity-log-group summary::before{content:"▸";position:absolute;left:7px;top:8px;color:var(--text-secondary)}
+.activity-log-group[open] summary::before{content:"▾"}
+.activity-log-group-name{min-width:0;overflow-wrap:anywhere;color:var(--text-primary)}
+.activity-log-count{color:var(--text-secondary);font-size:9px;font-weight:600;white-space:nowrap}
+.activity-log-group-result{grid-column:1/-1;color:var(--text-secondary);font-size:10px;font-weight:500;line-height:1.35;overflow-wrap:anywhere}
+.activity-log-group.warn .activity-log-group-result{color:var(--status-warning)}
+.activity-log-group.error .activity-log-group-result{color:var(--status-error)}
+.activity-log-group-body{padding:0 8px 8px}
+.activity-log-group-body > .activity-log-group{margin:8px 0 0 6px;border-color:#34445a;background:var(--bg-surface)}
+.activity-log-group-body > .activity-log-group summary{font-size:10px}
+.activity-log-line{grid-template-columns:55px 37px minmax(0,1fr);gap:5px}
+.activity-log-line time{font-variant-numeric:tabular-nums}
+.activity-log-level{font-size:7px}
+</style>
+<header class="header" aria-label="Extension header"><div class="action-main"><span class="icon" aria-hidden="true">◉</span><span class="brand">CDP Browser Automation</span></div></header>
 <nav class="tabs" aria-label="Popup views"><button type="button" data-view="flow" aria-selected="true">Workflow</button><button type="button" data-view="activity" aria-selected="false">Activity</button><button type="button" data-view="fusion" aria-selected="false">Fusion User</button></nav>
 <section class="context workflow-context" aria-label="Workflow environment and defaults"><div class="configuration-grid"><div class="configuration-control"><div class="configuration-label-row"><label class="configuration-label" for="select-primary-object">TARGET OBJECT</label><button type="button" id="btn-refresh-tables" title="Refresh CDP tables &amp; metadata" aria-label="Refresh CDP tables &amp; metadata">Refresh</button></div><select id="select-primary-object" aria-label="Target object"><option value="static:customer">Customer</option></select></div><div class="configuration-control"><div class="configuration-label-row"><label class="configuration-label" for="select-template-source">TEMPLATE</label><button type="button" id="btn-manage-templates" title="Manage CSV templates" aria-label="Manage CSV templates">Manage</button></div><select id="select-template-source" aria-label="Template source"><option value="">Storage preset</option></select></div></div><div class="environment-strip"><div class="purpose-field"><label for="connectionPurpose">PURPOSE *</label><input id="connectionPurpose" maxlength="28" placeholder="Required" aria-label="Connection purpose" required></div><div class="schedule-field"><span>SCHEDULE</span><div class="scheduler-options" id="toggle-scheduler-mode" aria-label="Scheduler experience"><button type="button" id="tenantSchedulerLegacy" aria-pressed="false">Legacy</button><button type="button" id="tenantSchedulerNew" aria-pressed="true">New</button></div></div></div><div id="workingSetHint" class="hint" role="alert" hidden></div><div id="templateSummary" class="hint" hidden></div><div id="tenantSchedulerHint" class="hint" hidden></div></section>
 <main>
@@ -646,7 +668,7 @@ body { width:100%; min-width:0; }
 <article class="flow-step" data-extra-step="verify"><div class="flow-step-top"><span class="flow-step-icon" aria-hidden="true">✓</span><label class="flow-step-title" for="flow-verify"><input id="flow-verify" type="checkbox"><span>Verify Published</span></label></div></article></div></div>
 <div id="flowLaunchStatus" class="flow-launch-status" role="status" aria-live="polite" hidden></div><button class="run" type="button" id="runCustomFlowBtn">▶ Run workflow</button></section>
 
-<section class="view" id="view-activity" hidden><div class="section-title">Active run</div><div class="status-card"><span class="status-dot idle" id="statusDot"></span><span id="status" role="status" aria-live="polite">No automation running</span><button class="stop" id="stopE2EBtn" hidden>■ Stop</button></div><div class="activity-tabs" role="tablist" aria-label="Activity details"><button type="button" data-activity-section="runs" aria-selected="true">Runs</button><button type="button" data-activity-section="logs" aria-selected="false">Logs</button></div><div id="activityRunsPanel"><div class="section-title">Recent runs</div><div id="runHistory" class="hint">No completed runs yet.</div></div><div id="activityLogsPanel" hidden><div class="section-title">Run log</div><div id="activityLogs" class="activity-logs">Choose View log from a recent run.</div></div></section>
+<section class="view" id="view-activity" hidden><div class="section-title">Active run</div><div class="status-card"><span class="status-dot idle" id="statusDot"></span><span id="status" role="status" aria-live="polite">No automation running</span><button class="back" type="button" id="refreshActivityBtn" title="Refresh extension run state">Refresh</button><button class="stop" id="stopE2EBtn" hidden>■ Stop</button></div><div class="activity-tabs" role="tablist" aria-label="Activity details"><button type="button" data-activity-section="runs" aria-selected="true">Runs</button><button type="button" data-activity-section="logs" aria-selected="false">Logs</button></div><div id="activityRunsPanel"><div class="section-title">Recent runs</div><div id="runHistory" class="hint">No completed runs yet.</div></div><div id="activityLogsPanel" hidden><div class="log-toolbar"><button type="button" id="showLiveLogBtn">● Live</button><label><input type="checkbox" id="logIssuesOnly"> Issues only</label><label><input type="checkbox" id="logAutoFollow" checked> Follow</label></div><div id="activityLogs" class="activity-logs">Choose View log from a recent run.</div></div></section>
 <section class="view" id="view-fusion" aria-label="Fusion user" hidden></section>
 
 <section class="sheet" id="sheet-responsys" hidden><div class="sheet-head"><strong>Responsys Import</strong><button class="back" data-close-sheet>Back</button></div><div class="sheet-body"><div class="scheduler" data-scheduler="responsys"></div><div class="preset-row" data-preset-row="responsys"></div><button class="run" id="runResponsysBtn">▶ Run Responsys Import</button></div></section>
@@ -670,7 +692,6 @@ body { width:100%; min-width:0; }
       <div id="deleteConditions" class="delete-conditions"></div>
       <button type="button" id="deleteAddCondition" class="clear-choice delete-add-condition">+ Add condition</button>
     </div>
-    <div id="deleteTableScope" class="delete-report-preview" hidden><label class="delete-confirm-scope"><input id="deleteConfirmWholeTable" type="checkbox"><span id="deleteConfirmWholeTableLabel">I understand this deletes every record in the selected table</span></label></div>
     <div class="delete-preferences" role="group" aria-label="Additional delete preferences">
       <strong>Additional preferences</strong>
       <div class="delete-preference-options">

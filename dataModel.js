@@ -30,6 +30,13 @@
     await sleep(300);
   }
 
+  async function clickOnce(element) {
+    if (!element) throw new Error("A required Data Model control is unavailable.");
+    element.scrollIntoView({ block: "center", inline: "center" });
+    element.click();
+    await sleep(300);
+  }
+
   function groupTab(group) {
     return [...document.querySelectorAll("oj-tab-bar a, oj-tab-bar button, [role=tab], a, button")]
       .find((element) => visible(element) && normal(text(element)) === normal(group));
@@ -52,6 +59,45 @@
     }) || null;
   }
 
+  async function findObjectInList(objectName) {
+    if (objectTab(objectName)) return true;
+    const list = document.getElementById("data-object-navigation-list");
+    let scroller = list;
+    while (scroller && scroller !== document.body) {
+      if (scroller.clientHeight > 0 && scroller.scrollHeight > scroller.clientHeight + 8) break;
+      scroller = scroller.parentElement;
+    }
+    if (!scroller || scroller === document.body) return false;
+    scroller.scrollTop = 0;
+    const deadline = Date.now() + 60000;
+    let bottomSignature = "";
+    let bottomSince = 0;
+    while (Date.now() < deadline) {
+      assertActive();
+      await sleep(250);
+      if (objectTab(objectName)) return true;
+      const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      if (scroller.scrollTop < maxScroll - 2) {
+        bottomSince = 0;
+        scroller.scrollTop = Math.min(maxScroll, scroller.scrollTop + Math.max(100, scroller.clientHeight * 0.8));
+        continue;
+      }
+      // A virtualized list can fetch the next page at the bottom. Consider
+      // the end reached only when both its extent and rendered rows stay
+      // unchanged long enough for that fetch to finish.
+      const rendered = [...list.querySelectorAll("[role=tab] h4")]
+        .map((heading) => heading.getAttribute("title") || text(heading));
+      const signature = `${maxScroll}|${rendered.join("|")}`;
+      if (signature !== bottomSignature) {
+        bottomSignature = signature;
+        bottomSince = Date.now();
+      } else if (Date.now() - bottomSince >= 2000) {
+        break;
+      }
+    }
+    return Boolean(objectTab(objectName));
+  }
+
   function addAttributeControl() {
     const control = document.getElementById("attribute-plus-icon");
     return visible(control) ? control : null;
@@ -65,7 +111,7 @@
   }
 
   function dataObjectSearchInput() {
-    return document.querySelector("#cd-do-search input[placeholder='Enter Keyword']") || null;
+    return document.getElementById("search-input-text|input") || null;
   }
 
   function dataObjectSearchToggle() {
@@ -82,6 +128,10 @@
     return document.querySelector("#cd-do-search .search-box-container")?.getAttribute("aria-pressed") === "true";
   }
 
+  function dataObjectSearchOpen() {
+    return dataObjectSearchExpanded() || visible(dataObjectSearchInput());
+  }
+
   async function selectGroup(group) {
     const tab = await waitFor(() => groupTab(group), `${group} tab`);
     // Clicking the already-selected JET tab can re-render the object list and
@@ -92,9 +142,9 @@
   }
 
   async function closeDataObjectSearch() {
-    if (!dataObjectSearchExpanded()) return;
-    await click(await waitFor(dataObjectSearchDone, "Data Model object search Done control", 10000));
-    await waitFor(() => !dataObjectSearchExpanded() ? true : null,
+    if (!dataObjectSearchOpen()) return;
+    await click(await waitFor(dataObjectSearchDone, "Data Model object search close control", 10000));
+    await waitFor(() => !dataObjectSearchOpen() ? true : null,
       "Data Model object search to close", 10000);
   }
 
@@ -225,16 +275,48 @@
   // live DOM until its icon is opened, and filtering happens on a committed
   // Enter key rather than on a plain value assignment. Background supplies
   // that trusted key sequence after this prepares the control.
-  window.cdpDataModelPrepareObjectSearch = async (group) => {
+  window.cdpDataModelPrepareObjectSearch = async (group, objectName = "") => {
     if (!GROUPS.includes(group)) throw new Error(`Unsupported Data Model group: ${group}.`);
     await selectGroup(group);
+    // A just-created object is normally already in the navigation list. Use
+    // that exact row instead of opening JET search: its async search commit
+    // can reset the query and select the first object (Account) mid-run.
+    // Walk a virtualized/continuously loaded list before using search, so
+    // this also works when the target is beyond the first rendered page.
+    await closeDataObjectSearch();
+    if (objectName) {
+      if (await findObjectInList(objectName)) return { mode: "direct" };
+    }
     let search = dataObjectSearchInput();
     if (!visible(search)) {
       await click(await waitFor(dataObjectSearchToggle, "Data Model object search icon"));
-      search = await waitFor(dataObjectSearchInput, "Data Model object search");
+      search = await waitFor(() => dataObjectSearchExpanded() && visible(dataObjectSearchInput())
+        ? dataObjectSearchInput() : null, "expanded Data Model object search");
     }
     if (!visible(search) || search.disabled) throw new Error("Data Model object search is unavailable.");
-    return { inputId: search.id };
+    return { mode: "search", inputId: search.id };
+  };
+
+  window.cdpDataModelWaitForObjectSearchResult = async (objectName) => {
+    let matchedSince = 0;
+    await waitFor(() => {
+      const query = dataObjectSearchInput()?.value?.trim();
+      const names = [...document.querySelectorAll("#data-object-navigation-list [role=tab] h4")]
+        .filter(visible).map((heading) => heading.getAttribute("title") || text(heading));
+      const matched = dataObjectSearchOpen() && normal(query) === normal(objectName) &&
+        names.length === 1 && normal(names[0]) === normal(objectName);
+      if (!matched) { matchedSince = 0; return null; }
+      if (!matchedSince) matchedSince = Date.now();
+      return Date.now() - matchedSince >= 500 ? true : null;
+    }, `Data Model search to filter to ${objectName}`, 20000);
+    return { found: true };
+  };
+
+  window.cdpDataModelFinishObjectSearch = async () => {
+    // Keep the search untouched while attributes are being added. Only close
+    // it once that object is complete; the next create step owns + recovery.
+    await closeDataObjectSearch();
+    return { searchClosed: true };
   };
 
   window.cdpDataModelValidateAndAdvance = async (group, expectedResourceName = "") => {
@@ -291,25 +373,51 @@
     return { saved: true };
   };
 
-  window.cdpDataModelOpenAttribute = async (group, objectName, groupAlreadySelected = false) => {
+  window.cdpDataModelOpenAttribute = async (group, objectName, groupAlreadySelected = false, targetConfirmed = false) => {
     if (!GROUPS.includes(group)) throw new Error(`Unsupported Data Model group: ${group}.`);
     if (!groupAlreadySelected) await click(await waitFor(() => groupTab(group), `${group} tab`));
     if (!objectTab(objectName)) {
       await waitFor(() => objectTab(objectName), `${objectName} search result`);
     }
-    await click(await waitFor(() => objectTab(objectName), `${objectName} data object`));
-    // A relationship leaves the object on Details. Selecting the next object
-    // does not reset that tab, so explicitly return to Attributes every time.
-    await click(await waitFor(attributesTab, "Data Model Attributes tab"));
-    // CDP loads the selected object's attributes panel asynchronously.
-    // Let the panel settle before looking for its Create-attribute control.
-    await click(await waitFor(addAttributeControl, "Create attribute control"));
+    const object = await waitFor(() => objectTab(objectName), `${objectName} data object`);
+    if (!targetConfirmed || object.getAttribute("aria-selected") !== "true") {
+      // A single click is enough for the navigation item. The generic helper
+      // dispatches a mouse sequence and then click(), which can trigger this
+      // JET navigation handler twice and reset its active search.
+      await clickOnce(object);
+    }
+    await waitFor(() => objectTab(objectName)?.getAttribute("aria-selected") === "true" ? true : null,
+      `${objectName} to become the selected data object`, 10000);
+    // A relationship leaves the object on Details. Explicitly return to
+    // Attributes; do not trust a stale tab selection from the prior object.
+    const attributes = await waitFor(attributesTab, "Data Model Attributes tab");
+    if (!targetConfirmed || attributes.getAttribute("aria-selected") !== "true") await clickOnce(attributes);
+    // Oracle can highlight the new row while its drawer still binds to the
+    // previous object (often Account). Validate the drawer itself, and retry
+    // once after closing the stale drawer. Never enter a field on that object.
+    let correctDrawer = false;
+    for (let attempt = 0; attempt < 2 && !correctDrawer; attempt++) {
+      await clickOnce(await waitFor(addAttributeControl, "Create attribute control"));
+      const name = await waitFor(() => {
+        const input = document.getElementById("attrNameInput|input");
+        return visible(input) && !hasVisibleAttributeLoading() ? input : null;
+      }, "Create attribute drawer", 15000);
+      const drawer = attributeDrawer();
+      const selectedTitle = text(drawer?.querySelector?.(".data-object-title"));
+      correctDrawer = normal(selectedTitle) === normal(`Data object : ${objectName}`);
+      if (correctDrawer) break;
+      await window.cdpDataModelCancelAttribute();
+      if (attempt === 1) throw new Error(`Create attribute opened for ${selectedTitle || "another object"}, not ${objectName}. No field was entered.`);
+      await clickOnce(await waitFor(() => objectTab(objectName), `${objectName} data object`));
+      await waitFor(() => objectTab(objectName)?.getAttribute("aria-selected") === "true" ? true : null,
+        `${objectName} to become the selected data object`, 10000);
+      await clickOnce(await waitFor(attributesTab, "Data Model Attributes tab"));
+    }
     await waitFor(() => {
       const name = document.getElementById("attrNameInput|input");
       const attributeId = document.getElementById("attrIdInput|input");
       const type = document.getElementById("attrDataTypeInput|input");
-      const cancel = namedButton("Cancel");
-      return visible(name) && visible(attributeId) && visible(type) && cancel && !cancel.disabled && !hasVisibleAttributeLoading() ? name : null;
+      return visible(name) && visible(attributeId) && visible(type) && !hasVisibleAttributeLoading() ? name : null;
     }, "fully rendered Create attribute drawer");
     await waitForAttributeDrawerStable();
     return { opened: true };
@@ -422,7 +530,7 @@ window.cdpDataModelSaveAttribute = async () => {
     return control?.isConnected && visible(control) && target && !target.disabled ? control : null;
   }
 
-  window.cdpDataModelCreateRelationship = async (group, objectName, parentName) => {
+  window.cdpDataModelPrepareRelationship = async (group, objectName, parentName) => {
     if (!GROUPS.includes(group)) throw new Error(`Unsupported Data Model group: ${group}.`);
     if (!String(objectName || "").trim() || !String(parentName || "").trim()) {
       throw new Error("Relationship requires both a child object and a parent object.");
@@ -431,6 +539,8 @@ window.cdpDataModelSaveAttribute = async () => {
     // object’s group first; otherwise only the last group’s object list exists.
     await click(await waitFor(() => groupTab(group), `${group} tab`));
     await click(await waitFor(() => objectTab(objectName), `${objectName} data object`));
+    await waitFor(() => objectTab(objectName)?.getAttribute("aria-selected") === "true" ? true : null,
+      `${objectName} to become the selected relationship child`, 10000);
     // The add-relationship affordance is only available in Details.  Using a
     // text-only "Create relationship" lookup could target a stale control on
     // the Attributes view and report a false save.
@@ -459,15 +569,21 @@ window.cdpDataModelSaveAttribute = async () => {
       const input = dialog.querySelector("#oj-combobox-input-selectDataObjectTwo");
       return visible(input) && !input.disabled ? input : null;
     }, "parent object selector");
-    await setInputValue(picker, parentName);
-    const option = await waitFor(() => [...document.querySelectorAll("[role=option], oj-option, li")]
+    return { inputId: picker.id };
+  };
+
+  window.cdpDataModelCompleteRelationship = async (objectName, parentName) => {
+    const dialog = await waitForRelationshipDialog();
+    const picker = dialog.querySelector("#oj-combobox-input-selectDataObjectTwo");
+    if (!visible(picker)) throw new Error("Relationship parent selector is no longer available.");
+    const option = await waitFor(() => [...document.querySelectorAll("#oj-listbox-results-selectDataObjectTwo [role=option]")]
       .filter(visible)
-      .find((element) => normal(text(element)) === normal(parentName)) || null,
+      .find((element) => normal(element.getAttribute("aria-label") || text(element)) === normal(parentName)) || null,
     `parent object ${parentName}`);
-    await click(option.closest("[role=option], li, oj-option") || option);
+    await click(option);
     await waitFor(() => {
       const next = relationshipButton(dialog, "Next");
-      return next && !next.disabled ? next : null;
+      return normal(picker.value) === normal(parentName) && next && !next.disabled ? next : null;
     }, "relationship Next button");
     await click(relationshipButton(dialog, "Next"));
     const addToObject = await waitFor(() => {

@@ -39,6 +39,13 @@ test("Import job names use short, distinct object scopes", () => {
   assert.equal(name([original], ["Customer"]), "IMP_MULTI_PreJDK_23OCT_1939");
 });
 
+test("Responsys Import job uses RESPONSYS instead of OBJECT", () => {
+  assert.equal(context.testJobName({
+    kind: "import", variant: "responsys", tableIds: [], customTables: [],
+    template, connectionSequence: sequence
+  }), "IMP_RESPONSYS_PreJDK_23OCT_1939");
+});
+
 test("purpose separators are sanitized without changing letter case", () => {
   const value = { ...template, connectionPurpose: "Pre JDK-27D" };
   assert.equal(context.testConnectionRuntime(value, "source", sequence).name, "OOS_Pre_JDK_27D_23OCT_1939");

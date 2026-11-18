@@ -21,12 +21,12 @@ let advancedStepsExpanded = false;
 let pendingFlowConfigurationStep = "";
 const QUICK_VISIBLE_LIMIT = 6;
 const DEFAULT_FLOW = ["dataModel", "dataModelAttributes", "dataViewer", "source", "destination", "export", "import", "delete", "responsys", "publish", "verify"];
-const DEFAULT_DELETE_SETTINGS = Object.freeze({ mode: "segment", tableId: "Customer", autoScope: true, confirmedTableId: "", sourceId: "CDP", destinationName: "", additionalPreferences: Object.freeze({ deleteLinked: true, truncateCustomer360: true, truncateCube: true }) });
+const DEFAULT_DELETE_SETTINGS = Object.freeze({ mode: "segment", tableId: "Customer", autoScope: true, sourceId: "CDP", destinationName: "", additionalPreferences: Object.freeze({ deleteLinked: true, truncateCustomer360: true, truncateCube: true }) });
 function normalizeDeleteSettings(saved) {
   const value = { ...DEFAULT_DELETE_SETTINGS, ...(saved || {}) };
   value.mode = value.mode === "table" ? "table" : "segment";
   value.autoScope = saved?.autoScope !== false;
-  value.confirmedTableId = String(saved?.confirmedTableId || "");
+  delete value.confirmedTableId;
   value.additionalPreferences = Object.fromEntries(Object.keys(DEFAULT_DELETE_SETTINGS.additionalPreferences).map((key) => [key, saved?.additionalPreferences?.[key] === undefined || saved.additionalPreferences[key] === true]));
   if (value.mode === "table") value.additionalPreferences.deleteLinked = false;
   value.conditions = Array.isArray(saved?.conditions)
@@ -427,7 +427,6 @@ function applyAutomaticDeleteScope(target = selectedWorkingSet()) {
   if (state.deleteSettings.mode === next.mode && state.deleteSettings.tableId === next.tableId) return;
   state.deleteSettings.mode = next.mode;
   state.deleteSettings.tableId = next.tableId;
-  state.deleteSettings.confirmedTableId = "";
   state.deleteSettings.additionalPreferences = next.mode === "table"
     ? { deleteLinked: false, truncateCustomer360: true, truncateCube: true }
     : { deleteLinked: true, truncateCustomer360: true, truncateCube: true };
@@ -443,7 +442,6 @@ function applyWorkingSet(table) {
   state.exportPayloads = [table.label];
   state.deleteSettings.autoScope = true;
   applyAutomaticDeleteScope(table);
-  state.deleteSettings.confirmedTableId = "";
   if (state.deleteSettings.mode === "table") state.deleteSettings.additionalPreferences = { deleteLinked: false, truncateCustomer360: true, truncateCube: true };
   syncImportSelectionsFromExport();
   persistDraft();
@@ -606,7 +604,7 @@ function validateDataModelColumnsForRun(columns, group) {
     if (names.has(key)) throw new Error(`${group}: ${column.name} is duplicated.`);
     if (!allowed.has(column.dataType)) throw new Error(`${group}: ${column.name} uses unsupported type ${column.dataType}.`);
     const codedType = {
-      AS: "array - string", I64: "bigint", B: "boolean", DT: "date", N18P4: "decimal",
+      AS: "array - string", I64: "bigint", B: "boolean", DT: "date", DEC: "decimal", N18P4: "decimal",
       F64: "double", F32: "float", I32: "int", I16: "smallint", TXT: "text", TS: "timestamp", I8: "tinyint"
     }[column.name.match(/_([A-Z0-9]+)$/)?.[1]];
     if (codedType && column.dataType !== codedType) throw new Error(`${group}: ${column.name} must use ${codedType}.`);
@@ -691,7 +689,10 @@ function snapshotSummary(snapshot) {
   return [snapshot.origin, template ? `Template: ${template}` : "", snapshot.purpose ? `Purpose: ${snapshot.purpose}` : "", ...connections, ...jobs].filter(Boolean).join(" · ");
 }
 function renderRunHistory(history = []) {
-  const entries = Array.isArray(history) ? history.slice(0, 5) : [];
+  const entries = Array.isArray(history) ? history.slice(0, 10) : [];
+  if (!selectedLogRun && activitySection === "logs" && activeLogRun?.clientRunId) {
+    selectedLogRun = entries.find((entry) => entry.clientRunId === activeLogRun.clientRunId) || null;
+  }
   if (selectedLogRun?.snapshot?.runId) selectedLogRun = entries.find((entry) => entry.snapshot?.runId === selectedLogRun.snapshot.runId) || null;
   const activityCount = document.getElementById("activityCount");
   if (activityCount) { activityCount.hidden = !entries.length; activityCount.textContent = String(entries.length); }
@@ -703,7 +704,7 @@ function renderRunHistory(history = []) {
     const summary = document.createElement("span"); summary.textContent = entry.summary || "Automation run";
     const outcomeValue = entry.outcome || "completed";
     const outcome = document.createElement("span"); outcome.className = `outcome ${outcomeValue}`; outcome.textContent = outcomeValue.charAt(0).toUpperCase() + outcomeValue.slice(1);
-    const detail = document.createElement("div"); detail.className = "detail"; detail.textContent = `${new Date(entry.finishedAt || entry.startedAt || Date.now()).toLocaleString()} · ${entry.detail || entry.details || ""}${audit ? ` · ${audit}` : ""}`;
+    const detail = document.createElement("div"); detail.className = "detail"; detail.textContent = `${new Date(entry.finishedAt || entry.startedAt || Date.now()).toLocaleString()}${entry.tenantHost || entry.snapshot?.tenantHost ? ` · ${entry.tenantHost || entry.snapshot.tenantHost}` : ""} · ${entry.detail || entry.details || ""}${audit ? ` · ${audit}` : ""}`;
     const logButton = document.createElement("button"); logButton.type = "button"; logButton.className = "history-log-toggle"; logButton.textContent = "View log";
     logButton.addEventListener("click", () => { selectedLogRun = entry; showActivitySection("logs"); });
     top.append(summary, outcome); item.append(top, detail, logButton);
@@ -749,44 +750,145 @@ function renderRunHistory(history = []) {
 }
 function renderActivityLogs() {
   const logRun = selectedLogRun || activeLogRun;
-  if (!logRun) { activityLogsEl.textContent = "Choose View log from a recent run."; return; }
-  const logs = Array.isArray(logRun.logs) ? logRun.logs : [];
-  const title = document.createElement("div"); title.className = "log-run-title"; title.textContent = `${logRun === activeLogRun ? "Active — " : ""}${logRun.summary || "Automation run"}`;
-  if (!logs.length) { const empty = document.createElement("div"); empty.textContent = logRun === activeLogRun ? "Waiting for the first run event." : "No detailed log was captured for this earlier run."; activityLogsEl.replaceChildren(title, empty); return; }
-  const output = document.createElement("div"); output.className = "activity-log-output";
-  const createLogLine = (event) => {
-    const level = /error|failed/i.test(event.level || "") ? "error" : /warn|stopped/i.test(event.level || "") ? "warn" : "info";
-    const timestamp = new Intl.DateTimeFormat(undefined, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
-      .format(new Date(event.at || logRun.startedAt || Date.now()));
-    const line = document.createElement("div"); line.className = `activity-log-line ${level}`;
-    const time = document.createElement("time"); time.textContent = timestamp;
-    const severity = document.createElement("span"); severity.className = "activity-log-level"; severity.textContent = level === "warn" ? "WARN" : level === "error" ? "ERROR" : "INFO";
-    const detail = document.createElement("span"); detail.className = "activity-log-detail"; detail.textContent = event.action ? `${event.action} — ${event.message}` : event.message;
-    line.append(time, severity, detail); return line;
+  const liveButton = document.getElementById("showLiveLogBtn");
+  liveButton.textContent = `${activeLogRun ? "●" : "○"} Live`;
+  liveButton.setAttribute("aria-pressed", String(Boolean(logRun && logRun === activeLogRun)));
+  if (!logRun) { activityLogsEl.textContent = "No active run. Choose View log from a recent run."; return; }
+  const allLogs = Array.isArray(logRun.logs) ? logRun.logs : [];
+  const issueLevel = (event) => /error|failed|warn|stopped|interrupted/i.test(event.level || "");
+  const issuesOnly = document.getElementById("logIssuesOnly").checked;
+  const runKey = String(logRun.clientRunId || logRun.snapshot?.runId || logRun.startedAt || "current");
+  const openGroups = new Set([...activityLogsEl.querySelectorAll("details.activity-log-group[open]")].map((item) => item.dataset.logGroupKey));
+  const features = new Map();
+  const route = (event) => {
+    const group = String(event.group || "Run").trim() || "Run";
+    if (/^(Run|Workflow)$/.test(group)) return null;
+    if (event.parentGroup) return { feature: event.parentGroup, child: group };
+    if (/ · Record \d+$/.test(group)) return { feature: "Data Viewer", child: group };
+    if (/^Data Viewer(?: Record)?$/.test(group)) return { feature: "Data Viewer" };
+    if (/^API Load/.test(group)) return { feature: "API Load" };
+    if (/^Scheduler ·/.test(group)) {
+      if (/Responsys/i.test(group)) return { feature: "Responsys", child: "Schedule and notify" };
+      if (/Export/i.test(group)) return { feature: "Export", child: "Schedule and notify" };
+      if (/Import/i.test(group)) return { feature: "Import", child: "Schedule and notify" };
+      if (/Delete/i.test(group)) return { feature: "Delete", child: "Schedule and notify" };
+    }
+    if (/^Import ·/.test(group)) return { feature: "Import", child: `Job · ${group.slice("Import · ".length)}` };
+    if (/^Export ·/.test(group)) return { feature: "Export", child: `Job · ${group.slice("Export · ".length)}` };
+    if (/^(?:Create Import Job|Import Job|Import)$/.test(group)) return { feature: "Import", child: group === "Import Job" ? "Save confirmation" : "" };
+    if (/^(?:Create Export Job|Export Job|Export)$/.test(group)) return { feature: "Export", child: group === "Export Job" ? "Save confirmation" : "" };
+    if (/^Create Source ·/.test(group)) return { feature: "Source", child: `Connection · ${group.slice("Create Source · ".length)}` };
+    if (/^Create Destination ·/.test(group)) return { feature: "Destination", child: `Connection · ${group.slice("Create Destination · ".length)}` };
+    if (/^(?:Create Source|Create Destination)$/.test(group)) return { feature: group.replace("Create ", "") };
+    if (/^(?:Source|Destination)$/.test(group)) return { feature: group };
+    if (/^Data Model ·/.test(group)) return { feature: "Data Models", child: `Object · ${group.slice("Data Model · ".length)}` };
+    if (/^Relationship ·/.test(group)) return { feature: "Data Models", child: group };
+    if (/^Attributes ·/.test(group)) return { feature: "Attributes", child: group };
+    if (group === "Prepare Delete") return { feature: "Delete", child: "Delete job" };
+    if (/^(?:Prepare Segment and Delete Job|Delete Job|Delete)$/.test(group)) return { feature: "Delete", child: group === "Delete Job" ? "Save confirmation" : "" };
+    if (/^Publish/.test(group)) return { feature: "Publish" };
+    if (/^(?:Verify|Verification)/.test(group)) return { feature: "Verify" };
+    if (/Fusion User/.test(group)) return { feature: "Fusion User" };
+    if (/Responsys/.test(group)) return { feature: "Responsys" };
+    return { feature: group };
   };
-  const ungrouped = logs.filter((event) => !event.group);
-  ungrouped.forEach((event) => output.append(createLogLine(event)));
-  const tableGroups = new Map();
-  logs.filter((event) => event.group).forEach((event) => {
-    const [table = "Details", record = "Details"] = String(event.group).split(" · ");
-    const records = tableGroups.get(table) || new Map();
-    const eventsForRecord = records.get(record) || [];
-    eventsForRecord.push(event); records.set(record, eventsForRecord); tableGroups.set(table, records);
+  const isNoise = (event) => /^Running:/i.test(event.message || "")
+    || /^Schedule and Notify controls are ready\.$/i.test(event.message || "");
+  let lastFeature = "";
+  for (const event of allLogs) {
+    let destination = route(event);
+    if (!destination) {
+      if (!issueLevel(event)) continue;
+      destination = { feature: lastFeature || "Issues" };
+    }
+    const { feature, child } = destination;
+    lastFeature = feature;
+    if (!features.has(feature)) features.set(feature, { events: [], children: new Map() });
+    if (isNoise(event)) continue;
+    const bucket = features.get(feature);
+    if (child) {
+      if (!bucket.children.has(child)) bucket.children.set(child, []);
+      bucket.children.get(child).push(event);
+    } else bucket.events.push(event);
+  }
+  const stageOrder = ["Data Models", "Attributes", "Data Viewer", "API Load", "Source", "Destination", "Export", "Import", "Delete", "Responsys", "Publish", "Verify", "Fusion User"];
+  const orderedFeatures = [...features.keys()].sort((left, right) => {
+    const leftIndex = stageOrder.indexOf(left);
+    const rightIndex = stageOrder.indexOf(right);
+    return (leftIndex < 0 ? stageOrder.length : leftIndex) - (rightIndex < 0 ? stageOrder.length : rightIndex);
   });
-  tableGroups.forEach((records, table) => {
-    const tableDetails = document.createElement("details"); tableDetails.className = "activity-log-group";
-    const tableSummary = document.createElement("summary"); tableSummary.textContent = table;
-    const tableBody = document.createElement("div"); tableBody.className = "activity-log-group-body";
-    records.forEach((events, record) => {
-      const recordDetails = document.createElement("details"); recordDetails.className = "activity-log-record";
-      const recordSummary = document.createElement("summary"); recordSummary.textContent = record;
-      const recordBody = document.createElement("div"); recordBody.className = "activity-log-record-body";
-      events.forEach((event) => recordBody.append(createLogLine(event)));
-      recordDetails.append(recordSummary, recordBody); tableBody.append(recordDetails);
-    });
-    tableDetails.append(tableSummary, tableBody); output.append(tableDetails);
-  });
+  const visibleEventCount = [...features.values()].reduce((total, bucket) => total + bucket.events.length
+    + [...bucket.children.values()].reduce((childTotal, events) => childTotal + events.length, 0), 0);
+  const shownCount = issuesOnly ? [...features.values()].reduce((total, bucket) => total
+    + bucket.events.filter(issueLevel).length
+    + [...bucket.children.values()].reduce((childTotal, events) => childTotal + events.filter(issueLevel).length, 0), 0) : visibleEventCount;
+  const title = document.createElement("div"); title.className = "log-run-title";
+  title.textContent = `${logRun === activeLogRun ? "Live" : "Saved"} — ${logRun.summary || "Automation run"} · ${shownCount} ${shownCount === 1 ? "event" : "events"}`;
+  const output = document.createElement("div"); output.className = "activity-log-output"; output.setAttribute("aria-label", "Events grouped by workflow feature");
+  const previousScroll = activityLogsEl.querySelector(".activity-log-output")?.scrollTop || 0;
+  const highlightFor = (events) => [...events].reverse().find((event) => /error|failed/i.test(event.level || ""))
+    || events.find((event) => event.action === "Summary")
+    || [...events].reverse().find((event) => /saved|completed|created/i.test(event.message || ""))
+    || events.find((event) => event.action === "Plan")
+    || events.at(-1);
+  const eventLine = (event) => {
+    const level = /error|failed/i.test(event.level || "") ? "error" : issueLevel(event) ? "warn" : "info";
+    const line = document.createElement("div"); line.className = `activity-log-line ${level}`;
+    const time = document.createElement("time"); time.textContent = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(event.at || logRun.startedAt || Date.now()));
+    const severity = document.createElement("span"); severity.className = "activity-log-level"; severity.textContent = level === "warn" ? "WARN" : level === "error" ? "ERROR" : "INFO";
+    const detail = document.createElement("span"); detail.className = "activity-log-detail";
+    detail.textContent = `${event.action && event.action !== "Summary" ? `${event.action} — ` : ""}${event.message || ""}`;
+    line.append(time, severity, detail);
+    return line;
+  };
+  const card = (name, events, children = [], { key = name, countText = "", resultText = "" } = {}) => {
+    const allEvents = [...events, ...children.flatMap(([, childEvents]) => childEvents)];
+    const error = allEvents.some((event) => /error|failed/i.test(event.level || ""));
+    const warning = allEvents.some(issueLevel);
+    const details = document.createElement("details"); details.className = `activity-log-group ${error ? "error" : warning ? "warn" : "info"}`;
+    details.dataset.logGroupKey = `${runKey}:${key}`;
+    details.open = openGroups.has(details.dataset.logGroupKey);
+    const summary = document.createElement("summary");
+    const heading = document.createElement("span"); heading.className = "activity-log-group-name"; heading.textContent = name;
+    const count = document.createElement("span"); count.className = "activity-log-count"; count.textContent = countText;
+    const result = document.createElement("span"); result.className = "activity-log-group-result";
+    result.textContent = resultText || highlightFor(events)?.message || "";
+    summary.append(heading, count, result);
+    const body = document.createElement("div"); body.className = "activity-log-group-body";
+    const entries = issuesOnly ? events.filter(issueLevel) : events.filter((event) => event.action !== "Summary");
+    for (const event of entries) body.append(eventLine(event));
+    for (const [childName, childEvents] of children) {
+      const childSteps = childEvents.filter((event) => event.action !== "Summary").length;
+      body.append(card(childName, childEvents, [], { key: `${key}:${childName}`, countText: `${childSteps} ${childSteps === 1 ? "step" : "steps"}` }));
+    }
+    details.append(summary, body);
+    return details;
+  };
+  for (const name of orderedFeatures) {
+    const bucket = features.get(name);
+    const children = [...bucket.children].filter(([, events]) => !issuesOnly || events.some(issueLevel));
+    if (issuesOnly && !bucket.events.some(issueLevel) && !children.length) continue;
+    const tracked = name === "Data Viewer" ? children.length
+      : ["Import", "Export"].includes(name) ? children.filter(([section]) => section.startsWith("Job · ")).length || Number(children.some(([section]) => section === "Save confirmation"))
+        : name === "Delete" ? Number(children.some(([section]) => section === "Delete job"))
+          : ["Source", "Destination"].includes(name) ? children.filter(([section]) => section.startsWith("Connection · ")).length : 0;
+    const noun = name === "Data Viewer" ? "record" : ["Import", "Export", "Delete"].includes(name) ? "job" : "connection";
+    const countText = tracked ? `${tracked} ${noun}${tracked === 1 ? "" : "s"}` : "";
+    const saved = children.filter(([, events]) => events.some((event) => event.action === "Summary" && /^Saved\b/.test(event.message || ""))).length;
+    const failed = children.filter(([, events]) => events.some((event) => /error|failed/i.test(event.level || ""))).length;
+    const jobSection = children.find(([section]) => section.startsWith("Job · "))?.[0];
+    const connectionSection = children.find(([section]) => section.startsWith("Connection · "))?.[0];
+    const deleteJob = children.find(([section]) => section === "Delete job")?.[1]
+      ?.find((event) => /\bDEL_[A-Za-z0-9_]+/.test(event.message || ""))?.message.match(/\bDEL_[A-Za-z0-9_]+/)?.[0];
+    const featureResult = failed ? `${failed} failed` : name === "Data Viewer" ? `${saved} saved${tracked > saved ? ` · ${tracked - saved} other` : ""}`
+      : jobSection ? jobSection.slice("Job · ".length) : connectionSection ? connectionSection.slice("Connection · ".length)
+        : deleteJob || (name === "Publish" && logRun.outcome === "completed" ? "Completed" : highlightFor(children.flatMap(([, events]) => events))?.message || "");
+    output.append(card(name, bucket.events, children, { countText, resultText: featureResult }));
+  }
+  if (!output.children.length) output.textContent = issuesOnly ? "No warnings or errors in this run." : "Waiting for workflow actions.";
   activityLogsEl.replaceChildren(title, output);
+  if (logRun === activeLogRun && document.getElementById("logAutoFollow").checked) output.scrollTop = output.scrollHeight;
+  else output.scrollTop = previousScroll;
 }
 function showActivitySection(section) {
   activitySection = section;
@@ -1295,12 +1397,6 @@ function dataModelColumnEditor(group) {
     setSelect.value = "custom";
   };
   setLabel.append(setSelect); result.append(setLabel);
-  if (setSelect.value === "types") {
-    const precisionHint = document.createElement("div");
-    precisionHint.className = "option-hint";
-    precisionHint.textContent = "N18P4 is the QA decimal label; CDP confirms decimal type but may not expose precision/scale. Verify 18,4 before relying on that limit.";
-    result.append(precisionHint);
-  }
   const rows = columns.map((column, index) => {
     const row = document.createElement("div"); row.className = "data-model-column-row";
     const name = document.createElement("input"); name.type = "text"; name.placeholder = "Attribute name"; name.value = column.name || ""; name.setAttribute("aria-label", `${group} attribute name`);
@@ -1373,7 +1469,6 @@ function renderFlow() {
   document.getElementById("deleteSourceTableLabel").textContent = tableDelete ? "Published table" : "Physical table";
   document.getElementById("deleteSegmentScope").hidden = tableDelete;
   document.getElementById("deleteSegmentPreview").hidden = tableDelete;
-  document.getElementById("deleteTableScope").hidden = !tableDelete;
   const deleteTable = document.getElementById("deleteTableId");
   const choices = tableDelete
     ? DATA_VIEWER_TABLES.map((table) => table.id)
@@ -1381,9 +1476,6 @@ function renderFlow() {
   deleteTable.replaceChildren(...choices.map((name) => { const option = document.createElement("option"); option.value = name; option.textContent = DATA_VIEWER_TABLES.find((table) => table.id === name)?.label || name; return option; }));
   if (tableDelete) deleteTable.add(new Option("Select a published table", ""), 0);
   deleteTable.value = choices.includes(deletion.tableId) ? deletion.tableId : tableDelete ? "" : deletion.tableId || "Customer";
-  const deleteConfirmation = document.getElementById("deleteConfirmWholeTable");
-  deleteConfirmation.checked = Boolean(tableDelete && choices.includes(deletion.tableId) && deletion.confirmedTableId === deletion.tableId);
-  deleteConfirmation.disabled = !tableDelete || !choices.includes(deletion.tableId);
   document.getElementById("deleteDestinationName").value = deletion.destinationName || "";
   for (const [id, key] of [["deleteLinkedPreference", "deleteLinked"], ["deleteCustomer360Preference", "truncateCustomer360"], ["deleteCubePreference", "truncateCube"]]) {
     const control = document.getElementById(id);
@@ -1403,7 +1495,6 @@ function renderFlow() {
   const segmentDate = new Date();
   const segmentStamp = `${String(segmentDate.getDate()).padStart(2, "0")}${["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"][segmentDate.getMonth()]}_${String(segmentDate.getHours()).padStart(2, "0")}${String(segmentDate.getMinutes()).padStart(2, "0")}`;
   document.getElementById("deleteSegmentNamePreview").textContent = `SEGMENT_${segmentPurpose.slice(0, 128 - 8 - segmentStamp.length - 1)}_${segmentStamp}`;
-  document.getElementById("deleteConfirmWholeTableLabel").textContent = `I understand this deletes every record in the ${tableDelete && choices.includes(deletion.tableId) ? tableName : "selected"} table`;
   document.getElementById("deleteReportNamePreview").textContent = ["DELETE", fileCode, hostCode, purposeCode].filter(Boolean).join("_") + "_yyyy-MM-dd-HH-mm-ss-SSS_0.csv";
   document.getElementById("deleteSourceId").value = deletion.sourceId || "";
   const conditionPanel = document.getElementById("deleteConditions");
@@ -1424,7 +1515,7 @@ function renderFlow() {
     return row;
   }));
   const deleteScopeComplete = tableDelete
-    ? Boolean(choices.includes(deletion.tableId) && deletion.confirmedTableId === deletion.tableId)
+    ? Boolean(choices.includes(deletion.tableId))
     : Boolean(String(deletion.sourceId || "").trim() && deletion.conditions?.length && deletion.conditions.every((condition) => String(condition.field || "").trim() && String(condition.value || "").trim() && operators.some(([key]) => key === condition.operator)));
   document.getElementById("deleteReviewLegacy").hidden = !deletion.legacyScope;
   const advancedSteps = document.getElementById("flowAdvancedSteps");
@@ -1449,7 +1540,7 @@ function renderFlow() {
     : !state.connectionPurpose.trim() ? "Enter a Purpose before running the workflow."
     : steps.includes("delete") && deletion.legacyScope ? "Review the updated Delete filters for this saved flow."
     : tableDelete && steps.some((step) => step === "dataModel" || step === "dataModelAttributes") ? "Publish the DELETE table before preparing its Delete job."
-    : steps.includes("delete") && !deleteScopeComplete ? tableDelete ? "Select and confirm the full-table Delete target." : "Complete the Delete segment conditions."
+    : steps.includes("delete") && !deleteScopeComplete ? tableDelete ? "Select the full-table Delete target." : "Complete the Delete segment conditions."
     : transferSelected && !state.templateId ? "Select a transfer template."
       : steps.includes("import") && singleImportRouteError() ? singleImportRouteError()
       : steps.includes("import") && !selectedImportEntries().length ? "Select Import table(s) in Edit."
@@ -1494,7 +1585,26 @@ function renderAll() {
   const openDrawer = [...document.querySelectorAll(".sheet")].find((sheet) => !sheet.hidden);
   if (openDrawer) renderDrawerContext(openDrawer);
 }
-async function persistDraft() { await chrome.storage.local.set({ flowDraft: { templateId: state.templateId, workingSetKey: state.workingSetKey, importSettings: state.importSettings, importCustomSettings: state.importCustomSettings, importMappingMode: state.importMappingMode, syncImportWithExport: state.syncImportWithExport, transferRoutes: state.transferRoutes, singleImportTemplateId: state.singleImportTemplateId, deleteSettings: state.deleteSettings, exportPayloadName: state.exportPayloadName, exportPayloads: selectedExportPayloads(), dataViewerSettings: state.dataViewerSettings, dataViewerOptions: state.dataViewerOptions, dataViewerOverrides: state.dataViewerOverrides, dataModelSettings: state.dataModelSettings, dataModelDeleteCopies: state.dataModelDeleteCopies, dataModelOptions: state.dataModelOptions, dataModelAttributeEnabled: state.dataModelAttributeEnabled, dataModelParents: state.dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup, dataModelAttributeColumns: state.dataModelAttributeColumns, connectionPurpose: state.connectionPurpose, schedulers: state.schedulers, flowSteps: selectedFlowSteps() } }); }
+async function persistDraft() {
+  let tenantHost = "";
+  try { tenantHost = new URL((await chrome.tabs.get(await activeTab())).url).hostname; }
+  catch { return; } // Do not save a draft without a CDP tenant tab.
+  const flowDraft = {
+    tenantHost, templateId: state.templateId, workingSetKey: state.workingSetKey,
+    importSettings: state.importSettings, importCustomSettings: state.importCustomSettings,
+    importMappingMode: state.importMappingMode, syncImportWithExport: state.syncImportWithExport,
+    transferRoutes: state.transferRoutes, singleImportTemplateId: state.singleImportTemplateId,
+    deleteSettings: state.deleteSettings, exportPayloadName: state.exportPayloadName,
+    exportPayloads: selectedExportPayloads(), dataViewerSettings: state.dataViewerSettings,
+    dataViewerOptions: state.dataViewerOptions, dataViewerOverrides: state.dataViewerOverrides,
+    dataModelSettings: state.dataModelSettings, dataModelDeleteCopies: state.dataModelDeleteCopies,
+    dataModelOptions: state.dataModelOptions, dataModelAttributeEnabled: state.dataModelAttributeEnabled,
+    dataModelParents: state.dataModelParents, dataModelAttributeGroup: state.dataModelAttributeGroup,
+    dataModelAttributeColumns: state.dataModelAttributeColumns, connectionPurpose: state.connectionPurpose,
+    schedulers: state.schedulers, flowSteps: selectedFlowSteps()
+  };
+  await chrome.storage.local.set({ flowDraft, [`flowDraft:${tenantHost}`]: flowDraft });
+}
 function compactStatus(status) {
   const full = String(status || "");
   if (!full.startsWith("Failed:")) return full;
@@ -1502,21 +1612,93 @@ function compactStatus(status) {
   const detail = full.slice("Failed:".length).trim().split(/[\n{]/, 1)[0].split(/\.\s/, 1)[0].trim();
   return `Failed: ${detail.length > 90 ? `${detail.slice(0, 87).trimEnd()}…` : detail || "Run failed"}. See Activity for details.`;
 }
-function setStatus(status) { const running = /^Running:/.test(status || ""); const displayed = compactStatus(status); statusEl.textContent = displayed || "No automation running"; statusDot.classList.toggle("idle", !running); stopButton.hidden = !running; const flowLaunchStatus = document.getElementById("flowLaunchStatus"); if (flowLaunchStatus && status) { flowLaunchStatus.textContent = displayed; flowLaunchStatus.hidden = false; flowLaunchStatus.dataset.validation = "false"; } }
+function setStatus(status) { const running = /^Running:/.test(status || ""); const displayed = compactStatus(status); statusEl.textContent = `${displayed || "No automation running"}${running && activeLogRun?.tenantHost ? ` · ${activeLogRun.tenantHost}` : ""}`; statusDot.classList.toggle("idle", !running); stopButton.hidden = !running; const flowLaunchStatus = document.getElementById("flowLaunchStatus"); if (flowLaunchStatus && status) { flowLaunchStatus.textContent = displayed; flowLaunchStatus.hidden = false; flowLaunchStatus.dataset.validation = "false"; } }
 function setApiLoadStatus(status) {
   for (const id of ["dataViewerRunStatus", "flowDataViewerRunStatus"]) {
     const element = document.getElementById(id);
     if (element) element.textContent = status;
   }
 }
-async function activeTab() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); if (!tab?.id) throw new Error("No active tab found."); return tab.id; }
+function isCdpTenantTab(tab) {
+  try { return new URL(tab?.url || "").hostname.includes(".cdp.ocs."); }
+  catch { return false; }
+}
+async function activeTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) throw new Error("No active tab found.");
+  return tab.id;
+}
 function closeAfterLaunch() {
   // The in-page status pill remains the progress/Stop control while the
   // automation runs, so release the browser workspace after a launch.
   window.setTimeout(() => window.close(), 1000);
 }
-async function send(message, label, runInfo) { try { const customTransferStep = message.type === "run-custom-flow" && message.flow.steps.some((step) => ["source", "destination", "export", "import", "responsys"].includes(step)); const needsTemplate = !["run-publish-all", "run-data-viewer", "run-data-model", "run-data-model-attributes", "run-custom-flow", "run-fusion-user"].includes(message.type) || customTransferStep; if (!state.templateId && templateSelect.value && fileTemplates().some((template) => template.id === templateSelect.value)) state.templateId = templateSelect.value; if (needsTemplate && !state.templateId) throw new Error("Select a transfer template first."); const tabId = await activeTab(); const status = `Running: ${label}`; const pendingRun = { ...(runInfo || { summary: label, details: label }), startedAt: Date.now(), logs: [{ at: Date.now(), level: "info", message: `Started: ${label}` }] }; await chrome.storage.local.set({ pendingRun, e2eStatus: status, ...(needsTemplate ? { lastTemplateId: state.templateId } : {}) }); setStatus(status); if (message.type === "run-api-custom-records") setApiLoadStatus(status); const response = await chrome.runtime.sendMessage({ ...message, tabId, connectionPurpose: state.connectionPurpose.trim(), ...(needsTemplate ? { templateId: state.templateId } : {}) }); if (!response?.ok) throw new Error(response?.error || `${label} did not start.`); if (message.type === "run-api-custom-records") setApiLoadStatus("API load completed. Check the CDP data object and Activity log for the response."); const fusionStatus = document.getElementById("fusionUserRunStatus"); if (message.type === "run-fusion-user" && fusionStatus) fusionStatus.textContent = "User form is ready for review. Save and Close was not selected."; } catch (error) { const detail = error.message || error; setStatus(`Failed: ${detail}`); if (message.type === "run-api-custom-records") setApiLoadStatus(`Failed before API request: ${detail}`); const fusionStatus = document.getElementById("fusionUserRunStatus"); if (fusionStatus) fusionStatus.textContent = `Failed: ${detail}`; } }
-async function send(message, label, runInfo) { try { if (message.type !== "run-fusion-user" && !state.connectionPurpose.trim()) throw new Error("Enter a Purpose before running this action."); if (message.type === "run-custom-flow") message.flow.deleteSettings = { ...state.deleteSettings }; const customTransferStep = message.type === "run-custom-flow" && message.flow.steps.some((step) => ["source", "destination", "export", "import", "delete", "responsys"].includes(step)); const needsTemplate = !["run-publish-all", "run-data-viewer", "run-data-model", "run-data-model-attributes", "run-custom-flow", "run-fusion-user"].includes(message.type) || customTransferStep; if (!state.templateId && templateSelect.value && fileTemplates().some((template) => template.id === templateSelect.value)) state.templateId = templateSelect.value; if (needsTemplate && !state.templateId) throw new Error("Select a transfer template first."); const tabId = await activeTab(); const status = `Running: ${label}`; const pendingRun = { ...(runInfo || { summary: label, details: label }), startedAt: Date.now(), logs: [{ at: Date.now(), level: "info", message: `Started: ${label}` }] }; await chrome.storage.local.set({ pendingRun, e2eStatus: status, ...(needsTemplate ? { lastTemplateId: state.templateId } : {}) }); setStatus(status); if (message.type === "run-api-custom-records") setApiLoadStatus(status); const response = await chrome.runtime.sendMessage({ ...message, tabId, connectionPurpose: state.connectionPurpose.trim(), ...(needsTemplate ? { templateId: state.templateId } : {}) }); if (!response?.ok) throw new Error(response?.error || `${label} did not start.`); if (message.type === "run-api-custom-records") setApiLoadStatus("API load completed. Check the CDP data object and Activity log for the response."); const fusionStatus = document.getElementById("fusionUserRunStatus"); if (message.type === "run-fusion-user" && fusionStatus) fusionStatus.textContent = "User form is ready for review. Save and Close was not selected."; } catch (error) { const detail = error.message || error; setStatus(`Failed: ${detail}`); if (message.type === "run-api-custom-records") setApiLoadStatus(`Failed: ${detail}`); const fusionStatus = document.getElementById("fusionUserRunStatus"); if (fusionStatus) fusionStatus.textContent = `Failed: ${detail}`; } }
+async function send(message, label, runInfo) {
+  let reservedClientRunId = "";
+  try {
+    if (message.type !== "run-fusion-user" && !state.connectionPurpose.trim()) throw new Error("Enter a Purpose before running this action.");
+    if (message.type === "run-custom-flow") message.flow.deleteSettings = { ...state.deleteSettings };
+    const transferSteps = ["source", "destination", "export", "import", "delete", "responsys"];
+    const customTransferStep = message.type === "run-custom-flow" && message.flow.steps.some((step) => transferSteps.includes(step));
+    const needsTemplate = !["run-publish-all", "run-data-viewer", "run-data-model", "run-data-model-attributes", "run-custom-flow", "run-fusion-user"].includes(message.type) || customTransferStep;
+    if (!state.templateId && templateSelect.value && fileTemplates().some((template) => template.id === templateSelect.value)) state.templateId = templateSelect.value;
+    if (needsTemplate && !state.templateId) throw new Error("Select a transfer template first.");
+    const tabId = await activeTab();
+    const tab = await chrome.tabs.get(tabId);
+    if (!isCdpTenantTab(tab)) throw new Error("Select an authenticated CDP tenant tab before starting a run.");
+    const { pendingRun: existingRun = null } = await chrome.storage.local.get({ pendingRun: null });
+    if (existingRun) {
+      await chrome.runtime.sendMessage({ type: "reconcile-run-state" });
+      const { pendingRun: stillRunning = null } = await chrome.storage.local.get({ pendingRun: null });
+      if (stillRunning) throw new Error("Another automation run is active. Review Activity or stop it before starting a new run.");
+    }
+    const status = `Running: ${label}`;
+    const flowStepNames = {
+      dataModel: "Data Models", dataModelAttributes: "Attributes", dataViewer: "Data Viewer",
+      source: "Source", destination: "Destination", export: "Export", import: "Import",
+      delete: "Delete", responsys: "Responsys", publish: "Publish", verify: "Verify"
+    };
+    const standaloneFeature = /data viewer/i.test(label) ? "Data Viewer"
+      : /api load/i.test(label) ? "API Load"
+      : /responsys/i.test(label) ? "Responsys"
+      : /destination/i.test(label) ? "Destination"
+      : /source/i.test(label) ? "Source"
+      : /export/i.test(label) ? "Export"
+      : /import/i.test(label) ? "Import"
+      : /delete/i.test(label) ? "Delete"
+      : /fusion/i.test(label) ? "Fusion User"
+      : /attribute/i.test(label) ? "Attributes"
+      : /data model/i.test(label) ? "Data Models"
+      : /publish/i.test(label) ? "Publish"
+      : label;
+    const flowSteps = message.type === "run-custom-flow"
+      ? (message.flow.steps || []).map((step) => flowStepNames[step] || step)
+      : [standaloneFeature];
+    const pendingRun = {
+      ...(runInfo || { summary: label, details: label }), clientRunId: crypto.randomUUID(),
+      tabId, tenantHost: new URL(tab.url).hostname, startedAt: Date.now(),
+      flowSteps,
+      logs: [{ at: Date.now(), level: "info", message: `Started: ${label}` }]
+    };
+    const reservation = await chrome.runtime.sendMessage({ type: "begin-run", tabId, pendingRun, status, templateId: needsTemplate ? state.templateId : "" });
+    if (!reservation?.ok) throw new Error(reservation?.error || "Could not reserve this run.");
+    reservedClientRunId = pendingRun.clientRunId;
+    setStatus(status);
+    if (message.type === "run-api-custom-records") setApiLoadStatus(status);
+    const response = await chrome.runtime.sendMessage({ ...message, tabId, connectionPurpose: state.connectionPurpose.trim(), ...(needsTemplate ? { templateId: state.templateId } : {}) });
+    if (!response?.ok) throw new Error(response?.error || `${label} did not start.`);
+    if (message.type === "run-api-custom-records") setApiLoadStatus("API load completed. Check the CDP data object and Activity log for the response.");
+    const fusionStatus = document.getElementById("fusionUserRunStatus");
+    if (message.type === "run-fusion-user" && fusionStatus) fusionStatus.textContent = "User form is ready for review. Save and Close was not selected.";
+  } catch (error) {
+    const detail = error.message || error;
+    if (reservedClientRunId) await chrome.runtime.sendMessage({ type: "fail-run-launch", clientRunId: reservedClientRunId, detail: String(detail) }).catch(() => undefined);
+    setStatus(`Failed: ${detail}`);
+    if (message.type === "run-api-custom-records") setApiLoadStatus(`Failed: ${detail}`);
+    const fusionStatus = document.getElementById("fusionUserRunStatus");
+    if (fusionStatus) fusionStatus.textContent = `Failed: ${detail}`;
+  }
+}
 
 // Use the same stateful configuration sheets as a full popup view.  Returning commits the
 // current draft so the corresponding main-flow card always reflects the saved selections.
@@ -1684,9 +1866,22 @@ document.getElementById("btn-manage-templates").addEventListener("click", async 
     chrome.runtime.openOptionsPage();
   }
 });
-document.getElementById("stopE2EBtn").addEventListener("click", async () => { try { await chrome.runtime.sendMessage({ type: "stop-current-flow", tabId: await activeTab() }); setStatus(""); } catch (error) { setStatus(`Stop failed: ${error.message || error}`); } });
+document.getElementById("stopE2EBtn").addEventListener("click", async () => { try { const { pendingRun } = await chrome.storage.local.get({ pendingRun: null }); if (!pendingRun?.tabId) throw new Error("Run target is unknown; open its CDP tab to stop it safely."); await chrome.runtime.sendMessage({ type: "stop-current-flow", tabId: pendingRun.tabId }); setStatus(""); } catch (error) { setStatus(`Stop failed: ${error.message || error}`); } });
+document.getElementById("refreshActivityBtn").addEventListener("click", async () => {
+  try {
+    await chrome.runtime.sendMessage({ type: "reconcile-run-state" });
+    const { pendingRun = null, runHistory = [], e2eStatus = "" } = await chrome.storage.local.get({ pendingRun: null, runHistory: [], e2eStatus: "" });
+    activeLogRun = pendingRun;
+    setStatus(e2eStatus);
+    renderRunHistory(runHistory);
+    renderActivityLogs();
+  } catch (error) { setStatus(`Refresh failed: ${error.message || error}`); }
+});
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => { closeSheets(); showView(button.dataset.view); }));
 document.querySelectorAll("[data-activity-section]").forEach((button) => button.addEventListener("click", () => showActivitySection(button.dataset.activitySection)));
+document.getElementById("showLiveLogBtn").addEventListener("click", () => { selectedLogRun = null; showActivitySection("logs"); });
+document.getElementById("logIssuesOnly").addEventListener("change", renderActivityLogs);
+document.getElementById("logAutoFollow").addEventListener("change", renderActivityLogs);
 document.querySelectorAll("[data-open-sheet]").forEach((button) => button.addEventListener("click", () => { attributeEditorForCreationGroup = ""; pendingFlowConfigurationStep = button.dataset.flowConfig || ""; if (button.dataset.openSheet === "dataModel") { dataModelConfigurationContext = button.dataset.flowConfig === "dataModel" ? "flow" : "standalone"; selectDefaultDataModelGroup(); } if (button.dataset.openSheet === "dataModelAttributes") dataModelConfigurationContext = button.dataset.flowConfig ? "flow" : "standalone"; openSheet(button.dataset.openSheet); renderAll(); }));
 document.querySelectorAll(".flow-step-top").forEach((header) => {
   const editor = header.querySelector(".flow-configure[data-open-sheet]");
@@ -1713,11 +1908,10 @@ document.querySelectorAll(".flow-step-top").forEach((header) => {
   }
 });
 for (const [id, key] of [["deleteTableId", "tableId"], ["deleteSourceId", "sourceId"], ["deleteDestinationName", "destinationName"]]) {
-  document.getElementById(id).addEventListener(id === "deleteTableId" ? "change" : "input", (event) => { state.deleteSettings[key] = event.target.value.trim(); if (id === "deleteTableId") { state.deleteSettings.autoScope = false; state.deleteSettings.confirmedTableId = ""; } persistDraft(); if (id === "deleteTableId") renderFlow(); });
+  document.getElementById(id).addEventListener(id === "deleteTableId" ? "change" : "input", (event) => { state.deleteSettings[key] = event.target.value.trim(); if (id === "deleteTableId") state.deleteSettings.autoScope = false; persistDraft(); if (id === "deleteTableId") renderFlow(); });
   document.getElementById(id).addEventListener("change", renderFlow);
 }
-document.getElementById("deleteMode").addEventListener("change", (event) => { state.deleteSettings.autoScope = false; state.deleteSettings.mode = event.target.value === "table" ? "table" : "segment"; state.deleteSettings.confirmedTableId = ""; if (state.deleteSettings.mode === "table") { state.deleteSettings.tableId = ""; state.deleteSettings.additionalPreferences = { deleteLinked: false, truncateCustomer360: true, truncateCube: true }; } else { state.deleteSettings.tableId = "Customer"; state.deleteSettings.additionalPreferences = { deleteLinked: true, truncateCustomer360: true, truncateCube: true }; } persistDraft(); renderFlow(); });
-document.getElementById("deleteConfirmWholeTable").addEventListener("change", (event) => { state.deleteSettings.confirmedTableId = event.target.checked ? state.deleteSettings.tableId : ""; persistDraft(); renderFlow(); });
+document.getElementById("deleteMode").addEventListener("change", (event) => { state.deleteSettings.autoScope = false; state.deleteSettings.mode = event.target.value === "table" ? "table" : "segment"; if (state.deleteSettings.mode === "table") { state.deleteSettings.tableId = ""; state.deleteSettings.additionalPreferences = { deleteLinked: false, truncateCustomer360: true, truncateCube: true }; } else { state.deleteSettings.tableId = "Customer"; state.deleteSettings.additionalPreferences = { deleteLinked: true, truncateCustomer360: true, truncateCube: true }; } persistDraft(); renderFlow(); });
 for (const [id, key] of [["deleteLinkedPreference", "deleteLinked"], ["deleteCustomer360Preference", "truncateCustomer360"], ["deleteCubePreference", "truncateCube"]]) {
   document.getElementById(id).addEventListener("change", (event) => { state.deleteSettings.additionalPreferences[key] = event.target.checked; persistDraft(); });
 }
@@ -1794,41 +1988,21 @@ DEFAULT_FLOW.forEach((step) => document.getElementById(`flow-${step}`).addEventL
   persistDraft();
   renderAll();
 }));
-function resetWorkflowSession() {
-  state.workingSetKey = "";
-  state.templateId = defaultTransferTemplateId();
-  state.connectionPurpose = "";
-  state.importSettings = {};
-  state.importCustomSettings = {};
-  state.importMappingMode = "separate";
-  state.syncImportWithExport = true;
-  state.exportPayloadName = "";
-  state.exportPayloads = [];
-  state.dataViewerSettings = {};
-  state.dataViewerOptions = { recordsPerTable: "", startingIndex: "", sourceId: "", parentSourceCustomerId: "", contactPointExplicitlyUnselected: false, dryRun: false, includeDeleteTestRecords: false };
-  state.dataViewerOverrides = {};
-  state.dataModelSettings = {};
-  state.dataModelDeleteCopies = {};
-  state.dataModelAttributeEnabled = {};
-  state.dataModelAttributeColumns = {};
-  state.transferRoutes = {};
-  state.singleImportTemplateId = "";
-  state.deleteSettings = normalizeDeleteSettings();
-  document.querySelectorAll('input[id^="flow-"][type="checkbox"]').forEach((input) => { input.checked = false; });
-  renderTemplates();
-}
-
 async function initialize() {
   try {
-    // Popup state is intentionally transient. Saved presets, templates, and
-    // connection profiles remain available, but opening/reloading starts a
-    // blank Workflow tab with no selected steps or objects.
-    await chrome.storage.local.remove(["flowDraft", "popupView", "lastConnectionPurpose", "lastTemplateId"]);
+    // Both the side panel and full-page workspace restore the same draft.
     await Promise.all([loadCatalog(), loadTemplates(), loadDataViewerRecordDefaults(), loadDataModelColumnDefaults(), loadPresets()]);
-    const { flowDraft, e2eStatus, lastRun, runHistory, pendingRun, popupView, lastConnectionPurpose, lastDataModelAttributeGroup } = await chrome.storage.local.get({ flowDraft: null, e2eStatus: "", lastRun: null, runHistory: [], pendingRun: null, popupView: "run", lastConnectionPurpose: "", lastDataModelAttributeGroup: "Profile" });
+    await chrome.runtime.sendMessage({ type: "reconcile-run-state" });
+    let currentTenantHost = "";
+    try { currentTenantHost = new URL((await chrome.tabs.get(await activeTab())).url).hostname; }
+    catch { /* The side panel may open before a CDP tab is selected. */ }
+    const stored = await chrome.storage.local.get({ flowDraft: null, e2eStatus: "", lastRun: null, runHistory: [], pendingRun: null, popupView: "run", lastConnectionPurpose: "", lastDataModelAttributeGroup: "Profile" });
+    const { e2eStatus, lastRun, runHistory, pendingRun, popupView, lastConnectionPurpose, lastDataModelAttributeGroup } = stored;
+    const tenantDraft = currentTenantHost ? (await chrome.storage.local.get(`flowDraft:${currentTenantHost}`))[`flowDraft:${currentTenantHost}`] : null;
+    const flowDraft = tenantDraft || (stored.flowDraft?.tenantHost === currentTenantHost ? stored.flowDraft : null);
     await chrome.storage.local.remove("lastDataModelAttributeObjectName");
     activeLogRun = pendingRun;
-    state.connectionPurpose = flowDraft?.connectionPurpose ?? lastConnectionPurpose;
+    state.connectionPurpose = flowDraft?.connectionPurpose || "";
     connectionPurposeInput.value = state.connectionPurpose;
     if (flowDraft) { state.workingSetKey = flowDraft.workingSetKey || state.workingSetKey; state.importSettings = flowDraft.importSettings || {}; state.exportPayloads = Array.isArray(flowDraft.exportPayloads) ? flowDraft.exportPayloads : [flowDraft.exportPayloadName || "Customer"]; state.exportPayloadName = String(flowDraft.exportPayloadName || state.exportPayloads[0] || ""); state.dataViewerSettings = flowDraft.dataViewerSettings || { Customer: true, ContactPoint: true }; state.dataViewerOptions = { ...state.dataViewerOptions, ...(flowDraft.dataViewerOptions || {}) }; state.dataViewerOverrides = flowDraft.dataViewerOverrides || {}; state.dataModelSettings = flowDraft.dataModelSettings || {}; state.dataModelOptions = { ...state.dataModelOptions, ...(flowDraft.dataModelOptions || {}) }; state.dataModelAttributeEnabled = flowDraft.dataModelAttributeEnabled || {}; state.dataModelParents = flowDraft.dataModelParents || state.dataModelParents; if (!flowDraft.dataModelAttributeEnabled && flowDraft.dataModelOptions?.addAttributes) DATA_MODEL_GROUPS.forEach((group) => { if (state.dataModelSettings[group]) state.dataModelAttributeEnabled[group] = true; }); state.dataModelAttributeGroup = DATA_MODEL_GROUPS.includes(flowDraft.dataModelAttributeGroup) ? flowDraft.dataModelAttributeGroup : "Profile"; state.dataModelAttributeObjectName = flowDraft.dataModelAttributeObjectName || ""; state.dataModelAttributeColumns = flowDraft.dataModelAttributeColumns || Object.fromEntries(Object.entries(flowDraft.dataModelColumnOverrides || {}).map(([group, additions]) => [group, [...dataModelDefaultColumns(group), ...(Array.isArray(additions) ? additions : [])]])); if (state.dataViewerSettings.customer && !state.dataViewerSettings.Customer) { state.dataViewerSettings.Customer = true; delete state.dataViewerSettings.customer; } if (state.dataViewerSettings.Customer && !state.dataViewerSettings.ContactPoint && !state.dataViewerOptions.contactPointExplicitlyUnselected) state.dataViewerSettings.ContactPoint = true; const savedSchedulers = flowDraft.schedulers || {}; state.schedulers = Object.fromEntries(Object.keys(state.schedulers).map((key) => [key, normalizeScheduler(key, savedSchedulers[key]) ])); if (Array.isArray(flowDraft.flowSteps)) { const legacyDefaultSteps = ["dataViewer", "source", "destination", "export", "import", "publish", "verify"]; const isLegacyDefault = legacyDefaultSteps.every((step) => flowDraft.flowSteps.includes(step)); const keepRunningFlow = /^Running:/.test(e2eStatus || ""); DEFAULT_FLOW.forEach((step) => { document.getElementById(`flow-${step}`).checked = !isLegacyDefault || keepRunningFlow ? flowDraft.flowSteps.includes(step) : false; }); } }
     if (flowDraft) { if (state.templates.some((template) => template.id === flowDraft.templateId && template.kind !== "direct")) state.templateId = flowDraft.templateId; state.syncImportWithExport = flowDraft.syncImportWithExport !== false; state.transferRoutes = flowDraft.transferRoutes && typeof flowDraft.transferRoutes === "object" ? flowDraft.transferRoutes : {}; state.singleImportTemplateId = flowDraft.singleImportTemplateId || ""; if (["combined", "separate", "separateJobs"].includes(flowDraft.importMappingMode)) state.importMappingMode = flowDraft.importMappingMode; }
@@ -1847,14 +2021,13 @@ async function initialize() {
     // Older drafts did not contain its selection state, which made the Custom
     // Flow handler stop before it sent the automation message.
     if (!flowDraft?.dataViewerSettings && document.getElementById("flow-dataViewer").checked && !selectedDataViewerTables().length) state.dataViewerSettings = { Customer: true, ContactPoint: true };
-    resetWorkflowSession();
     // One-time, non-destructive migration: retain a user's current draft as
     // an explicitly named starting point for the new reusable preset system.
     if (flowDraft && !jobPresets.some((preset) => preset?.config?.kind === "import")) jobPresets.unshift({ id: crypto.randomUUID(), name: "Imported Import draft", savedAt: Date.now(), config: jobPresetConfig("import") });
     if (flowDraft && !jobPresets.some((preset) => preset?.config?.kind === "export")) jobPresets.unshift({ id: crypto.randomUUID(), name: "Imported Export draft", savedAt: Date.now(), config: jobPresetConfig("export") });
     if (flowDraft && !flowPresets.length) flowPresets.unshift({ id: crypto.randomUUID(), name: "Imported Flow draft", savedAt: Date.now(), config: flowPresetConfig() });
     if (flowDraft) await persistPresets();
-    await loadTenantSchedulerPreference();
+    if (currentTenantHost) await loadTenantSchedulerPreference();
     document.getElementById("dataViewerRecordsPerTable").value = state.dataViewerOptions.recordsPerTable;
     document.getElementById("dataViewerStartingIndex").value = state.dataViewerOptions.startingIndex || "";
     document.getElementById("dataViewerSourceId").value = state.dataViewerOptions.sourceId || "CDP";
@@ -1863,12 +2036,13 @@ async function initialize() {
     document.getElementById("runDataViewerBtn").textContent = state.dataViewerOptions.dryRun ? "▶ Test Data Viewer Record" : "▶ Save Data Viewer Record";
     await chrome.storage.local.remove("popupAccordionState");
     const history = Array.isArray(runHistory) && runHistory.length ? runHistory : (lastRun ? [{ ...lastRun, outcome: lastRun.outcome || "completed" }] : []);
-    if (!runHistory?.length && history.length) await chrome.storage.local.set({ runHistory: history.slice(0, 5) });
+    if (!runHistory?.length && history.length) await chrome.storage.local.set({ runHistory: history.slice(0, 50) });
     if (state.syncImportWithExport) syncImportSelectionsFromExport();
-    setStatus(e2eStatus); renderRunHistory(history); showActivitySection("runs"); showView("flow", false); renderAll(); renderPresetRows(); refreshLiveDataViewerTables({ quiet: true });
+    setStatus(e2eStatus); renderRunHistory(history); showActivitySection("runs"); showView("flow", false); renderAll(); renderPresetRows();
+    if (currentTenantHost) refreshLiveDataViewerTables({ quiet: true });
   } catch (error) {
     setStatus(`Catalog error: ${error.message || error}`);
   }
 }
 initialize();
-chrome.storage.onChanged.addListener((changes, area) => { if (area !== "local") return; if (changes.e2eStatus) setStatus(changes.e2eStatus.newValue || ""); if (changes.pendingRun) { activeLogRun = changes.pendingRun.newValue || null; if (activitySection === "logs" && !selectedLogRun) renderActivityLogs(); } if (changes.runHistory) renderRunHistory(changes.runHistory.newValue || []); });
+chrome.storage.onChanged.addListener((changes, area) => { if (area !== "local") return; if (changes.pendingRun) { activeLogRun = changes.pendingRun.newValue || null; if (activitySection === "logs" && !selectedLogRun) renderActivityLogs(); } if (changes.e2eStatus) setStatus(changes.e2eStatus.newValue || ""); if (changes.runHistory) renderRunHistory(changes.runHistory.newValue || []); });

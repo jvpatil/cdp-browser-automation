@@ -24,4 +24,21 @@
       window.dispatchEvent(new Event("cdp-data-viewer-trusted-click-result"));
     });
   });
+
+  // A completed record is emitted once by the page runner. Forward that
+  // bounded audit to the service worker so Activity updates during the batch.
+  window.addEventListener("cdp-data-viewer-record-complete", () => {
+    let payload;
+    try { payload = JSON.parse(document.documentElement.dataset.cdpDataViewerRecord || "{}"); }
+    catch (_error) { return; }
+    if (!payload.requestId || !payload.record) return;
+    chrome.runtime.sendMessage({ type: "data-viewer-record-complete", record: payload.record }, (response) => {
+      const runtimeError = chrome.runtime.lastError;
+      document.documentElement.dataset.cdpDataViewerRecordResult = JSON.stringify({
+        requestId: payload.requestId,
+        ok: Boolean(response?.ok) && !runtimeError
+      });
+      window.dispatchEvent(new Event("cdp-data-viewer-record-result"));
+    });
+  });
 })();

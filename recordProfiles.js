@@ -83,6 +83,10 @@
       isrefundedb: ordinal % 5 === 0, isavailableb: true, isrenewaleligibleb: ordinal % 2 === 1,
       membershipstartdatedt: date, activitydatedt: date, settlementdatedt: date,
       launchdatedt: date, contractstartdatedt: date,
+      lifetimespenddec: money(149.95), cartamountdec: money(79.95),
+      netamountdec: money(249.95), listpricedec: money(99.95),
+      annualcontractvaluedec: money(1499.95),
+      // Existing, already-published N18P4 attributes keep their samples.
       lifetimespendn18p4: money(149.95), cartamountn18p4: money(79.95),
       netamountn18p4: money(249.95), listpricen18p4: money(99.95),
       annualcontractvaluen18p4: money(1499.95),

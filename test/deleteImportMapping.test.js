@@ -153,15 +153,18 @@ test("model creation adds copies only for checked types with the same attributes
   const saved = [];
   const attributes = [];
   const relationships = [];
+  const typedParents = [];
   context.chrome.tabs = { get: async () => ({ url: "https://example.test/data/" }) };
   context.chrome.scripting = { executeScript: async ({ args = [], func }) => {
-    if (args.length === 3) { relationships.push(args); return [{ result: { saved: true, verified: true } }]; }
+    if (args.length === 3) { relationships.push(args); return [{ result: { inputId: "parent-input" } }]; }
+    if (String(func).includes("cdpDataModelCompleteRelationship")) return [{ result: { saved: true, verified: true } }];
     if (args.length === 2) return [{ result: { group: args[0] } }];
     if (String(func).includes("cdpDataModelPrepareForSave")) return [{ result: { expectedRecords: 1 } }];
     return [{ result: {} }];
   } };
   context.testSaved = saved;
   context.testAttributes = attributes;
+  context.testTypedParents = typedParents;
   vm.runInContext(`
     navigateAndWait = async () => {};
     activatePageAutomationRun = async () => {};
@@ -171,6 +174,7 @@ test("model creation adds copies only for checked types with the same attributes
     commitJetDataModelObjectName = async (_tab, name) => { testSaved.push(name); return { name, objectId: name + "_c" }; };
     commitJetDataModelResourceName = async (_tab, name) => ({ resourceName: name.toLowerCase() });
     runDataModelAttributesStep = async (_tab, _run, options) => { testAttributes.push(options); };
+    typeJetInput = async (_tab, inputId, value, _label, commitKey) => { testTypedParents.push({ inputId, value, commitKey }); };
     this.testRunDataModelStep = runDataModelStep;
   `, context);
   const result = await context.testRunDataModelStep(1, "test-run", {
@@ -181,6 +185,8 @@ test("model creation adds copies only for checked types with the same attributes
   assert.equal(saved.length, 5);
   assert.equal(attributes.length, 5);
   assert.equal(relationships.length, 5);
+  assert.equal(typedParents.length, 5);
+  assert.equal(typedParents.every((entry) => entry.inputId === "parent-input" && entry.commitKey === null), true);
   assert.ok(result.deleteCopies.Profile.name.startsWith("Profile_DELETE_"));
   assert.ok(result.deleteCopies.Product.name.startsWith("Product_DELETE_"));
   assert.equal(result.deleteCopies.Behavioral, undefined);

@@ -166,6 +166,13 @@
     };
   };
   const resolveValue = (value, context) => String(value ?? "").replace(/\{\{(date|timestamp|day|month|year|ddmm|sequence|tableSequence|sourceId|objectId)\}\}/g, (_, key) => context[key] ?? "");
+  const viewerTimestamp = (value) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?$/.exec(String(value ?? ""));
+    if (!match) return value;
+    const [, year, month, day, hour, minute, second] = match;
+    const hour24 = Number(hour);
+    return `${month}/${day}/${year}, ${String(hour24 % 12 || 12).padStart(2, "0")}:${minute}:${second} ${hour24 < 12 ? "AM" : "PM"}`;
+  };
   const tableShortCode = (tableName) => {
     // Keep generated source-object IDs short but unambiguous.  Single-word
     // tables use their first two letters; multi-word tables use initials.
@@ -226,6 +233,16 @@
     };
     const logicalField = String(field || "").replace(/^field-/, "").replace(/_c$/i, "");
     const fieldKey = logicalField.replace(/[^a-z0-9]/gi, "").toLowerCase();
+    // Keep test data reproducible while varying ARRAY<STRING> cardinality.
+    // The editor takes comma-separated entries; generate at least two.
+    if (/^alternateemails?$/.test(fieldKey)) {
+      const primary = recordEmailForSequence(context.sequence);
+      const at = primary.indexOf("@");
+      const local = at > 0 ? primary.slice(0, at) : `customer.${context.sequence}`;
+      const domains = ["gmail.com", "yahoo.com", "outlook.com", "icloud.com"];
+      const count = 2 + ((Math.max(1, Number(context.sequence) || 1) - 1) % 3);
+      return domains.slice(0, count).map((domain, index) => `${local}.alt${index + 1}@${domain}`).join(", ");
+    }
     const profileValue = cdpRecordProfiles.value(fieldKey, {
       position: Number(context.tableSequence), count: context.recordCount,
       sequence: Number(context.sequence), runDate: context.runDate, ui: true
@@ -305,7 +322,7 @@
     || drawer.querySelector(`#${CSS.escape(`field-${field}|input`)}`)
     || drawer.querySelector(`#${CSS.escape(`field-${field}`)} input, #${CSS.escape(`field-${field}`)} textarea, #${CSS.escape(`field-${field}`)} [role='combobox']`)
     || drawer.querySelector(`[fieldid="${CSS.escape(field)}"] input, [fieldid="${CSS.escape(field)}"] textarea, [fieldid="${CSS.escape(field)}"] [role='combobox']`);
-  const entryFieldKeys = (drawer) => [...drawer.querySelectorAll("oj-input-text[id^='field-'],oj-text-area[id^='field-'],oj-select-single[id^='field-'],oj-combobox-one[id^='field-'],oj-input-date[id^='field-'],oj-input-date-time[id^='field-']")]
+  const entryFieldKeys = (drawer) => [...drawer.querySelectorAll("oj-input-text[id^='field-'],oj-text-area[id^='field-'],oj-select-single[id^='field-'],oj-combobox-one[id^='field-'],oj-combobox-many[id^='field-'],oj-input-date[id^='field-'],oj-input-date-time[id^='field-']")]
     .map((host) => host.id.replace(/^field-/, ""))
     .filter((field, index, fields) => field && fields.indexOf(field) === index && !findField(drawer, field)?.disabled);
   const isChoiceInput = (input) => {
@@ -335,13 +352,40 @@
     return at > 0 ? `${base.slice(0, at)}-${marker}${base.slice(at)}` : `${base}-${marker}`;
   };
 
-  const chooseValue = async (drawer, field, value) => {
+  const chooseValue = async (drawer, field, value, dataType = "") => {
     const input = findField(drawer, field);
     if (!input) return;
     const host = input.closest("oj-select-single,oj-combobox-one,oj-combobox-many,oj-input-date,oj-input-date-time") || input.parentElement;
-    // Date/time JET controls accept ISO input; opening a choice popup after
-    // setting them can replace the typed value with a calendar selection.
-    if (host?.matches?.("oj-input-date,oj-input-date-time")) return setValue(input, value);
+    if (host?.matches?.("oj-combobox-many")) {
+      const values = (Array.isArray(value) ? value : String(value ?? "").split(","))
+        .map((entry) => String(entry).trim()).filter(Boolean);
+      for (const entry of values) {
+        input.focus?.();
+        typeValue(input, entry);
+        await sleep(120);
+        const option = [...document.querySelectorAll("[role='option'],oj-option,li,.oj-listbox-result")]
+          .find((item) => visible(item) && normalize(text(item)) === normalize(entry));
+        if (option) click(option.closest("[role='option'],oj-option,li") || option);
+        else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, composed: true }));
+        await sleep(120);
+      }
+      let committed = Array.isArray(host.value) ? host.value.map(String) : [];
+      if (!values.every((entry) => committed.includes(entry))) {
+        // JET can ignore a synthetic Enter in a multi-value editor. Its
+        // public value property still invokes the component's valueChanged
+        // path, as with the Data Viewer object selector above.
+        host.value = values;
+        await sleep(120);
+        committed = Array.isArray(host.value) ? host.value.map(String) : [];
+      }
+      if (!values.every((entry) => committed.includes(entry))) throw new Error(`${field} did not commit its array values.`);
+      input.blur?.();
+      return;
+    }
+    // The Data Viewer timestamp editor parses its displayed US 12-hour value.
+    // Keep API payloads and date-only inputs in their existing ISO formats.
+    if (host?.matches?.("oj-input-date-time") || String(dataType).toLowerCase() === "timestamp") return setValue(input, viewerTimestamp(value));
+    if (host?.matches?.("oj-input-date")) return setValue(input, value);
     const isChoice = isChoiceInput(input);
     if (!isChoice) return setValue(input, value);
     setValue(input, value);
@@ -398,6 +442,27 @@
     const textValue = String(value ?? "").replace(/\s+/g, " ").trim();
     return textValue.length > 120 ? `${textValue.slice(0, 117)}...` : textValue;
   };
+  const reportCompletedRecord = (record) => new Promise((resolve) => {
+    const requestId = `data-viewer-record-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let finished = false;
+    const finish = (ok) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      window.removeEventListener("cdp-data-viewer-record-result", onResult);
+      resolve(Boolean(ok));
+    };
+    const onResult = () => {
+      try {
+        const result = JSON.parse(document.documentElement.dataset.cdpDataViewerRecordResult || "{}");
+        if (result.requestId === requestId) finish(result.ok);
+      } catch (_error) { finish(false); }
+    };
+    const timeout = setTimeout(() => finish(false), 4000);
+    window.addEventListener("cdp-data-viewer-record-result", onResult);
+    document.documentElement.dataset.cdpDataViewerRecord = JSON.stringify({ requestId, record });
+    window.dispatchEvent(new Event("cdp-data-viewer-record-complete"));
+  });
 
   window.runCdpDataViewer = async ({ tables = [], recordsPerTable = 1, startingIndex = 1, sourceId = "UI", parentSourceCustomerId = "", saveRecords = false } = {}) => {
     if (!Array.isArray(tables) || !tables.length || tables.some((table) => !table?.cdpTable)) throw new Error("At least one Data Viewer table is required.");
@@ -458,13 +523,6 @@
             audit.actions.push({ action: "Leave blank", target: field, value: "optional sparse field" });
             continue;
           }
-          // Primary Email is the meaningful contact value for Customer and
-          // ContactPoint. Do not invent an alternate address unless the user
-          // explicitly configured one in the per-table editor/JSON.
-          if (/^alternateemails?$/i.test(field) && !Object.hasOwn(configuredValues, field)) {
-            audit.actions.push({ action: "Skip", target: field, value: "not configured" });
-            continue;
-          }
           const profileField = field.replace(/_c$/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
           const profileValue = cdpRecordProfiles.value(profileField, {
             position: tableSequence, count: recordsPerTable, sequence,
@@ -480,7 +538,7 @@
             ? configuredValueFor(configuredValue, field, table.cdpTable, drawer, context, recordsPerTable, table.liveFields)
             : configuredValue;
           try {
-            await chooseValue(drawer, field, value);
+            await chooseValue(drawer, field, value, liveField?.dataType);
             audit.fields.push({ field, value: auditValue(field, value) });
             audit.actions.push({ action: "Type", target: field, value: auditValue(field, value) });
           } catch (error) {
@@ -561,7 +619,9 @@
         }
         await wait(() => drawerClosed() ? true : null, "the saved record drawer to close", 30000);
         generatedObjectIds[table.cdpTable][tableSequence - 1] = sourceObjectId;
-        completed.push({ ...audit, objectId: sourceObjectId, outcome: saveRecords ? "Saved" : "Dry run discarded" });
+        const record = { ...audit, sourceId: resolvedSourceId, objectId: sourceObjectId, outcome: saveRecords ? "Saved" : "Dry run discarded" };
+        record.liveLogged = await reportCompletedRecord(record);
+        completed.push(record);
       }
     }
     return { records: completed, recordsPerTable, startingIndex, sourceId: resolvedSourceId, saved: Boolean(saveRecords) };

@@ -244,9 +244,7 @@ async function prepareDeleteMetadata(tabId, settings, purpose = "") {
 
 async function resolveTableDeleteTarget(tabId, settings) {
   const requested = String(settings?.tableId || "").trim();
-  if (!requested || String(settings?.confirmedTableId || "").trim() !== requested) {
-    throw new Error("Confirm the exact full-table Delete target before preparing its job.");
-  }
+  if (!requested) throw new Error("Select the exact full-table Delete target before preparing its job.");
   const liveTables = await loadLiveDataViewerTables(tabId);
   const matches = liveTables.filter((table) => table.id === requested || table.label === requested);
   if (matches.length !== 1) throw new Error("Select one published table in the active tenant for entire-table deletion.");
@@ -815,11 +813,14 @@ function liveDataViewerFieldsFromMetadata(response) {
 }
 
 async function validateTypeCodedLiveFields(fields, tableName) {
-  const codedFields = fields.filter((field) => /_(?:AS|I64|B|DT|N18P4|F64|F32|I32|I16|TXT|TS|I8)_c$/i.test(String(field.fieldId || "")));
+  const codedFields = fields.filter((field) => /_(?:AS|I64|B|DT|DEC|N18P4|F64|F32|I32|I16|TXT|TS|I8)_c$/i.test(String(field.fieldId || "")));
   if (!codedFields.length) return;
   const config = await loadDataModelColumnConfig();
   const expectedFields = new Map(Object.values(config.typeCoverageByGroup).flat()
-    .map((column) => [`${column.name}_c`.toLowerCase(), column]));
+    .flatMap((column) => [
+      [`${column.name}_c`.toLowerCase(), column],
+      ...(column.name.endsWith("_DEC") ? [[`${column.name.slice(0, -4)}_N18P4_c`.toLowerCase(), column]] : [])
+    ]));
   for (const field of codedFields) {
     const configured = expectedFields.get(String(field.fieldId || "").toLowerCase());
     if (!configured) continue;
@@ -829,10 +830,6 @@ async function validateTypeCodedLiveFields(fields, tableName) {
     if (actual !== expected) throw new Error(`${tableName}.${field.fieldId} is ${actual}, but its type code requires ${expected}.`);
     if (configured.dataType === "array - string" && field.elementDataType && field.elementDataType !== "string") {
       throw new Error(`${tableName}.${field.fieldId} must be an array of strings.`);
-    }
-    if (configured.dataType === "decimal" && ((field.precision != null && Number(field.precision) !== 18)
-      || (field.scale != null && Number(field.scale) !== 4))) {
-      throw new Error(`${tableName}.${field.fieldId} is not decimal(18,4) in live CDP metadata.`);
     }
   }
 }
@@ -1354,6 +1351,9 @@ function shortJobObjectCode(request) {
 }
 
 function jobNameForRequest(request) {
+  if (request.kind !== "export" && request.variant === "responsys") {
+    return responsysImportJobName(request.template, request.connection, request.connectionSequence);
+  }
   const prefix = request.kind === "export" ? "EXP" : "IMP";
   return [prefix, shortJobObjectCode(request), transferPurposeCode(request.template), sharedJobTag(request.connectionSequence)]
     .filter(Boolean)
@@ -1379,6 +1379,7 @@ function jobRuntime(template, side) {
 
 const sequenceStepState = new Map();
 const activeSequences = new Map();
+let beginRunQueue = Promise.resolve();
 
 if (chrome.sidePanel?.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.warn("Could not enable CDP Automation Side Panel", error));
@@ -1388,52 +1389,71 @@ async function setE2EStatus(status = "", tabId) {
   const activeRun = activeSequences.get(tabId);
   if (activeRun) activeRun.status = status;
   await chrome.storage.local.set({ e2eStatus: status });
-  if (status) await appendRunLog(status, status.startsWith("Failed:") ? "error" : "info");
+  if (status && !/^Running: Data Viewer(?: Record)?$/i.test(status)) {
+    const step = /^Running:\s*(.+)$/i.exec(status)?.[1] || "";
+    await appendRunLog(status, status.startsWith("Failed:") ? "error" : "info", step || "Run");
+  }
 }
 
-async function clearFlowDraft() {
-  await chrome.storage.local.remove("flowDraft");
-}
-
-async function appendRunLog(message, level = "info", group = "", action = "") {
-  const { pendingRun = null } = await chrome.storage.local.get({ pendingRun: null });
-  if (!pendingRun || !message) return;
-  const logs = Array.isArray(pendingRun.logs) ? pendingRun.logs : [];
-  const previous = logs.at(-1);
-  if (previous?.message === message && previous?.group === group && previous?.action === action) return;
-  await chrome.storage.local.set({
-    pendingRun: { ...pendingRun, logs: [...logs, { at: Date.now(), level, group, action, message: String(message) }].slice(-500) }
-  });
-}
-
-async function appendDataViewerRunLog(result, tables, { recordsPerTable, sourceId, saveRecords }) {
-  const names = tables.map((table) => table.cdpTable).join(", ");
-  await appendRunLog(`Data Viewer selection: ${names} · ${recordsPerTable} record${recordsPerTable === 1 ? "" : "s"} per table · Source ID: ${sourceId}.`);
-  for (const record of result?.records || []) {
-    const group = `${record.table} · Record ${record.sequence}`;
-    await appendRunLog(`${record.outcome || "Completed"} · Object ID: ${record.objectId || "—"}.`, "info", group);
-    for (const item of record.actions || []) {
-      const detail = [item.target, item.value ? `= ${item.value}` : ""].filter(Boolean).join(" ");
-      await appendRunLog(detail, item.action === "Skip" ? "warning" : "info", group, item.action || "Action");
+let runLogQueue = Promise.resolve();
+function appendRunEvents(events) {
+  const operation = runLogQueue.then(async () => {
+    const { pendingRun = null } = await chrome.storage.local.get({ pendingRun: null });
+    if (!pendingRun) return;
+    const logs = Array.isArray(pendingRun.logs) ? [...pendingRun.logs] : [];
+    for (const { message, level = "info", group = "", action = "", parentGroup = "" } of events) {
+      if (!message) continue;
+      const previous = logs.at(-1);
+      if (previous?.message === message && previous?.group === group && previous?.action === action) continue;
+      logs.push({ at: Date.now(), level, group, action, parentGroup, message: String(message) });
     }
+    await chrome.storage.local.set({ pendingRun: { ...pendingRun, logs: logs.slice(-500) } });
+  });
+  runLogQueue = operation.catch(() => {});
+  return operation;
+}
+async function appendRunLog(message, level = "info", group = "", action = "", parentGroup = "") {
+  return appendRunEvents([{ message, level, group, action, parentGroup }]);
+}
+
+async function appendDataViewerRecordLog(record, sourceId = "CDP") {
+  const group = `${record.table} · Record ${record.sequence}`;
+  const keys = record.keys || [];
+  const keyValue = (name) => keys.find(({ field }) => String(field || "").replace(/^Column[_\s-]*/i, "").replace(/_c$/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase() === name.toLowerCase())?.value;
+  const customerId = keyValue("SourceCustomerID");
+  const recordSourceId = keyValue("SourceID") || record.sourceId || sourceId;
+  const summary = [record.outcome || "Completed", customerId && `Customer ID: ${customerId}`, `Source ID: ${recordSourceId}`, `Record key: ${record.objectId || "—"}`].filter(Boolean).join(" · ");
+  const events = [{ message: summary, level: "info", group, action: "Summary", parentGroup: "Data Viewer" }];
+  for (const item of record.actions || []) {
+    const detail = [item.target, item.value ? `= ${item.value}` : ""].filter(Boolean).join(" ");
+    events.push({ message: detail, level: item.action === "Skip" ? "warning" : "info", group, action: item.action || "Action", parentGroup: "Data Viewer" });
+  }
+  await appendRunEvents(events);
+}
+
+async function appendDataViewerRunLog(result, { sourceId, tabId }) {
+  const liveLogged = activeSequences.get(tabId)?.loggedRecordKeys || new Set();
+  for (const record of result?.records || []) {
+    if (!liveLogged.has(`${record.table}:${record.sequence}`)) await appendDataViewerRecordLog(record, sourceId);
   }
 }
 
 async function finalizeRunHistory(outcome, detail = "") {
   const { pendingRun = null, runHistory = [], runSnapshots = [], activeRunSnapshotId = "" } = await chrome.storage.local.get({ pendingRun: null, runHistory: [], runSnapshots: [], activeRunSnapshotId: "" });
   if (!pendingRun) return;
-  const terminalMessage = outcome === "completed" ? "Run completed." : outcome === "stopped" ? "Run stopped." : `Run failed: ${detail || pendingRun.details || "Unknown error"}`;
+  const terminalMessage = outcome === "completed" ? "Run completed." : outcome === "stopped" ? "Run stopped." : outcome === "interrupted" ? "Run interrupted. Review the target CDP tab before retrying." : `Run failed: ${detail || pendingRun.details || "Unknown error"}`;
   const logs = Array.isArray(pendingRun.logs) ? pendingRun.logs : [];
   const entry = {
     ...pendingRun,
     outcome,
     detail: detail || pendingRun.details || "",
     finishedAt: Date.now(),
-    logs: [...logs, { at: Date.now(), level: outcome === "failed" ? "error" : outcome, message: terminalMessage }].slice(-500)
+    // Keep the active log detailed, but bound completed history storage.
+    logs: [...logs, { at: Date.now(), level: ["failed", "interrupted"].includes(outcome) ? "error" : outcome, message: terminalMessage }].slice(-200)
   };
   const snapshot = Array.isArray(runSnapshots) ? runSnapshots.find((item) => item?.runId === activeRunSnapshotId) : null;
   if (snapshot) entry.snapshot = { ...snapshot, outcome, finishedAt: entry.finishedAt };
-  await chrome.storage.local.set({ runHistory: [entry, ...(Array.isArray(runHistory) ? runHistory : [])].slice(0, 5), lastRun: entry });
+  await chrome.storage.local.set({ runHistory: [entry, ...(Array.isArray(runHistory) ? runHistory : [])].slice(0, 50), lastRun: entry });
   await chrome.storage.local.remove(["pendingRun", "activeRunSnapshotId"]);
 }
 
@@ -1704,16 +1724,43 @@ async function typeJetInput(tabId, inputId, value, label = "input", commitKey = 
     }
     // JET requires a trusted completion key. Most form inputs commit on Tab;
     // the Data Model object search intentionally filters only on Enter.
+    if (!commitKey) return;
     const completion = commitKey === "Enter"
       ? { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 0 }
       : { key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: 0 };
-    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...completion });
-    // JET's valueChanged handler is attached to the DOM keydown/focus
-    // transition. rawKeyDown alone types correctly but can leave Object ID
-    // blank on the Data Model drawer; include the normal trusted keydown so
-    // the browser performs the same Tab transition as a user.
+    // Enter submits the Data Model search. Sending both rawKeyDown and
+    // keyDown submits it twice; the second submission can reset the filter
+    // while leaving the search expanded (and its Create icon removed).
+    // Tab is different: the extra transition is needed for JET form commit.
+    if (commitKey !== "Enter") {
+      await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...completion });
+    }
     await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyDown", ...completion });
     await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...completion });
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => undefined);
+  }
+}
+
+async function submitDataModelObjectSearch(tabId, inputId, objectName) {
+  await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [inputId],
+    func: (id) => {
+      const input = document.getElementById(id);
+      if (!input || !input.getClientRects().length || input.disabled) throw new Error("Data Model search textbox is unavailable.");
+      input.focus();
+      input.select();
+    }
+  });
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    await chrome.debugger.sendCommand(target, "Input.insertText", { text: objectName });
+    const enter = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 0 };
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...enter });
+    await chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", { type: "keyUp", ...enter });
   } finally {
     if (attached) await chrome.debugger.detach(target).catch(() => undefined);
   }
@@ -2300,7 +2347,7 @@ async function dataModelAttributeState(tabId) {
 
 async function commitJetDataModelAttributeName(tabId, attributeName) {
   const expectedName = String(attributeName || "").trim().toLowerCase();
-  const codedAttribute = /_(?:AS|I64|B|DT|N18P4|F64|F32|I32|I16|TXT|TS|I8)$/i.test(attributeName);
+  const codedAttribute = /_(?:AS|I64|B|DT|DEC|N18P4|F64|F32|I32|I16|TXT|TS|I8)$/i.test(attributeName);
   const expectedId = `${attributeName}_c`;
   // Use the original full-value entry method once the drawer is stable. The
   // drawer stability check—not per-character slowing—keeps JET from binding
@@ -2498,7 +2545,7 @@ async function waitForStep(tabId, label, saveSelector, runId, stepId, timeout = 
         // Do not treat a Save click as completion. CDP can still be validating
         // or persisting the source/destination while the next navigation would
         // cancel the request. Advance only after its visible success message.
-        await appendRunLog(`${label} saved.`);
+        await appendRunLog(`${label} saved.`, "info", label, "Save");
         return;
       }
       if (!result?.monitor) {
@@ -2916,20 +2963,21 @@ async function runImportJobRequest(tabId, rawRequest) {
   }
   const jobConfig = buildJobRuntimeConfig(request);
   const importObjects = [...request.tableIds, ...request.customTables.map((table) => table.label || table.cdpTable)];
-  await appendRunLog(`Import runner: ${request.variant} · ${importObjects.join(", ") || "Responsys Profile"}.`, "info", "Import", "Configure");
-  await appendRunLog(`Job name = ${jobConfig.name}; Source = ${jobConfig.sourceName || "—"}.`, "info", "Import", "Plan");
+  const importLogGroup = `Import · ${jobConfig.name}`;
+  await appendRunLog(`Import runner: ${request.variant} · ${importObjects.join(", ") || "Responsys Profile"}.`, "info", importLogGroup, "Configure");
+  await appendRunLog(`Job name = ${jobConfig.name}; Source = ${jobConfig.sourceName || "—"}.`, "info", importLogGroup, "Plan");
   if (request.variant === "generic") {
     const mappingSources = importConfig.sources || [importConfig];
     const sourceCount = mappingSources.length;
     const headerCount = mappingSources.reduce((total, source) => total + String(source.csvContent || "").split(/\r?\n/, 1)[0].split(",").filter(Boolean).length, 0);
-    await appendRunLog(`Tables = ${importObjects.join(", ")}; ${sourceCount} generated mapping source${sourceCount === 1 ? "" : "s"} = ${headerCount} fields.`, "info", "Import", "Map");
+    await appendRunLog(`Tables = ${importObjects.join(", ")}; ${sourceCount} generated mapping source${sourceCount === 1 ? "" : "s"} = ${headerCount} fields.`, "info", importLogGroup, "Map");
     for (const source of mappingSources.filter((item) => item.parentBridge)) {
-      await appendRunLog(`Parent bridge: ${source.table?.label || source.table?.cdpTable} → ${source.parentBridge} using shared source keys.`, "info", "Import", "Map");
+      await appendRunLog(`Parent bridge: ${source.table?.label || source.table?.cdpTable} → ${source.parentBridge} using shared source keys.`, "info", importLogGroup, "Map");
     }
   }
-  await appendRunLog(`File contract = ${jobConfig.fileContract?.fileFormat || "CSV"} · ${jobConfig.fileContract?.charset || "UTF-8"} · ${jobConfig.fileContract?.csvParser || "RFC 4180"} · ${jobConfig.fileContract?.delimiter || "Comma"}.`, "info", "Import", "Configure");
-  await appendRunLog(`Import scheduler: ${request.schedule.schedulerUi === "new" ? `New · ${request.schedule.frequency} · ${request.schedule.timeMode}` : `Legacy · ${request.schedule.mode} · ${request.schedule.frequency}`}.`, "info", "Scheduler · Import", "Configure");
-  await appendRunLog("Opening Create Ingest Job.", "info", "Import", "Navigate");
+  await appendRunLog(`File contract = ${jobConfig.fileContract?.fileFormat || "CSV"} · ${jobConfig.fileContract?.charset || "UTF-8"} · ${jobConfig.fileContract?.csvParser || "RFC 4180"} · ${jobConfig.fileContract?.delimiter || "Comma"}.`, "info", importLogGroup, "Configure");
+  await appendRunLog(`Import scheduler: ${request.schedule.schedulerUi === "new" ? `New · ${request.schedule.frequency} · ${request.schedule.timeMode}` : `Legacy · ${request.schedule.mode} · ${request.schedule.frequency}`}.`, "info", importLogGroup, "Schedule");
+  await appendRunLog("Opening Create Ingest Job.", "info", importLogGroup, "Navigate");
   await runTask(tabId, filename, request.monitor, request.schedule, importConfig, undefined, request.tableIds, undefined, jobConfig);
   await waitForStep(tabId, request.variant === "responsys" ? "Responsys Import" : "Import Job", task.saveSelector, request.runId, request.monitor?.stepId || filename);
   const saved = request.runMetadata ? await captureCreatedEntity(tabId, request.runMetadata, filename) : null;
@@ -2960,12 +3008,13 @@ async function runExportJobRequest(tabId, rawRequest) {
   const catalog = await loadTableCatalog();
   if (!request.customTable && !catalog.exportPayloads.includes(request.payloadName)) throw new Error(`Unsupported export payload: ${request.payloadName}.`);
   const jobConfig = buildJobRuntimeConfig(request);
-  await appendRunLog(`Export runner: ${request.payloadName}.`, "info", "Export", "Configure");
-  await appendRunLog(`Job name = ${jobConfig.name}; Destination = ${jobConfig.destinationName || "—"}.`, "info", "Export", "Plan");
-  await appendRunLog(`Payload = ${request.payloadName}; type = ${request.payloadType}; records = ${request.filterRecords}.`, "info", "Export", "Select");
-  await appendRunLog(`File contract = ${jobConfig.fileContract?.fileFormat || "CSV"} · compression = ${jobConfig.compression || "none"}.`, "info", "Export", "Configure");
-  await appendRunLog(`Export scheduler: ${request.schedule.schedulerUi === "new" ? `New · ${request.schedule.frequency} · ${request.schedule.timeMode}` : `Legacy · ${request.schedule.mode} · ${request.schedule.frequency}`}.`, "info", "Scheduler · Export", "Configure");
-  await appendRunLog("Opening Create Export Job.", "info", "Export", "Navigate");
+  const exportLogGroup = `Export · ${jobConfig.name}`;
+  await appendRunLog(`Export runner: ${request.payloadName}.`, "info", exportLogGroup, "Configure");
+  await appendRunLog(`Job name = ${jobConfig.name}; Destination = ${jobConfig.destinationName || "—"}.`, "info", exportLogGroup, "Plan");
+  await appendRunLog(`Payload = ${request.payloadName}; type = ${request.payloadType}; records = ${request.filterRecords}.`, "info", exportLogGroup, "Select");
+  await appendRunLog(`File contract = ${jobConfig.fileContract?.fileFormat || "CSV"} · compression = ${jobConfig.compression || "none"}.`, "info", exportLogGroup, "Configure");
+  await appendRunLog(`Export scheduler: ${request.schedule.schedulerUi === "new" ? `New · ${request.schedule.frequency} · ${request.schedule.timeMode}` : `Legacy · ${request.schedule.mode} · ${request.schedule.frequency}`}.`, "info", exportLogGroup, "Schedule");
+  await appendRunLog("Opening Create Export Job.", "info", exportLogGroup, "Navigate");
   await runTask(tabId, "exportJob.js", request.monitor, request.schedule, undefined, request.payloadName, undefined, undefined, jobConfig);
   await waitForStep(tabId, "Export Job", task.saveSelector, request.runId, request.monitor?.stepId || "exportJob.js");
   const saved = request.runMetadata ? await captureCreatedEntity(tabId, request.runMetadata, "exportJob.js") : null;
@@ -3169,7 +3218,7 @@ async function runDataViewerStep(tabId, flow, runId) {
       return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
     }
   });
-  await appendDataViewerRunLog(dataViewerResult, tables, { recordsPerTable, sourceId, saveRecords: Boolean(flow.saveRecords) });
+  await appendDataViewerRunLog(dataViewerResult, { sourceId, tabId });
 }
 
 const DATA_MODEL_GROUPS = ["Profile", "Behavioral", "Transactional", "Product", "Other"];
@@ -3196,7 +3245,7 @@ function validateDataModelColumns(columns, group) {
     if (!/^[a-z][a-z0-9_ ]*$/i.test(name)) throw new Error(`${group} column ${name} has unsupported characters.`);
     if (!DATA_MODEL_ATTRIBUTE_TYPES.has(dataType)) throw new Error(`${group} column ${name} uses unsupported data type ${dataType}.`);
     const codedType = {
-      AS: "array - string", I64: "bigint", B: "boolean", DT: "date", N18P4: "decimal",
+      AS: "array - string", I64: "bigint", B: "boolean", DT: "date", DEC: "decimal", N18P4: "decimal",
       F64: "double", F32: "float", I32: "int", I16: "smallint", TXT: "text", TS: "timestamp", I8: "tinyint"
     }[name.match(/_([A-Z0-9]+)$/)?.[1]];
     if (codedType && codedType !== dataType) throw new Error(`${group} column ${name} must use ${codedType}, not ${dataType}.`);
@@ -3303,9 +3352,14 @@ async function runDataModelStep(tabId, runId, { purpose = "", groups = DATA_MODE
           }
           assertSequenceActive(tabId, runId, "Data Model relationship creation");
           await appendRunLog("Creating relationship: " + generated.name + " → " + parentName + ".", "info", "Relationship · " + group, "Plan");
-          const [{ result: relationshipResult }] = await chrome.scripting.executeScript({
+          const [{ result: relationshipPicker }] = await chrome.scripting.executeScript({
             target: { tabId }, world: "MAIN", args: [group, generated.name, parentName],
-            func: async (selectedGroup, childObjectName, relationshipParentName) => window.cdpDataModelCreateRelationship(selectedGroup, childObjectName, relationshipParentName)
+            func: async (selectedGroup, childObjectName, relationshipParentName) => window.cdpDataModelPrepareRelationship(selectedGroup, childObjectName, relationshipParentName)
+          });
+          await typeJetInput(tabId, relationshipPicker.inputId, parentName, "Relationship parent object", null);
+          const [{ result: relationshipResult }] = await chrome.scripting.executeScript({
+            target: { tabId }, world: "MAIN", args: [generated.name, parentName],
+            func: async (childObjectName, relationshipParentName) => window.cdpDataModelCompleteRelationship(childObjectName, relationshipParentName)
           });
           if (!relationshipResult?.saved || !relationshipResult?.verified) {
             throw new Error("CDP did not verify the relationship " + generated.name + " → " + parentName + ".");
@@ -3348,7 +3402,6 @@ async function runDataModel(tabId, { purpose = "", groups = DATA_MODEL_GROUPS, s
     if (failed) await finalizeRunHistory("failed", failureDetail);
     else if (cancelled) await finalizeRunHistory("stopped");
     else await finalizeRunHistory("completed");
-    await clearFlowDraft();
   }
 }
 
@@ -3365,15 +3418,40 @@ async function runDataModelAttributesStep(tabId, runId, { group, objectName, col
   await activatePageAutomationRun(tabId, runId);
   await waitForPageElement(tabId, task.readySelector, 60000);
   await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["dataModel.js"] });
-  const [{ result: objectSearch }] = await chrome.scripting.executeScript({
-    target: { tabId }, world: "MAIN", args: [group],
-    func: async (selectedGroup) => window.cdpDataModelPrepareObjectSearch(selectedGroup)
-  });
-  await typeJetInput(tabId, objectSearch?.inputId || "search-input-text|input", targetObjectName,
-    "Data Model object search", "Enter");
   await appendRunLog(`Target object = ${targetObjectName}; ${columns.length} attributes configured.`, "info", `Attributes · ${group}`, "Plan");
-  if (columns.some((column) => /_N18P4$/i.test(column.name))) {
-    await appendRunLog("N18P4 labels intended decimal(18,4) coverage. CDP's attribute editor confirms decimal type, but does not expose precision/scale; verify those limits in the tenant before relying on them.", "warn", `Attributes · ${group}`, "Validate");
+  const assertSearchState = async (phase) => {
+    const [{ result: state }] = await chrome.scripting.executeScript({
+      target: { tabId }, world: "MAIN",
+      func: () => {
+        const input = document.getElementById("search-input-text|input");
+        const tabs = [...document.querySelectorAll("#data-object-navigation-list [role=tab]")].filter((tab) => tab.getClientRects().length);
+        return {
+          open: document.querySelector("#cd-do-search .search-box-container")?.getAttribute("aria-pressed") === "true",
+          query: input?.value || "",
+          count: tabs.length,
+          selected: tabs.filter((tab) => tab.getAttribute("aria-selected") === "true")
+            .map((tab) => tab.querySelector("h4")?.getAttribute("title") || "")
+        };
+      }
+    });
+    if (!state?.open || state.query.trim().toLowerCase() !== targetObjectName.toLowerCase()) {
+      throw new Error(`Data Model search reset ${phase}: open=${Boolean(state?.open)}, query=${JSON.stringify(state?.query || "")}, visible tables=${state?.count ?? "unknown"}, selected=${(state?.selected || []).join(", ") || "none"}. Stopped before continuing attributes.`);
+    }
+  };
+  let targetConfirmed = false;
+  const [{ result: objectSearch }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", args: [group, targetObjectName],
+    func: async (selectedGroup, name) => window.cdpDataModelPrepareObjectSearch(selectedGroup, name)
+  });
+  const usedSearch = objectSearch?.mode !== "direct";
+  if (usedSearch) {
+    await submitDataModelObjectSearch(tabId, objectSearch?.inputId || "search-input-text|input", targetObjectName);
+    await assertSearchState("after entering and submitting the object name");
+    await chrome.scripting.executeScript({
+      target: { tabId }, world: "MAIN", args: [targetObjectName],
+      func: async (name) => window.cdpDataModelWaitForObjectSearchResult(name)
+    });
+    await assertSearchState("after the filtered result appeared");
   }
   for (const column of columns) {
     assertSequenceActive(tabId, runId, "Data Model attribute creation");
@@ -3381,10 +3459,12 @@ async function runDataModelAttributesStep(tabId, runId, { group, objectName, col
     let attributeDrawerOpened = false;
     try {
       await chrome.scripting.executeScript({
-        target: { tabId }, world: "MAIN", args: [group, targetObjectName],
-        func: async (selectedGroup, selectedObjectName) => window.cdpDataModelOpenAttribute(selectedGroup, selectedObjectName, true)
+        target: { tabId }, world: "MAIN", args: [group, targetObjectName, targetConfirmed],
+        func: async (selectedGroup, selectedObjectName, confirmed) => window.cdpDataModelOpenAttribute(selectedGroup, selectedObjectName, true, confirmed)
       });
       attributeDrawerOpened = true;
+      targetConfirmed = true;
+      if (usedSearch) await assertSearchState(`after opening ${column.name}`);
       const attribute = await commitJetDataModelAttributeName(tabId, column.name);
       if (attribute.skipped) {
         await appendRunLog(
@@ -3411,6 +3491,7 @@ async function runDataModelAttributesStep(tabId, runId, { group, objectName, col
         func: async () => window.cdpDataModelSaveAttribute()
       });
       attributeSaved = true;
+      if (usedSearch) await assertSearchState(`after saving ${column.name}`);
       await appendRunLog("Attribute saved successfully.", "info", `Attributes · ${targetObjectName} · ${column.name}`, "Save");
     } finally {
       // Leave a failed attribute drawer open so its CDP validation message is
@@ -3424,6 +3505,10 @@ async function runDataModelAttributesStep(tabId, runId, { group, objectName, col
       }
     }
   }
+  await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN",
+    func: async () => window.cdpDataModelFinishObjectSearch()
+  });
   await appendRunLog(`Attributes saved for ${targetObjectName}.`, "info", `Attributes · ${group}`, "Complete");
 }
 
@@ -3448,7 +3533,6 @@ async function runDataModelAttributes(tabId, options = {}) {
     if (failed) await finalizeRunHistory("failed", failureDetail);
     else if (cancelled) await finalizeRunHistory("stopped");
     else await finalizeRunHistory("completed");
-    await clearFlowDraft();
   }
 }
 
@@ -3666,7 +3750,7 @@ async function runConfiguredFlow(tabId, flow = {}) {
             await recordJob(await runExportJobRequest(tabId, { origin: flow.origin || "custom-flow", runId, template: route.template, connectionSequence: route.sequence, connection, schedule, filterRecords: flow.exportFilterRecords, payloadType: flow.exportPayloadType, payloadName, customTable, jobName: flow.exportJobName, description: flow.exportDescription, notification: flow.notification, monitor, runMetadata }));
           }
         } else if (step.id === "responsys") {
-          await recordJob(await runImportJobRequest(tabId, { origin: flow.origin || "custom-flow", runId, template, connectionSequence, connection: responsysSourceConfig, schedule, variant: "responsys", tableIds: [], customTables: [], mappingMode: "combined", jobName: flow.importJobName, description: flow.importDescription, notification: flow.notification, monitor, runMetadata, allowImportFallback: flow.allowImportFallback }));
+          await recordJob(await runImportJobRequest(tabId, { origin: flow.origin || "custom-flow", runId, template, connectionSequence, connection: responsysSourceConfig, schedule, variant: "responsys", tableIds: [], customTables: [], mappingMode: "combined", description: flow.importDescription, notification: flow.notification, monitor, runMetadata, allowImportFallback: flow.allowImportFallback }));
         } else if (flow.importMappingMode === "separateJobs") {
           const catalog = await loadTableCatalog();
           const entries = [...(flow.importTableIds || []).map((tableId) => ({ label: catalog.importsById[tableId]?.label || tableId, tableIds: [tableId], customTables: [] })), ...(flow.importCustomTables || []).map((customTable) => ({ label: customTable.label || customTable.cdpTable, tableIds: [], customTables: [customTable] }))];
@@ -3741,7 +3825,6 @@ async function runConfiguredFlow(tabId, flow = {}) {
     if (failure) await finalizeRunHistory("failed", failure.message || String(failure));
     else if (cancelled) await finalizeRunHistory("stopped");
     else if (completed) await finalizeRunHistory("completed");
-    await clearFlowDraft();
   }
 }
 
@@ -3788,7 +3871,6 @@ async function runPublishAll(tabId) {
     if (failure) await finalizeRunHistory("failed", failure.message || String(failure));
     else if (cancelled) await finalizeRunHistory("stopped");
     else if (completed) await finalizeRunHistory("completed");
-    await clearFlowDraft();
   }
 }
 
@@ -4255,7 +4337,6 @@ async function runApiCustomRecords(tabId, tableIds, { recordsPerTable = 1, start
     if (failed) await finalizeRunHistory("failed");
     else if (cancelled) await finalizeRunHistory("stopped");
     else await finalizeRunHistory("completed");
-    await clearFlowDraft();
   }
 }
 
@@ -4287,7 +4368,7 @@ async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, startingInd
         return window.runCdpDataViewer({ tables: dataViewerTables, ...options });
       }
     });
-    await appendDataViewerRunLog(dataViewerResult, tables, { recordsPerTable, sourceId: resolvedSourceId, saveRecords: Boolean(saveRecords) });
+    await appendDataViewerRunLog(dataViewerResult, { sourceId: resolvedSourceId, tabId });
   } catch (error) {
     failed = true;
     if (!/stopped by the user/i.test(error.message || "")) await setE2EStatus(`Failed: Data Viewer Record — ${error.message || error}`, tabId);
@@ -4299,7 +4380,6 @@ async function runDataViewer(tabId, tableIds, { recordsPerTable = 1, startingInd
     if (failed) await finalizeRunHistory("failed");
     else if (cancelled) await finalizeRunHistory("stopped");
     else await finalizeRunHistory("completed");
-    await clearFlowDraft();
   }
 }
 
@@ -4539,6 +4619,33 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== "data-viewer-record-complete") return;
+  const active = activeSequences.get(sender.tab?.id);
+  const input = message.record;
+  if (!active || !input || typeof input.table !== "string" || input.table.length > 100
+    || !Number.isInteger(input.sequence) || input.sequence < 1 || input.sequence > 999
+    || !Array.isArray(input.actions) || input.actions.length > 150) {
+    sendResponse({ ok: false });
+    return;
+  }
+  const key = `${input.table}:${input.sequence}`;
+  active.loggedRecordKeys ||= new Set();
+  if (active.loggedRecordKeys.has(key)) { sendResponse({ ok: true }); return; }
+  const record = {
+    table: input.table, sequence: input.sequence,
+    sourceId: String(input.sourceId || "").slice(0, 100),
+    objectId: String(input.objectId || "").slice(0, 100),
+    outcome: String(input.outcome || "Completed").slice(0, 40),
+    keys: (Array.isArray(input.keys) ? input.keys : []).slice(0, 30).map((entry) => ({ field: String(entry.field || "").slice(0, 100), value: String(entry.value || "").slice(0, 150) })),
+    actions: input.actions.map((entry) => ({ action: String(entry.action || "Action").slice(0, 40), target: String(entry.target || "").slice(0, 100), value: String(entry.value || "").slice(0, 150) }))
+  };
+  appendDataViewerRecordLog(record)
+    .then(() => { active.loggedRecordKeys.add(key); sendResponse({ ok: true }); })
+    .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "apply-new-scheduler") {
     const tabId = sender.tab?.id;
     if (!tabId) {
@@ -4595,14 +4702,66 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const reload = chrome.tabs.reload(tabId).catch(() => undefined);
   Promise.all([setE2EStatus("", tabId), reload])
     .then(() => finalizeRunHistory("stopped"))
-    .then(clearFlowDraft)
     .finally(() => sendResponse({ ok: true, stopped: Boolean(activeSequence) }));
   return true;
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type !== "get-current-run-status") return;
-  sendResponse({ status: activeSequences.get(sender.tab?.id)?.status || "" });
+  const tabId = message.tabId ?? sender.tab?.id;
+  const active = activeSequences.get(tabId);
+  sendResponse({ active: Boolean(active), status: active?.status || "", tabId });
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "reconcile-run-state") return;
+  (async () => {
+    const { pendingRun = null } = await chrome.storage.local.get({ pendingRun: null });
+    // A launch can be between the popup's pendingRun write and the worker's
+    // activeSequences registration. Give that transition a short grace period.
+    if (pendingRun && Date.now() - Number(pendingRun.startedAt || 0) > 30_000 && !activeSequences.size) {
+      await finalizeRunHistory("interrupted", "Extension run state was lost; no automation was resumed.");
+      await chrome.storage.local.set({ e2eStatus: "Interrupted: Review the CDP tab before retrying." });
+      sendResponse({ ok: true, interrupted: true });
+      return;
+    }
+    sendResponse({ ok: true, interrupted: false, active: Boolean(activeSequences.size) });
+  })().catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "begin-run") return;
+  const begin = beginRunQueue.then(async () => {
+    const { pendingRun = null } = await chrome.storage.local.get({ pendingRun: null });
+    if (pendingRun || activeSequences.size) throw new Error("Another automation run is active. Review Activity or stop it before starting a new run.");
+    const tab = await chrome.tabs.get(message.tabId);
+    const tenantHost = new URL(tab.url).hostname;
+    if (!tenantHost.includes(".cdp.ocs.") || tenantHost !== message.pendingRun?.tenantHost || message.pendingRun?.tabId !== message.tabId) {
+      throw new Error("Run target does not match the selected CDP tenant tab.");
+    }
+    await chrome.storage.local.set({
+      pendingRun: message.pendingRun,
+      e2eStatus: message.status,
+      ...(message.templateId ? { lastTemplateId: message.templateId } : {})
+    });
+    return { ok: true };
+  });
+  beginRunQueue = begin.catch(() => undefined);
+  begin.then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "fail-run-launch") return;
+  (async () => {
+    const { pendingRun = null } = await chrome.storage.local.get({ pendingRun: null });
+    if (pendingRun?.clientRunId !== message.clientRunId || activeSequences.size) return { ok: true, finalized: false };
+    await finalizeRunHistory("failed", String(message.detail || "Run did not start."));
+    await chrome.storage.local.set({ e2eStatus: `Failed: ${String(message.detail || "Run did not start.")}` });
+    return { ok: true, finalized: true };
+  })().then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+  return true;
 });
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -4613,7 +4772,6 @@ chrome.runtime.onMessage.addListener((message) => {
     rememberConnectionSequence(activeRun.connectionTemplateId, activeRun.connectionSequence).catch((error) => console.warn("Could not record confirmed connection name", error));
     setE2EStatus("", tabId);
     finalizeRunHistory("completed");
-    clearFlowDraft();
     break;
   }
 });
@@ -4768,7 +4926,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (activeSequences.get(message.tabId)?.runId === runId) activeSequences.delete(message.tabId);
       setE2EStatus(`Failed: ${label}`, message.tabId);
       finalizeRunHistory("failed", error.message || String(error));
-      clearFlowDraft();
       console.error("CDP automation failed", error);
       sendResponse({ ok: false, error: error.message || String(error) });
     });
